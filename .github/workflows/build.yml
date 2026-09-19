@@ -28,7 +28,7 @@ permissions:
 
 jobs:
   build:
-    uses: VOTV-MP/Multivoid/.github/workflows/build-core.yml@main
+    uses: VOTV-MP/Multivoid/.github/workflows/build-core.yml@ba6d8c39d64a48a6262565208bafacad306c6e1e
     with:
       ref: ${{ github.sha }}
       source-sha: ${{ github.sha }}
