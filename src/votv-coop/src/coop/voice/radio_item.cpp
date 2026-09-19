@@ -3,10 +3,12 @@
 #include "coop/voice/radio_item.h"
 
 #include "coop/player/hand_item.h"
+#include "coop/player/players_registry.h"
 #include "coop/voice/radio_state.h"
 
 #include "ue_wrap/actors/inventory.h"
 #include "ue_wrap/actors/prop.h"
+#include "ue_wrap/core/asset_load.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -23,11 +25,15 @@ namespace {
 namespace R  = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
 namespace P  = ue_wrap::profile;
+namespace E  = ue_wrap::engine;
 
 constexpr const wchar_t* kRadioClass = L"prop_walkie_radio_C";
 constexpr const wchar_t* kUnkeyedRadio = L"@multivoid_walkie_unkeyed";
 
 bool g_installed = false;
+
+// TEMPORARY visual probe. Removed once the cooked walkie mesh is proven in-game.
+bool g_meshProbeSpawned = false;
 
 // Local power-state table. The normal case uses the prop's persistent Key.
 // The unkeyed fallback keeps the first prototype usable before we finish
@@ -55,6 +61,75 @@ std::wstring RecordIdentity(const ue_wrap::save_record::SaveRecord& rec) {
 
 bool IsPoweredIdentity(const std::wstring& id) {
     return !id.empty() && g_powered.find(id) != g_powered.end();
+}
+
+// Temporary one-shot cooked-mesh smoke test.
+//
+// Spawns our pak asset as a bare AStaticMeshActor in front of the local player.
+// This proves the full path:
+//   mounted pak -> LoadObject -> UStaticMesh -> runtime component -> renderer.
+void TrySpawnMeshProbe() {
+    if (g_meshProbeSpawned)
+        return;
+
+    void* local = coop::players::Registry::Get().Local();
+    if (!local || !R::IsLive(local))
+        return;
+
+    void* mesh = ue_wrap::asset_load::LoadObjectByPath(
+        L"/Game/Mods/VOTVCoop/walkie/"
+        L"atvRadio_radio_prop.atvRadio_radio_prop");
+
+    if (!mesh)
+        return;
+
+    void* actorClass = R::FindClass(L"StaticMeshActor");
+    if (!actorClass) {
+        UE_LOGW("walkie: mesh probe -- StaticMeshActor class unresolved");
+        return;
+    }
+
+    ue_wrap::FVector loc = E::GetActorLocation(local);
+    const ue_wrap::FVector fwd = E::GetActorForwardVector(local);
+
+    // About 1.5 m ahead and slightly elevated so it's impossible to miss.
+    loc.X += fwd.X * 150.f;
+    loc.Y += fwd.Y * 150.f;
+    loc.Z += 40.f;
+
+    void* actor = E::SpawnActor(actorClass, loc, false);
+    if (!actor) {
+        UE_LOGW("walkie: mesh probe -- StaticMeshActor spawn failed");
+        return;
+    }
+
+    void* comp = E::GetStaticMeshComponent(actor);
+    if (!comp) {
+        UE_LOGW("walkie: mesh probe -- StaticMeshComponent missing");
+        E::DestroyActor(actor);
+        return;
+    }
+
+    // Runtime mesh swaps silently fail on Static mobility.
+    E::SetComponentMobility(comp, 2);  // Movable
+
+    if (!E::SetStaticMesh(comp, mesh)) {
+        UE_LOGW("walkie: mesh probe -- SetStaticMesh failed");
+        E::DestroyActor(actor);
+        return;
+    }
+
+    // Our Blender model's long axis currently maps to UE Y.
+    // Roll 90 degrees so the handheld stands upright for the visual test.
+    E::SetActorRotation(actor, ue_wrap::FRotator{0.f, 0.f, 90.f});
+
+    // Visual probe only; don't let it interfere with player collision.
+    E::SetActorRootCollisionEnabled(actor, 0);
+
+    g_meshProbeSpawned = true;
+
+    UE_LOGI("walkie: MESH PROBE SPAWNED actor=%p mesh=%p at (%.1f, %.1f, %.1f)",
+            actor, mesh, loc.X, loc.Y, loc.Z);
 }
 
 // Hold-E radial confirmation.
@@ -150,6 +225,8 @@ void Tick() {
         return;
     g_lastPoll = now;
 
+    TrySpawnMeshProbe();
+
     // Hand state is a fresh mainPlayer.holding_actor read.
     void* held = coop::hand_item::LocalHandActor();
     const bool heldRadio = IsRadioActor(held);
@@ -182,6 +259,7 @@ void Tick() {
 void OnDisconnect() {
     g_powered.clear();
     g_lastPoll = {};
+    g_meshProbeSpawned = false;
     coop::radio_state::Reset();
 }
 
