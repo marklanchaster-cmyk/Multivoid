@@ -18,6 +18,7 @@
 # Artifacts are CI evidence, NOT distribution -- releases are the supported
 # install channel.
 name: build
+run-name: Manual Multivoid build
 
 on:
   workflow_dispatch:
