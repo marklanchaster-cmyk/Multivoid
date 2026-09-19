@@ -13,6 +13,7 @@
 // per-sender overflow fairness. Mutex discipline: voiceInboxMutex_ only.
 
 #include "coop/net/session.h"
+#include "coop/voice/radio_state.h"
 
 #include "ue_wrap/core/log.h"
 
@@ -69,6 +70,22 @@ void Session::StoreVoiceFrame(int routeSlot, int peerSlot, const void* data, int
     if (vm.frame.opusLen > kVoiceMaxOpusBytes ||
         kVoiceFrameHeadBytes + vm.frame.opusLen > bodyLen)
         return;  // truncated/poisoned datagram
+
+    // Event interference is host-authoritative. A client does not need to
+    // know which event actors are active locally: when its radio frame reaches
+    // the host, the host stamps the canonical severity before hearing/relaying it.
+    if (cfg_.role == Role::Host) {
+        if ((vm.frame.flags & kVoiceFlagRadio) != 0) {
+            float level = coop::radio_state::Interference();
+            if (level < 0.0f) level = 0.0f;
+            if (level > 1.0f) level = 1.0f;
+            vm.frame.interference =
+                static_cast<uint8_t>(level * 255.0f + 0.5f);
+        } else {
+            vm.frame.interference = 0;
+        }
+    }
+
     {
         std::lock_guard<std::mutex> lk(voiceInboxMutex_);
         VoiceSlotRing& r = voiceRings_[routeSlot];
@@ -77,10 +94,21 @@ void Session::StoreVoiceFrame(int routeSlot, int peerSlot, const void* data, int
         r.ring[r.tail % kVoiceRingPerSlot] = vm;
         ++r.tail;
     }
-    // Host relay: every other client hears this speaker (receiver-side
-    // attenuation silences out-of-range audio; see the MsgType doc).
+    // Host relay: every other client hears this speaker. For voice we
+    // relay a stack copy carrying the SAME host-authoritative interference
+    // byte that the host's own playback received above.
     if (cfg_.role == Role::Host) {
-        RelayUnreliableToOtherClients(peerSlot, data, len);
+        uint8_t relay[kMaxPacketBytes];
+        if (len <= kMaxPacketBytes) {
+            std::memcpy(relay, data, static_cast<size_t>(len));
+
+            auto* relayFrame = reinterpret_cast<VoiceFramePayload*>(
+                relay + sizeof(PacketHeader));
+
+            relayFrame->interference = vm.frame.interference;
+
+            RelayUnreliableToOtherClients(peerSlot, relay, len);
+        }
     }
 }
 

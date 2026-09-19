@@ -1,6 +1,7 @@
 // coop/voice/voice_capture.cpp -- see coop/voice/voice_capture.h.
 
 #include "coop/voice/voice_capture.h"
+#include "coop/voice/radio_state.h"
 
 #include "ui/input_focus.h"  // IsOurWindowForeground -- the cross-process PTT gate
 #include "ue_wrap/core/log.h"
@@ -188,6 +189,7 @@ void Capture::Stop() {
     levelDb_.store(kLowestDb, std::memory_order_relaxed);
     stagingFill_ = 0;
     wasActive_ = false;
+    radioBurst_ = false;
     releaseCountdown_ = 0;
     ringHead_.store(0);
     ringTail_.store(0);
@@ -255,8 +257,19 @@ void Capture::ProcessFrame(const int16_t* samples) {
         (toneMode_ || !ui::input_focus::IsOverlayCapturingText());
     const bool whisperHeld =
         keysLive && cfg_.whisperVk != 0 && (GetAsyncKeyState(cfg_.whisperVk) & 0x8000) != 0;
+    // Walkie PTT is RMB, but ONLY while a powered radio is physically
+    // in the local player's hand. The gameplay/item layer publishes
+    // those two conditions through radio_state.
     const bool radioHeld =
-        keysLive && cfg_.radioVk != 0 && (GetAsyncKeyState(cfg_.radioVk) & 0x8000) != 0;
+        keysLive &&
+        coop::radio_state::CanTransmit() &&
+        (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+
+    // Keep the radio flag across the normal ~100 ms PTT release tail.
+    // Without this, the last few encoded frames would suddenly become
+    // proximity voice when RMB is released.
+    if (radioHeld)
+        radioBurst_ = true;
     bool wantActive = false;
     if (!muted_.load(std::memory_order_relaxed) && foreground) {
         if (cfg_.activationMode) {
@@ -281,13 +294,14 @@ void Capture::ProcessFrame(const int16_t* samples) {
     if (!active) {
         if (wasActive_) EmitStop();
         wasActive_ = false;
+        radioBurst_ = false;
         return;
     }
     wasActive_ = true;
 
     EncodedFrame f{};
     if (whisperHeld) f.flags |= coop::net::kVoiceFlagWhisper;
-    if (radioHeld)   f.flags |= coop::net::kVoiceFlagRadio;
+    if (radioBurst_) f.flags |= coop::net::kVoiceFlagRadio;
     const opus_int32 n = opus_encode(static_cast<OpusEncoder*>(encoder_), buf, kFrameSamples,
                                      f.opus, coop::net::kVoiceMaxOpusBytes);
     if (n <= 0) {

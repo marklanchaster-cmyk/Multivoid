@@ -14,6 +14,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/world/event_fire_sync.h"
+#include "coop/voice/radio_state.h"
 
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -114,6 +115,30 @@ constexpr long long kPollIntervalMs = 1000;  // event phases run seconds-to-minu
 long long NowMs() {
     using namespace std::chrono;
     return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+
+void PublishRadioInterference() {
+    const size_t n = g_active.size();
+
+    float level = 0.0f;
+    if (n == 1)
+        level = 0.65f;
+    else if (n == 2)
+        level = 0.82f;
+    else if (n >= 3)
+        level = 1.0f;
+
+    coop::radio_state::SetInterference(level);
+
+    static float s_last = -1.0f;
+    if (level != s_last) {
+        UE_LOGI("walkie: event interference -> %.2f (%zu active event sender%s)",
+                level,
+                n,
+                n == 1 ? "" : "s");
+        s_last = level;
+    }
 }
 
 // ---- the class->row map (Phase 1; Phase 2 completes the ~95 census) ---------------------------
@@ -231,6 +256,8 @@ void HostPollTick() {
         ended.push_back(obj);
     }
     for (void* obj : ended) g_active.erase(obj);
+
+    PublishRadioInterference();
 }
 
 }  // namespace
@@ -305,6 +332,7 @@ void OnReliable(const coop::net::EventSnapshotPayload& payload) {
 }
 
 void OnDisconnect() {
+    coop::radio_state::SetInterference(0.0f);
     g_active.clear();
     g_polledGm = nullptr;
     g_polledGmIdx = -1;

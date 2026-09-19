@@ -1,6 +1,7 @@
 // coop/voice/voice_playback.cpp -- see coop/voice/voice_playback.h.
 
 #include "coop/voice/voice_playback.h"
+#include "coop/voice/radio_state.h"
 
 #include "ue_wrap/core/log.h"
 
@@ -142,6 +143,7 @@ void Playback::ResetSlot(int slot) {
     ch.lastFrameMs.store(0);
     ch.whispering.store(false);
     ch.radio.store(false);
+    ch.radioInterference.store(0);
     ch.posValid.store(false);
 }
 
@@ -292,8 +294,14 @@ void Playback::DeliverInOrder(Channel& ch, const coop::net::VoiceFramePayload& f
 
     ch.whispering.store((f.flags & coop::net::kVoiceFlagWhisper) != 0,
                         std::memory_order_relaxed);
-    ch.radio.store((f.flags & coop::net::kVoiceFlagRadio) != 0,
-                   std::memory_order_relaxed);
+    const bool isRadio =
+        (f.flags & coop::net::kVoiceFlagRadio) != 0;
+
+    ch.radio.store(isRadio, std::memory_order_relaxed);
+    ch.radioInterference.store(
+        isRadio ? f.interference : 0,
+        std::memory_order_relaxed);
+
     ch.lastFrameMs.store(NowMs(), std::memory_order_relaxed);
 }
 
@@ -339,6 +347,17 @@ void Playback::MixOutput(float* out, uint32_t frameCount) {
         // Radio frames bypass proximity attenuation and positional panning.
         float gainL = 1.0f, gainR = 1.0f;
         const bool radio = ch.radio.load(std::memory_order_relaxed);
+
+        // A radio packet is not audible unless this player is actually
+        // carrying a powered receiver. Discard it rather than leaving stale
+        // radio PCM queued for playback after the radio is switched on later.
+        if (radio && !coop::radio_state::Powered()) {
+            const uint32_t take =
+                avail < frameCount ? static_cast<uint32_t>(avail) : frameCount;
+            ch.ringRead.store(read + take, std::memory_order_release);
+            continue;
+        }
+
         if (!radio && ch.posValid.load(std::memory_order_relaxed)) {
             const float dx = ch.posX.load(std::memory_order_relaxed) - lx;
             const float dy = ch.posY.load(std::memory_order_relaxed) - ly;
@@ -377,13 +396,78 @@ void Playback::MixOutput(float* out, uint32_t frameCount) {
         gainL *= vol;
         gainR *= vol;
 
+        const float interference =
+            radio
+                ? static_cast<float>(
+                      ch.radioInterference.load(std::memory_order_relaxed)) / 255.0f
+                : 0.0f;
+
         const uint32_t take =
             avail < frameCount ? static_cast<uint32_t>(avail) : frameCount;
+
         for (uint32_t i = 0; i < take; ++i) {
-            const float s =
-                static_cast<float>(ch.ring[(read + i) % Channel::kRingSamples]) / 32768.0f;
-            out[2 * i + 0] += s * gainL;
-            out[2 * i + 1] += s * gainR;
+            float sample =
+                static_cast<float>(
+                    ch.ring[(read + i) % Channel::kRingSamples]) / 32768.0f;
+
+            if (radio) {
+                // Rough handheld-radio band:
+                // high-pass ~300 Hz, low-pass ~3.2 kHz.
+                constexpr float kHpAlpha = 0.9622f;
+                constexpr float kLpAlpha = 0.2950f;
+
+                const float hp =
+                    kHpAlpha *
+                    (ch.radioHpPrevOut + sample - ch.radioHpPrevIn);
+
+                ch.radioHpPrevIn = sample;
+                ch.radioHpPrevOut = hp;
+
+                ch.radioLp += kLpAlpha * (hp - ch.radioLp);
+                sample = ch.radioLp;
+
+                // Small speaker/codec crunch.
+                sample = std::tanh(sample * 1.65f) * 0.78f;
+
+                // Allocation-free xorshift noise.
+                uint32_t x = ch.radioNoise;
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                ch.radioNoise = x;
+
+                const float noise =
+                    (static_cast<float>(x & 0xFFFFu) / 32767.5f) - 1.0f;
+
+                // Clean radio still has a faint hiss.
+                const float hiss =
+                    0.006f + interference * 0.16f;
+
+                // Strong interference partially buries the speech.
+                const float voiceGain =
+                    1.0f - interference * 0.42f;
+
+                sample = sample * voiceGain + noise * hiss;
+
+                // Random crackle when interference is elevated.
+                if (interference > 0.25f) {
+                    const uint32_t threshold =
+                        static_cast<uint32_t>(
+                            20.0f + interference * 110.0f);
+
+                    if ((x & 0xFFFFu) < threshold) {
+                        sample +=
+                            ((x & 0x10000u) ? 1.0f : -1.0f) *
+                            (0.15f + interference * 0.45f);
+                    }
+                }
+
+                if (sample > 1.0f) sample = 1.0f;
+                if (sample < -1.0f) sample = -1.0f;
+            }
+
+            out[2 * i + 0] += sample * gainL;
+            out[2 * i + 1] += sample * gainR;
         }
         ch.ringRead.store(read + take, std::memory_order_release);
         // (take < frameCount leaves silence for the tail -- the underrun

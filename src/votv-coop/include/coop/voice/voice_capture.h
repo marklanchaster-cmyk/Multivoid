@@ -91,6 +91,7 @@ private:
     // Activation state machine.
     int  releaseCountdown_ = 0;  // frames left to keep transmitting after the key/level dropped
     bool wasActive_ = false;
+    bool radioBurst_ = false;    // keeps the final ~100 ms PTT tail on the radio route
 
     // 50-frame rolling peak window (the SVC limiter).
     float peakWindow_[50] = {};

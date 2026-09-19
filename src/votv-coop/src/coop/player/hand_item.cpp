@@ -1,6 +1,7 @@
 // coop/player/hand_item.cpp -- see coop/player/hand_item.h for the design.
 
 #include "coop/player/hand_item.h"
+#include "coop/voice/radio_state.h"
 
 #include "coop/net/protocol.h"
 #include "coop/player/players_registry.h"
@@ -371,7 +372,15 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
         g_localPlayer    = local;
         g_localPlayerIdx = R::InternalIndexOf(local);
     }
-    if (!session.connected()) return;
+    if (!session.connected()) {
+        coop::radio_state::SetHeld(false);
+        return;
+    }
+
+    // No hotbar hand actor means the walkie cannot transmit.
+    if (!holdingProp)
+        coop::radio_state::SetHeld(false);
+
     const uint8_t self = coop::players::Registry::Get().LocalPeerId();
     if (self >= coop::players::kMaxPeers) return;
 
@@ -410,6 +419,12 @@ void TickOwner(coop::net::Session& session, void* local, void* holdingProp) {
         g_ownHeldIdx = idx;
         const std::wstring cls = R::ClassNameOf(holdingProp);
         const std::wstring name = ReadItemName(holdingProp);
+
+        // The physical walkie ships as prop_walkie_radio_C. Keep this based
+        // on the actual live hotbar hand actor, not merely inventory ownership:
+        // powered+inventory allows RX, but TX requires the radio in-hand.
+        coop::radio_state::SetHeld(cls == L"prop_walkie_radio_C");
+
         if (!g_ownHas || cls != g_ownCls || name != g_ownName) {
             g_ownHas = true;
             g_ownCls = cls;

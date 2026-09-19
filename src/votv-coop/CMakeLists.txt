@@ -525,6 +525,8 @@ add_library(votv-coop SHARED
     src/coop/interactables/comp_sync.cpp
     src/coop/voice/voice_chat.cpp
     src/coop/voice/voice_capture.cpp
+    src/coop/voice/radio_state.cpp
+    src/coop/voice/radio_item.cpp
     src/coop/voice/voice_playback.cpp
     src/coop/net/session_voice.cpp
     src/ui/voice_icons.cpp

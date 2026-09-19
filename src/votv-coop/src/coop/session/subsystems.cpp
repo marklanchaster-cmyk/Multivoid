@@ -46,6 +46,7 @@
 #include "coop/dev/live_store_readout.h" // 2026-07-24: READ-ONLY live personal store observability
 #include "coop/dev/sleep_probe.h"
 #include "coop/voice/voice_chat.h"
+#include "coop/voice/radio_item.h"
 #include "coop/dev/drone_probe.h"
 #include "coop/dev/delivery_census_probe.h"  // O-1 gate: COUNT the delivery-path actors
 #include "coop/dev/store_table_probe.h"      // A34 STEP 0: which mechanism can read a list_store row
@@ -192,7 +193,8 @@ void Install(coop::net::Session& session) {
     coop::signal_sync::Install(&session);    // v65: desk signal-library mirror (savedSignals_0 shadow/diff)
     coop::meadow_db_sync::Install(&session); // v120 (L9): meadow-DB mirror (content-hash multiset + id-preserving replay)
     coop::comp_sync::Install(&session);      // v65: refiner decode pane (single-simulator stream + passive mirrors)
-    coop::voice_chat::Install(&session);     // v66: proximity voice chat (opus over the session; PTT X)
+    coop::voice_chat::Install(&session);     // v66: proximity voice chat
+    coop::radio_item::Install();              // walkie: hold-E power interaction
     coop::window_sync::Install(&session);    // v41 base-window dirt scalar (the "main huge window")
     coop::grime_sync::Install(&session);     // v42 surface grime (walls/ceiling/floor dirt decals)
     coop::trash_pile_sync::Install(&session);  // v57 trashBitsPile collect counters (uses 6/7)
@@ -476,6 +478,7 @@ DisconnectStats DisconnectAll() {
     coop::signal_sync::OnDisconnect();
     coop::meadow_db_sync::OnDisconnect(); // v120 (L9): shadow + pending + tombstones + seed snapshots
     coop::comp_sync::OnDisconnect();
+    coop::radio_item::OnDisconnect();
     coop::voice_chat::OnDisconnect();
     coop::window_sync::OnDisconnect();
     coop::grime_sync::OnDisconnect();
@@ -589,7 +592,8 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sleep"}; coop::sleep_sync::Tick(); }  // v71: isSleep edge poll + WAITING dilation enforcement + the client need clamp
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:wisp_attack"}; coop::wisp_attack_sync::Tick(); }  // v72: host detect wisp-grabs-client -> neutralize + relay (host-only, no-op on client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:wisp_tear"}; coop::wisp_tear_mirror::Tick(); }  // v72: discharge the victim's scheduled ragdoll death (any peer, no-op until armed)
-    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:player_inventory"}; coop::player_inventory_sync::Tick(); }  // v73: inventory read-verify self-test (Inc2; no-op unless inventory_selftest=1)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:player_inventory"}; coop::player_inventory_sync::Tick(); }  // v73: inventory read-verify self-test
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:walkie"}; coop::radio_item::Tick(); }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:inventory_probe"}; coop::dev::inventory_probe::Tick(); }  // v73 Inc4: SP apply round-trip self-test (no-op unless inventory_probe=1)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:live_store_readout"}; coop::dev::live_store_readout::Tick(); }  // 2026-07-24: READ-ONLY observability for the live personal store (GObjStack[playerContainer.Index]) + the by-content gap vs the projection (no-op unless live_store_readout=1)
     // v57: trashBitsPile collect-counter poll + depletion death-watch. (The chipPile mirror-PILE

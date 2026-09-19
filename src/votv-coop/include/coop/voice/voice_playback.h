@@ -90,6 +90,7 @@ private:
         std::atomic<int64_t> lastFrameMs{0};
         std::atomic<bool> whispering{false};
         std::atomic<bool> radio{false};
+        std::atomic<uint8_t> radioInterference{0};
 
         // Mixer position (GT writes, callback reads; per-component atomics --
         // a torn read across components misplaces one 10 ms block, inaudible).
@@ -97,6 +98,12 @@ private:
         std::atomic<bool> posValid{false};
 
         std::atomic<float> volume{1.0f};
+
+        // Walkie DSP state. Audio-callback thread only.
+        float radioHpPrevIn = 0.0f;
+        float radioHpPrevOut = 0.0f;
+        float radioLp = 0.0f;
+        uint32_t radioNoise = 0x6D2B79F5u;
     };
 
     void DeliverInOrder(Channel& ch, const coop::net::VoiceFramePayload& f);

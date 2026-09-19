@@ -3338,9 +3338,9 @@ inline constexpr uint8_t kVoiceFlagWhisper = 0x01;
 inline constexpr uint8_t kVoiceFlagStop    = 0x02;
 inline constexpr uint8_t kVoiceFlagRadio   = 0x04; // bypass proximity attenuation
 struct VoiceFramePayload {
-    uint8_t  flags;     // kVoiceFlag*
-    uint8_t  _pad;
-    uint16_t opusLen;   // 0 for the stop marker
+    uint8_t  flags;          // kVoiceFlag*
+    uint8_t  interference;   // radio static severity: 0=clean, 255=severe
+    uint16_t opusLen;        // 0 for the stop marker
     uint32_t seq;       // per-sender voice seq (NOT the header seq)
     uint8_t  opus[kVoiceMaxOpusBytes];
 };

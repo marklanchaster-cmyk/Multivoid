@@ -8,6 +8,7 @@
 #include "coop/player/remote_player.h"
 #include "coop/voice/voice_capture.h"
 #include "coop/voice/voice_playback.h"
+#include "coop/voice/radio_state.h"
 
 #include "coop/config/config.h"
 
@@ -214,6 +215,15 @@ void Tick() {
     while (g_capture.PopFrame(ef)) {
         coop::net::VoiceFramePayload f{};
         f.flags = ef.flags;
+
+        if ((ef.flags & coop::net::kVoiceFlagRadio) != 0) {
+            float level = coop::radio_state::Interference();
+            if (level < 0.0f) level = 0.0f;
+            if (level > 1.0f) level = 1.0f;
+            f.interference =
+                static_cast<uint8_t>(level * 255.0f + 0.5f);
+        }
+
         f.opusLen = ef.len;
         f.seq = g_sendSeq++;
         if (ef.len) std::memcpy(f.opus, ef.opus, ef.len);
