@@ -92,10 +92,10 @@ void TrySpawnMeshProbe() {
     ue_wrap::FVector loc = E::GetActorLocation(local);
     const ue_wrap::FVector fwd = E::GetActorForwardVector(local);
 
-    // About 1.5 m ahead and slightly elevated so it's impossible to miss.
-    loc.X += fwd.X * 150.f;
-    loc.Y += fwd.Y * 150.f;
-    loc.Z += 40.f;
+    // About 1 m ahead and 80 cm elevated so it's impossible to miss.
+    loc.X += fwd.X * 100.f;
+    loc.Y += fwd.Y * 100.f;
+    loc.Z += 80.f;
 
     void* actor = E::SpawnActor(actorClass, loc, false);
     if (!actor) {
@@ -122,6 +122,7 @@ void TrySpawnMeshProbe() {
     // Our Blender model's long axis currently maps to UE Y.
     // Roll 90 degrees so the handheld stands upright for the visual test.
     E::SetActorRotation(actor, ue_wrap::FRotator{0.f, 0.f, 90.f});
+    E::SetActorScale3D(actor, ue_wrap::FVector{5.f, 5.f, 5.f});
 
     // Visual probe only; don't let it interfere with player collision.
     E::SetActorRootCollisionEnabled(actor, 0);
