@@ -77,8 +77,8 @@ void TrySpawnMeshProbe() {
         return;
 
     void* mesh = ue_wrap::asset_load::LoadObjectByPath(
-        L"/Game/Mods/VOTVCoop/walkie/"
-        L"atvRadio_radio_prop.atvRadio_radio_prop");
+        L"/Game/Mods/VOTVCoop/"
+        L"citizenradio_reference.citizenradio_reference");
 
     if (!mesh)
         return;
@@ -119,10 +119,24 @@ void TrySpawnMeshProbe() {
         return;
     }
 
+    // Temporary proof-of-concept material override.
+    // Use VOTV's flat black material so our custom UVs cannot sample the
+    // citizen-radio texture atlas.
+    void* blackMaterial = ue_wrap::asset_load::LoadObjectByPath(
+        L"/Game/materials/basic/inst_color_black.inst_color_black");
+
+    if (blackMaterial) {
+        if (!E::SetComponentMaterial(comp, 0, blackMaterial)) {
+            UE_LOGW("walkie: mesh probe -- black material override failed");
+        }
+    } else {
+        UE_LOGW("walkie: mesh probe -- inst_color_black failed to load");
+    }
+
     // Our Blender model's long axis currently maps to UE Y.
     // Roll 90 degrees so the handheld stands upright for the visual test.
     E::SetActorRotation(actor, ue_wrap::FRotator{0.f, 0.f, 90.f});
-    E::SetActorScale3D(actor, ue_wrap::FVector{5.f, 5.f, 5.f});
+    E::SetActorScale3D(actor, ue_wrap::FVector{1.f, 1.f, 1.f});
 
     // Visual probe only; don't let it interfere with player collision.
     E::SetActorRootCollisionEnabled(actor, 0);
