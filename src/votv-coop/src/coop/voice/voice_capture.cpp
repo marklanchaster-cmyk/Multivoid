@@ -255,12 +255,17 @@ void Capture::ProcessFrame(const int16_t* samples) {
         (toneMode_ || !ui::input_focus::IsOverlayCapturingText());
     const bool whisperHeld =
         keysLive && cfg_.whisperVk != 0 && (GetAsyncKeyState(cfg_.whisperVk) & 0x8000) != 0;
+    const bool radioHeld =
+        keysLive && cfg_.radioVk != 0 && (GetAsyncKeyState(cfg_.radioVk) & 0x8000) != 0;
     bool wantActive = false;
     if (!muted_.load(std::memory_order_relaxed) && foreground) {
         if (cfg_.activationMode) {
-            wantActive = db >= thresholdDb_.load(std::memory_order_relaxed) || whisperHeld;
+            wantActive = db >= thresholdDb_.load(std::memory_order_relaxed) ||
+                         whisperHeld || radioHeld;
         } else {
-            wantActive = (keysLive && (GetAsyncKeyState(cfg_.pttVk) & 0x8000) != 0) || whisperHeld;
+            wantActive =
+                (keysLive && (GetAsyncKeyState(cfg_.pttVk) & 0x8000) != 0) ||
+                whisperHeld || radioHeld;
         }
     }
     if (wantActive) {
@@ -282,6 +287,7 @@ void Capture::ProcessFrame(const int16_t* samples) {
 
     EncodedFrame f{};
     if (whisperHeld) f.flags |= coop::net::kVoiceFlagWhisper;
+    if (radioHeld)   f.flags |= coop::net::kVoiceFlagRadio;
     const opus_int32 n = opus_encode(static_cast<OpusEncoder*>(encoder_), buf, kFrameSamples,
                                      f.opus, coop::net::kVoiceMaxOpusBytes);
     if (n <= 0) {

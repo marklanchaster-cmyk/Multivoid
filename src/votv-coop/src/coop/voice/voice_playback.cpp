@@ -141,6 +141,7 @@ void Playback::ResetSlot(int slot) {
     ch.primed.store(false);
     ch.lastFrameMs.store(0);
     ch.whispering.store(false);
+    ch.radio.store(false);
     ch.posValid.store(false);
 }
 
@@ -291,6 +292,8 @@ void Playback::DeliverInOrder(Channel& ch, const coop::net::VoiceFramePayload& f
 
     ch.whispering.store((f.flags & coop::net::kVoiceFlagWhisper) != 0,
                         std::memory_order_relaxed);
+    ch.radio.store((f.flags & coop::net::kVoiceFlagRadio) != 0,
+                   std::memory_order_relaxed);
     ch.lastFrameMs.store(NowMs(), std::memory_order_relaxed);
 }
 
@@ -333,8 +336,10 @@ void Playback::MixOutput(float* out, uint32_t frameCount) {
         }
 
         // Spatial params once per callback block (~10 ms).
+        // Radio frames bypass proximity attenuation and positional panning.
         float gainL = 1.0f, gainR = 1.0f;
-        if (ch.posValid.load(std::memory_order_relaxed)) {
+        const bool radio = ch.radio.load(std::memory_order_relaxed);
+        if (!radio && ch.posValid.load(std::memory_order_relaxed)) {
             const float dx = ch.posX.load(std::memory_order_relaxed) - lx;
             const float dy = ch.posY.load(std::memory_order_relaxed) - ly;
             const float dz = ch.posZ.load(std::memory_order_relaxed) - lz;

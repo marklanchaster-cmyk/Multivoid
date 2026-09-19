@@ -89,6 +89,7 @@ private:
         // TalkCache + per-frame whisper state (icons + attenuation radius).
         std::atomic<int64_t> lastFrameMs{0};
         std::atomic<bool> whispering{false};
+        std::atomic<bool> radio{false};
 
         // Mixer position (GT writes, callback reads; per-component atomics --
         // a torn read across components misplaces one 10 ms block, inaudible).

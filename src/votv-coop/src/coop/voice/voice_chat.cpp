@@ -109,6 +109,7 @@ void StartDevices() {
     // Default PTT 'G' (user 2026-06-12; was X -- clashed with VOTV binds). An
     // explicit voice.ptt_key in the ini still wins.
     cc.pttVk = ParseKey(CFG::ResolveString(coop::config_registry::rows::voice_ptt_key), 'G');
+    cc.radioVk = 'R';
     cc.whisperVk = ParseKey(CFG::ResolveString(coop::config_registry::rows::voice_whisper_key), 0);
     cc.thresholdDb = CFG::ResolveFloat(coop::config_registry::rows::voice_threshold_db);
     cc.gainDb = CFG::ResolveFloat(coop::config_registry::rows::voice_mic_gain_db);

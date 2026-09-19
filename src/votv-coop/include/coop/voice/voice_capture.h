@@ -29,7 +29,8 @@ namespace coop::voice {
 
 struct CaptureConfig {
     bool        activationMode = false;  // false = PTT (SVC default), true = voice-activation
-    int         pttVk = 'X';             // user-mandated default key
+    int         pttVk = 'X';             // normal proximity PTT
+    int         radioVk = 'R';            // walkie-radio PTT
     int         whisperVk = 0;           // 0 = whisper disabled
     float       thresholdDb = -50.0f;    // activation-mode peak threshold
     float       gainDb = 0.0f;           // manual mic gain (-40..+24)
