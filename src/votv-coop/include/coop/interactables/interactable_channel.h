@@ -31,6 +31,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/walk_timer.h"         // per-channel RebuildIndex [WALK-TIME] (R-2 phase split)
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/actors/prop.h"          // B2 probe: the parent prop's own Key
 #include "ue_wrap/core/sdk_profile.h"   // UObject_ObjectFlags (the offsets live in ONE file)
 
 #include <atomic>
