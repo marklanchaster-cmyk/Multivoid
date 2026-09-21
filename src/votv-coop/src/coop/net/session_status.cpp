@@ -58,7 +58,15 @@ namespace {
 // (still functional, just no priority routing).
 void ConfigureLanesForPeer(HSteamNetConnection hConn) {
     constexpr int kLaneCount = 3;  // matches Lane::Count in session.cpp
-    const int priorities[kLaneCount] = { 0, 1, 2 };
+    // All lanes share one priority class so the weights actually provide
+    // weighted-fair scheduling.  Distinct priorities here are STRICT in GNS:
+    // {0,1,2} can permanently starve Bulk while High/Normal remain busy.
+    //
+    // Effective bandwidth share while all are busy:
+    //   High   4/7
+    //   Normal 2/7
+    //   Bulk   1/7
+    const int priorities[kLaneCount] = { 0, 0, 0 };
     const uint16 weights[kLaneCount] = { 4, 2, 1 };
     const EResult rc = SteamNetworkingSockets()->ConfigureConnectionLanes(
         hConn, kLaneCount, priorities, weights);
