@@ -13,7 +13,10 @@
 #include "coop/net/session.h"
 
 #include "ue_wrap/devices/drone.h"
+#include "ue_wrap/core/call.h"
+#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"  // FVector, FRotator, NormalizeAxis
 
 #include <atomic>
@@ -26,6 +29,8 @@ namespace coop::drone_sync {
 namespace {
 
 namespace D = ue_wrap::drone;
+namespace GT = ue_wrap::game_thread;
+namespace R = ue_wrap::reflection;
 using ue_wrap::FVector;
 using ue_wrap::FRotator;
 
@@ -124,10 +129,76 @@ void ApplyMirror(void* drone, DroneMirror& e) {
     e.dirty = false;
 }
 
+
+bool g_consoleObserversInstalled = false;
+uint64_t g_lastConsoleRequestMs = 0;
+
+void SendConsoleRequest() {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() == coop::net::Role::Host) return;
+
+    const uint64_t now = NowMs();
+    if (now - g_lastConsoleRequestMs < 250) return;
+    g_lastConsoleRequestMs = now;
+
+    coop::net::DroneCommandPayload p{};
+    p.command = 1;
+    if (s->SendReliable(coop::net::ReliableKind::DroneCommandRequest, &p, sizeof(p)))
+        UE_LOGI("drone: client console press -> host request");
+}
+
+void OnConsoleVerb(void* /*self*/, void* /*function*/, void* /*params*/) {
+    SendConsoleRequest();
+}
+
+void InstallConsoleObservers() {
+    if (g_consoleObserversInstalled) return;
+
+    void* cls = R::FindClass(L"droneConsole_C");
+    if (!cls) return;
+
+    bool any = false;
+    const wchar_t* verbs[] = {L"playerHandUse_LMB", L"player_use"};
+    for (const wchar_t* fnName : verbs) {
+        void* fn = R::FindFunction(cls, fnName);
+        if (!fn) continue;
+        if (GT::RegisterPostObserver(fn, &OnConsoleVerb)) {
+            any = true;
+            UE_LOGI("drone: console command observer installed on %ls", fnName);
+        }
+    }
+
+    if (any) g_consoleObserversInstalled = true;
+}
+
+bool CallConsoleVerb(void* console, const wchar_t* fnName) {
+    if (!console) return false;
+    void* fn = R::FindFunction(R::ClassOf(console), fnName);
+    if (!fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    if (!f.valid()) return false;
+    return ue_wrap::Call(console, f);
+}
+
+bool ReplayConsolePressOnHost() {
+    void* console = R::FindObjectByClass(L"droneConsole_C");
+    if (!console || !R::IsLive(console)) {
+        UE_LOGW("drone: host command -- droneConsole_C not found");
+        return false;
+    }
+
+    if (CallConsoleVerb(console, L"playerHandUse_LMB")) return true;
+    if (CallConsoleVerb(console, L"player_use")) return true;
+
+    UE_LOGW("drone: host command -- neither console verb was callable");
+    return false;
+}
+
 }  // namespace
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    InstallConsoleObservers();
     // Install is the per-tick idempotent ensure path -- latch the log so it fires once, not 60x/s.
     if (!g_installLogged && D::EnsureResolved()) {
         UE_LOGI("drone: drone_sync installed (drone present=%d)", D::Find() != nullptr ? 1 : 0);
@@ -195,6 +266,24 @@ void OnReliable(const coop::net::DroneStatePayload& payload) {
     }
     g_m.lastStateBits = nb;
     g_m.haveStateBits = true;
+}
+
+void OnCommand(const coop::net::DroneCommandPayload& payload, uint8_t senderSlot) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() != coop::net::Role::Host) return;
+
+    if (senderSlot == 0 || senderSlot >= coop::net::kMaxPeers) {
+        UE_LOGW("drone: command request from invalid slot=%u -- dropping", senderSlot);
+        return;
+    }
+    if (payload.command != 1) {
+        UE_LOGW("drone: command=%u from slot=%u unsupported", payload.command, senderSlot);
+        return;
+    }
+
+    const bool ok = ReplayConsolePressOnHost();
+    UE_LOGI("drone: host console request from slot=%u replay=%s",
+            senderSlot, ok ? "OK" : "FAILED");
 }
 
 void QueueConnectBroadcastForSlot(int peerSlot) {

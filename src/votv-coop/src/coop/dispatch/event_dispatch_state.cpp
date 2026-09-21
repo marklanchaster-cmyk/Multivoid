@@ -17,6 +17,7 @@
 #include "coop/items/player_inventory_sync.h"  // v73 inventory blob receiver
 #include "coop/voice/voice_chat.h"
 #include "coop/interactables/drone_sync.h"
+#include "coop/interactables/repair_sync.h"
 #include "coop/interactables/grime_sync.h"
 #include "coop/interactables/interactable_sync.h"
 #include "coop/creatures/kerfur_convert_client.h"
@@ -236,6 +237,36 @@ bool HandleStateEvent(net::Session& session,
             break;
         }
         coop::drone_sync::OnReliable(dp);
+        break;
+    }
+    case net::ReliableKind::RepairOutcome: {
+        if (msg.payloadLen < sizeof(net::RepairOutcomePayload)) {
+            UE_LOGW("event_feed: RepairOutcome payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::RepairOutcomePayload));
+            break;
+        }
+        net::RepairOutcomePayload rp{};
+        std::memcpy(&rp, msg.payload, sizeof(rp));
+        const uint8_t senderSlot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::repair_sync::OnReliable(rp, senderSlot);
+        break;
+    }
+    case net::ReliableKind::DroneCommandRequest: {
+        if (msg.payloadLen < sizeof(net::DroneCommandPayload)) {
+            UE_LOGW("event_feed: DroneCommandRequest payload too short (%zu < %zu)",
+                    static_cast<size_t>(msg.payloadLen), sizeof(net::DroneCommandPayload));
+            break;
+        }
+        net::DroneCommandPayload cp{};
+        std::memcpy(&cp, msg.payload, sizeof(cp));
+        const uint8_t senderSlot =
+            (msg.senderPeerSlot >= 0 && msg.senderPeerSlot < net::kMaxPeers)
+                ? static_cast<uint8_t>(msg.senderPeerSlot)
+                : static_cast<uint8_t>(0xFF);
+        coop::drone_sync::OnCommand(cp, senderSlot);
         break;
     }
     // (OrderRequest: moved to the INTENT family, event_dispatch_intent.cpp, 2026-07-10.)

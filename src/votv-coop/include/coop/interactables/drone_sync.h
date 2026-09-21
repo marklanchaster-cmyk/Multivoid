@@ -22,9 +22,12 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace coop::net {
 class Session;
 struct DroneStatePayload;
+struct DroneCommandPayload;
 }  // namespace coop::net
 
 namespace coop::drone_sync {
@@ -37,6 +40,9 @@ void Install(coop::net::Session* session);
 // trust-gated to the host). The CLIENT suppresses its drone tick + pushes the pose into the interp
 // window. The host defensively no-ops. Called from event_feed's reliable drain loop.
 void OnReliable(const coop::net::DroneStatePayload& payload);
+
+// CLIENT->HOST console-call/dismiss request. Host replays the real console button action.
+void OnCommand(const coop::net::DroneCommandPayload& payload, uint8_t senderSlot);
 
 // HOST-only: snapshot the drone's current pose (adopt=1) to a freshly connected client `peerSlot`
 // so the joiner snaps to it (mid-flight or parked). Net-pump connect edge. Game thread.
