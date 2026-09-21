@@ -844,8 +844,7 @@ void Tick(coop::net::Session& session) {
         const bool poseAuthoritative =
             isHost ? worldUp
                    : (g_worldReadyAnnounced.load(std::memory_order_relaxed) &&
-                      !g_reAnnounceWorldReady.load(std::memory_order_relaxed) &&
-                      coop::join_membership_sweep::HasLoadTailQuiesced());
+                      !g_reAnnounceWorldReady.load(std::memory_order_relaxed));
         if (poseAuthoritative)
             coop::local_streams::Tick(session, g_netLocal.Raw(), g_netLocalController.Raw());
     }
