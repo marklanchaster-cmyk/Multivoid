@@ -17,7 +17,9 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
 #include "ue_wrap/core/types.h"  // FVector, FRotator, NormalizeAxis
+#include "ue_wrap/engine/engine.h"  // ReadMainPlayerLookAtActor
 
 #include <atomic>
 #include <chrono>
@@ -31,6 +33,7 @@ namespace {
 namespace D = ue_wrap::drone;
 namespace GT = ue_wrap::game_thread;
 namespace R = ue_wrap::reflection;
+namespace P = ue_wrap::profile;
 using ue_wrap::FVector;
 using ue_wrap::FRotator;
 
@@ -130,45 +133,78 @@ void ApplyMirror(void* drone, DroneMirror& e) {
 }
 
 
-bool g_consoleObserversInstalled = false;
+// The drone-console Blueprint verbs are EX_LocalVirtualFunction/BP-internal.
+// Passive ProcessEvent observers on droneConsole_C::player_use /
+// playerHandUse_LMB therefore never see a real player press. Use the same
+// proven seam as the HostAuth door lane instead: the local player's native,
+// ProcessEvent-visible E/use input, then inspect lookAtActor.
+bool g_consoleInputObserverInstalled = false;
+void* g_droneConsoleCls = nullptr;
 uint64_t g_lastConsoleRequestMs = 0;
+
+bool IsDroneConsoleTarget(void* actor) {
+    if (!actor || !R::IsLive(actor)) return false;
+    if (!g_droneConsoleCls)
+        g_droneConsoleCls = R::FindClass(L"droneConsole_C");
+    if (!g_droneConsoleCls) return false;
+
+    void* cls = R::ClassOf(actor);
+    if (!cls) return false;
+    if (cls == g_droneConsoleCls) return true;
+
+    void* bases[1] = { g_droneConsoleCls };
+    return R::IsDescendantOfAny(cls, bases, 1);
+}
 
 void SendConsoleRequest() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() == coop::net::Role::Host) return;
 
+    // InpActEvt_use can fire on both press/release. Keep one network command
+    // per physical tap; 400 ms is deliberately wider than the ~300 ms
+    // press/release pair already measured by the door lane.
     const uint64_t now = NowMs();
-    if (now - g_lastConsoleRequestMs < 250) return;
+    if (now - g_lastConsoleRequestMs < 400) return;
     g_lastConsoleRequestMs = now;
 
     coop::net::DroneCommandPayload p{};
     p.command = 1;
     if (s->SendReliable(coop::net::ReliableKind::DroneCommandRequest, &p, sizeof(p)))
-        UE_LOGI("drone: client console press -> host request");
+        UE_LOGI("drone: client E-use on drone console -> host request");
 }
 
-void OnConsoleVerb(void* /*self*/, void* /*function*/, void* /*params*/) {
+void OnConsoleUseInput(void* self, void* /*function*/, void* /*params*/) {
+    if (!self) return;
+
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;
+
+    void* aimed = ue_wrap::engine::ReadMainPlayerLookAtActor(self);
+    if (!IsDroneConsoleTarget(aimed)) return;
+
     SendConsoleRequest();
 }
 
-void InstallConsoleObservers() {
-    if (g_consoleObserversInstalled) return;
+void InstallConsoleInputObserver() {
+    if (g_consoleInputObserverInstalled) return;
 
-    void* cls = R::FindClass(L"droneConsole_C");
-    if (!cls) return;
+    void* playerCls = R::FindClass(P::name::MainPlayerClass);
+    if (!playerCls) return;
 
-    bool any = false;
-    const wchar_t* verbs[] = {L"playerHandUse_LMB", L"player_use"};
-    for (const wchar_t* fnName : verbs) {
-        void* fn = R::FindFunction(cls, fnName);
-        if (!fn) continue;
-        if (GT::RegisterPostObserver(fn, &OnConsoleVerb)) {
-            any = true;
-            UE_LOGI("drone: console command observer installed on %ls", fnName);
-        }
+    void* fn = R::FindFunction(playerCls, P::name::MainPlayerUseInputEventFn);
+    if (!fn) {
+        UE_LOGW("drone: main-player E/use UFunction not found -- console commands cannot be signalled");
+        g_consoleInputObserverInstalled = true;
+        return;
     }
 
-    if (any) g_consoleObserversInstalled = true;
+    if (!GT::RegisterPostObserver(fn, &OnConsoleUseInput)) {
+        UE_LOGW("drone: failed to register E/use observer for console commands");
+        return;
+    }
+
+    g_consoleInputObserverInstalled = true;
+    UE_LOGI("drone: E/use observer installed for drone-console commands");
 }
 
 bool CallConsoleVerb(void* console, const wchar_t* fnName) {
@@ -187,8 +223,16 @@ bool ReplayConsolePressOnHost() {
         return false;
     }
 
-    if (CallConsoleVerb(console, L"playerHandUse_LMB")) return true;
-    if (CallConsoleVerb(console, L"player_use")) return true;
+    // The request was authored by the player's E/use input, so replay the
+    // matching console use verb first. LMB remains a callable fallback.
+    if (CallConsoleVerb(console, L"player_use")) {
+        UE_LOGI("drone: host command replayed via console.player_use");
+        return true;
+    }
+    if (CallConsoleVerb(console, L"playerHandUse_LMB")) {
+        UE_LOGI("drone: host command replayed via console.playerHandUse_LMB fallback");
+        return true;
+    }
 
     UE_LOGW("drone: host command -- neither console verb was callable");
     return false;
@@ -198,7 +242,7 @@ bool ReplayConsolePressOnHost() {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    InstallConsoleObservers();
+    InstallConsoleInputObserver();
     // Install is the per-tick idempotent ensure path -- latch the log so it fires once, not 60x/s.
     if (!g_installLogged && D::EnsureResolved()) {
         UE_LOGI("drone: drone_sync installed (drone present=%d)", D::Find() != nullptr ? 1 : 0);
