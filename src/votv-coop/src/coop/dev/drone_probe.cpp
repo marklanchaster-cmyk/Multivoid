@@ -34,7 +34,7 @@ std::array<WatchedFn, 32> g_watched{};
 size_t g_watchedCount = 0;
 std::atomic<bool> g_receiveTickLogged{false};
 
-void OnDroneVerb(void* self, void* function, void* /*params*/) {
+void OnDroneVerb(void* self, void* function, void* params) {
     if (!ProbeEnabled()) return;
     for (size_t i = 0; i < g_watchedCount; ++i) {
         if (g_watched[i].fn != function) continue;
@@ -51,6 +51,37 @@ void OnDroneVerb(void* self, void* function, void* /*params*/) {
         }
         UE_LOGI("[drone_probe] VERB FIRED: %s (self=%p cls='%ls') -- ProcessEvent-DISPATCHED = OBSERVABLE",
                 g_watched[i].name, self, cls.c_str());
+
+        // Diagnostic for the console replay bug: a synthetic ParamFrame is zero-filled.
+        // Dump the REAL native player_use frame so we can see whether the game supplies
+        // an interactor/player/bool/etc. that the remote host replay currently omits.
+        if (std::strcmp(g_watched[i].name, "console.player_use") == 0) {
+            const int32_t frameSize = R::FunctionFrameSize(function);
+            const auto ps = R::FunctionParams(function);
+            UE_LOGI("[drone_probe] CONSOLE_FRAME size=%d params=%zu frame=%p",
+                    frameSize, ps.size(), params);
+
+            for (const auto& p : ps) {
+                uint64_t raw = 0;
+                bool readable = false;
+                if (params && p.offset >= 0 && p.size > 0 &&
+                    p.offset + p.size <= frameSize) {
+                    const int32_t n = p.size < static_cast<int32_t>(sizeof(raw))
+                                          ? p.size
+                                          : static_cast<int32_t>(sizeof(raw));
+                    std::memcpy(&raw,
+                                reinterpret_cast<const uint8_t*>(params) + p.offset,
+                                static_cast<size_t>(n));
+                    readable = true;
+                }
+
+                UE_LOGI("[drone_probe] CONSOLE_PARAM name='%ls' off=%d size=%d flags=0x%llX raw=0x%016llX readable=%d",
+                        p.name.c_str(), p.offset, p.size,
+                        static_cast<unsigned long long>(p.flags),
+                        static_cast<unsigned long long>(raw),
+                        readable ? 1 : 0);
+            }
+        }
         return;
     }
 }
