@@ -207,15 +207,6 @@ void InstallConsoleInputObserver() {
     UE_LOGI("drone: E/use observer installed for drone-console commands");
 }
 
-bool CallConsoleVerb(void* console, const wchar_t* fnName) {
-    if (!console) return false;
-    void* fn = R::FindFunction(R::ClassOf(console), fnName);
-    if (!fn) return false;
-    ue_wrap::ParamFrame f(fn);
-    if (!f.valid()) return false;
-    return ue_wrap::Call(console, f);
-}
-
 bool ReplayConsolePressOnHost() {
     void* console = R::FindObjectByClass(L"droneConsole_C");
     if (!console || !R::IsLive(console)) {
@@ -223,19 +214,56 @@ bool ReplayConsolePressOnHost() {
         return false;
     }
 
-    // The request was authored by the player's E/use input, so replay the
-    // matching console use verb first. LMB remains a callable fallback.
-    if (CallConsoleVerb(console, L"player_use")) {
-        UE_LOGI("drone: host command replayed via console.player_use");
-        return true;
-    }
-    if (CallConsoleVerb(console, L"playerHandUse_LMB")) {
-        UE_LOGI("drone: host command replayed via console.playerHandUse_LMB fallback");
-        return true;
+    // Do NOT call droneConsole_C::player_use directly here. Its native signature is
+    // player_use(Player, Hit), and a synthetic ParamFrame leaves both arguments zero.
+    // Instead, replay the HOST player's real E/use input event while temporarily making
+    // the console the player's lookAtActor. This is the same proven seam used by other
+    // host-auth interactions: the game's own BP chain then constructs Player + Hit and
+    // reaches console.player_use internally exactly as a native local press would.
+    void* player = R::FindObjectByClass(P::name::MainPlayerClass);
+    if (!player || !R::IsLive(player)) {
+        UE_LOGW("drone: host command -- mainPlayer_C not found");
+        return false;
     }
 
-    UE_LOGW("drone: host command -- neither console verb was callable");
-    return false;
+    void* playerCls = R::ClassOf(player);
+    void* useFn = playerCls ? R::FindFunction(playerCls, P::name::MainPlayerUseInputEventFn)
+                            : nullptr;
+    if (!useFn) {
+        UE_LOGW("drone: host command -- main-player E/use UFunction not found");
+        return false;
+    }
+
+    void* const priorAim = ue_wrap::engine::ReadMainPlayerLookAtActor(player);
+    if (!ue_wrap::engine::WriteMainPlayerLookAtActor(player, console)) {
+        UE_LOGW("drone: host command -- failed to override main-player lookAtActor");
+        return false;
+    }
+
+    // RAII restore: if the ProcessEvent path unwinds, do not leave the host player
+    // permanently aimed at the console. The next game tick would normally refresh it,
+    // but restoring here keeps the synthetic press side-effect-free.
+    struct AimRestore {
+        void* player;
+        void* actor;
+        ~AimRestore() {
+            ue_wrap::engine::WriteMainPlayerLookAtActor(player, actor);
+        }
+    } restore{player, priorAim};
+
+    ue_wrap::ParamFrame f(useFn);
+    if (!f.valid()) {
+        UE_LOGW("drone: host command -- E/use ParamFrame invalid");
+        return false;
+    }
+
+    if (!ue_wrap::Call(player, f)) {
+        UE_LOGW("drone: host command -- E/use replay dispatch failed");
+        return false;
+    }
+
+    UE_LOGI("drone: host command replayed via mainPlayer E/use with console aim override");
+    return true;
 }
 
 }  // namespace
