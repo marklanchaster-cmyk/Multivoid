@@ -206,9 +206,10 @@ inline Lane LaneForKind(ReliableKind k) {
 //     destroy / throw must replicate to every peer (the Aprop_C lineage is
 //     host-authoritative for spawns the HOST detects, but a client's own
 //     takeObj-path drop originates client-side and needs cross-peer fan-out).
-//   - DoorState / LightState / ContainerState / WindowCleanState / GrimeState:
-//     keyed interactables + dirt are SYMMETRIC (any peer can toggle / wipe one
-//     locally), so a client-originated edge must reach the OTHER clients via the host.
+//   - WindowCleanState / GrimeState and the explicitly peer-authored lanes below
+//     still use raw host relay. b65004 deliberately removes Door/Light/Container/
+//     Garage/Appliance/Locker and DriveSlot/DrivePayload from this list: those
+//     terminate at the host, are committed there, then the host authors the result.
 // NOT relayed:
 //   - Weather / RedSky / LightningStrike / EntitySpawn / EntityDestroy /
 //     RestoreVitals / TeleportClient / PlayerDamage: host-authoritative -- they
@@ -228,12 +229,6 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::PropConvert:       // v52: a client's clump ball->pile convert must reach the other clients
     case ReliableKind::PropRelease:
     case ReliableKind::PropStickState:    // v68: a client's wall-attachable stick (camera on a wall) must reach the other clients
-    case ReliableKind::DoorState:
-    case ReliableKind::LightState:
-    case ReliableKind::ContainerState:
-    case ReliableKind::GarageDoorState:   // v44: garage door is SYMMETRIC -- relay a client's open/close to the others
-    case ReliableKind::ApplianceState:    // v45: appliance on/off toggles are SYMMETRIC -- relay a client's edge to the others
-    case ReliableKind::LockerDoorState:   // v62: locker/console doors are SYMMETRIC -- relay a client's toggle to the others
     case ReliableKind::PowerControlState: // v46: base power panel breakers are SYMMETRIC -- relay a client's edge to the others
     case ReliableKind::AtvState:          // v47: ATV body pose is OCCUPANT-OR-GRABBER-authoritative -- relay a client driver's/grabber's pose to the other clients
     case ReliableKind::AtvRelease:        // v76: ATV grab-release/throw edge -- relay a client grabber's release to the other clients (companion to AtvState)
@@ -243,8 +238,6 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
     case ReliableKind::DeskScanEvent:     // v112: the SHIFT scan notification is PRESSER-authored -- relay so every mirror replays the spawnDirs visual (the beep rides DeskSndFx since v115)
     case ReliableKind::DeskSndFx:         // v115: desk audio effects are PRESSER-authored (organic Play/SetActive at the native seam) -- relay a client's fx to the others
     case ReliableKind::PlayDeckEvent:     // v117 (L6): deck playback edges are PRESSER-authored (organic Activate/Deactivate at the seam; any peer may stop) -- relay a client's edge to the others
-    case ReliableKind::DriveSlotState:    // v119 (L5): slot FSM lines are ANY-PEER-announced idempotent state -- relay a client's edge to the others (host canonical on conflict)
-    case ReliableKind::DrivePayload:      // v119 (L5): drive Data_0 rows are WRITER-authored -- relay a client writer's row to the others
     case ReliableKind::DishAimState:      // v64: dish aim is CLAIM-OWNER-authoritative -- relay a client occupant's stream to the others
     case ReliableKind::KeypadState:
     case ReliableKind::WindowCleanState:  // v41: base-window clean is SYMMETRIC -- relay a client's wipe to the others

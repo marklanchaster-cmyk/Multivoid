@@ -46,24 +46,22 @@ bool HandleStateEvent(net::Session& session,
     case net::ReliableKind::ApplianceState:
     case net::ReliableKind::LightGroupState:    // v150: the light GROUP's isActive (host-authored)
     case net::ReliableKind::LockerDoorState: {  // v62: lockers + drone-console doors (same KeyedToggle shape)
-        // LightGroupState is the one HOST-AUTHORED kind in this otherwise symmetric family, so
-        // it does not get the family's "any peer may send" treatment: a client that authored it
-        // would drive the host's AND every other client's lights, which is precisely the
-        // pollution the adapter chose HostAuth to prevent. Channel::OnReliable performs no role
-        // or sender check of its own, so the drop has to be here, at the family boundary.
-        // (Refused on the receiving CLIENT too, not only on the host -- the host relays nothing
-        // on this kind, so a packet arriving from a non-host slot is not ours either way.)
-        if (msg.kind == net::ReliableKind::LightGroupState && msg.senderPeerSlot != 0) {
-            UE_LOGW("event_feed: LightGroupState from slot %d refused -- this kind is host-authored",
-                    msg.senderPeerSlot);
-            return true;  // claimed by this family, deliberately not applied
+        // b65004 WORLD AUTHORITY. Clients consume this shared-world family
+        // only from slot 0. Symmetric client changes may arrive at the HOST, where
+        // interactable_sync commits them before broadcasting canonical state.
+        if (session.role() != net::Role::Host && msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: keyed world-state kind=%u from non-host slot %d refused",
+                    static_cast<unsigned>(msg.kind), msg.senderPeerSlot);
+            return true;
         }
-        // Phase 5D (v27): a peer toggled a keyed interactable (base door /
-        // light group / container lid / garage / appliance). SYMMETRIC -- any peer
-        // can send; the host relays a client-originated edge to the other clients
-        // (IsClientRelayableReliableKind) before this drain runs.
-        // interactable_sync routes by kind to the right channel, resolves the
-        // instance by Key, + idempotently applies on the GT (echo-suppressed).
+        if (session.role() == net::Role::Host && msg.senderPeerSlot != 0 &&
+            (msg.kind == net::ReliableKind::DoorState ||
+             msg.kind == net::ReliableKind::LightGroupState)) {
+            UE_LOGW("event_feed: host-authored keyed state kind=%u from client slot %d refused",
+                    static_cast<unsigned>(msg.kind), msg.senderPeerSlot);
+            return true;
+        }
+        // The generic channel resolves by portable/key identity and applies on GT.
         // (KeypadState is NOT here -- it carries a richer payload, its own case below.)
         // RE: research/findings/computers-devices/votv-doors-and-lightswitches-RE-2026-05-25.md.
         if (msg.payloadLen < sizeof(net::KeyedTogglePayload)) {

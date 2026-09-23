@@ -12,10 +12,10 @@
 //     is non-zero (throw), clear the cache.
 //
 // Methodology-wise this matches MTA's ucSyncTimeContext-style ownership
-// transfer: the sender (host) is authoritative for the held prop; the
-// receiver kinematically displays it. When the host releases, the prop's
-// physics resumes on every peer independently (same world state because
-// Aprop_C.heavy / .Static etc. are content-driven, identical cross-peer).
+// transfer: the current holder is authoritative while the prop is held and
+// receivers kinematically display it. On release, physics resumes; b65004 then
+// lets the HOST's copy settle and re-expresses that final transform so every
+// peer converges to the same resting pose the host save will persist.
 
 #pragma once
 
@@ -55,6 +55,12 @@ void Tick(coop::net::Session& session);
 // the BP's "throw stats" attribution will credit local (semantically a
 // minor inaccuracy in exchange for natural sound/effects).
 void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, void* localPlayer);
+
+// b65004: HOST-local release counterpart to OnRelease's client->host path.
+// Queues `actor` until the host physics copy comes to rest, then the existing
+// PropSpawn convergence lane re-expresses that final transform to all clients.
+// Safe no-op when called on a client/non-authority peer or with a bad actor.
+void QueueHostAuthoritySettle(void* actor);
 
 // v5: handle an incoming PropSpawn (peer dropped an inventory item into
 // the world). MOVED (M-1 2026-05-29) to coop::remote_prop_spawn::OnSpawn.

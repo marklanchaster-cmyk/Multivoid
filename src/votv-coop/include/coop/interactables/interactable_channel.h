@@ -149,8 +149,9 @@ public:
     // BP-internal verb the way a POST observer does (the doors `sent=0` bug, IDA-proven
     // 2026-06-04: doorOpen / SetActive / Open all dispatch via CallFunction ->
     // ProcessInternal, bypassing our ProcessEvent detour). It is the weather-style
-    // host-authoritative flag poll, generalized + made SYMMETRIC (each peer is
-    // authoritative over the changes it causes; the host relays client edges). The first
+    // host-authoritative flag poll, generalized + made SYMMETRIC at the input edge.
+    // b65004 changes the network topology: a client edge terminates at the host,
+    // the host applies it, then authors the canonical result to all clients. The first
     // sighting of a key primes the baseline SILENTLY -- initial divergence is the
     // connect-snapshot's job, so a fresh peer does not broadcast its whole world; only
     // genuine LIVE changes hit the wire. Echo is impossible: ApplyResolved updates
@@ -219,9 +220,11 @@ public:
             p.action = cur ? 1 : 0;
             if (s->SendReliable(a_.kind, &p, sizeof(p))) {
                 { std::lock_guard<std::mutex> lk(stateMutex_); lastKnown_[r.first] = cur; }
-                UE_LOGI("%s: sent %s key='%ls'", a_.name, cur ? "ON" : "OFF", r.first.c_str());
+                UE_LOGI("%s[worldauth]: TX local-state key='%ls' want=%s",
+                        a_.name, r.first.c_str(), cur ? "ON" : "OFF");
             } else {
-                UE_LOGW("%s: SendReliable failed key='%ls'", a_.name, r.first.c_str());
+                UE_LOGW("%s[worldauth]: TX FAILED key='%ls' want=%s",
+                        a_.name, r.first.c_str(), cur ? "ON" : "OFF");
             }
         }
     }
@@ -236,17 +239,39 @@ public:
         std::wstring key = StringFromWireKey(p.key);
         if (key.empty()) { UE_LOGW("%s: OnReliable empty key -- dropping", a_.name); return; }
         const bool want = (p.action != 0);
+        UE_LOGI("%s[worldauth]: RX state key='%ls' want=%s from slot %u",
+                a_.name, key.c_str(), want ? "ON" : "OFF", senderSlot);
         if (!a_.EnsureResolved()) {
             UE_LOGW("%s: apply -- class not resolved, dropping key='%ls'", a_.name, key.c_str());
             return;
         }
         void* actor = ResolveFast(key);
-        if (actor) { ApplyResolved(actor, key, want, senderSlot); return; }
-        // Not streamed in yet -- defer + retry on the throttled tick.
-        pending_[key] = Pending{ want, std::chrono::steady_clock::now() + kPendingTTL };
-        if (ProbeLog())
-            UE_LOGI("%s: '%ls' not present yet -- deferring %s (slot %u)",
-                    a_.name, key.c_str(), want ? "ON" : "OFF", senderSlot);
+        if (actor) {
+            ApplyResolved(actor, key, want, senderSlot);
+
+            // b65004: client-authored shared state terminates at the host.
+            // The host applies first, reads back reality, then authors the result.
+            auto* s = session_.load(std::memory_order_acquire);
+            if (mode_ == Mode::Symmetric && s &&
+                s->role() == coop::net::Role::Host &&
+                senderSlot > 0 && senderSlot < coop::players::kMaxPeers) {
+                bool canonical = want;
+                if (a_.ReadState(actor, canonical)) {
+                    BroadcastAndPrime(key, canonical, s);
+                    UE_LOGI("%s[worldauth]: host COMMIT key='%ls' -> %s from slot %u",
+                            a_.name, key.c_str(), canonical ? "ON" : "OFF", senderSlot);
+                } else {
+                    UE_LOGW("%s[worldauth]: host READBACK FAILED key='%ls' after apply from slot %u",
+                            a_.name, key.c_str(), senderSlot);
+                }
+            }
+            return;
+        }
+        // Preserve the origin so a delayed apply can still become a host commit.
+        pending_[key] = Pending{ want, std::chrono::steady_clock::now() + kPendingTTL,
+                                 senderSlot };
+        UE_LOGI("%s[worldauth]: DEFER key='%ls' want=%s from slot %u -- actor not indexed yet",
+                a_.name, key.c_str(), want ? "ON" : "OFF", senderSlot);
     }
 
     // HOST-only (HostAuth channels): a client asked to open/close this door. This is the
@@ -265,9 +290,23 @@ public:
         auto* s = session_.load(std::memory_order_acquire);
         if (!s || s->role() != coop::net::Role::Host) return;  // host applies requests
         std::wstring key = StringFromWireKey(p.key);
-        if (key.empty() || !a_.EnsureResolved()) return;
+        UE_LOGI("%s[worldauth]: RX request key='%ls' action=%u from slot %u",
+                a_.name, key.c_str(), static_cast<unsigned>(p.action), senderSlot);
+        if (key.empty()) {
+            UE_LOGW("%s[worldauth]: DROP request with empty key from slot %u", a_.name, senderSlot);
+            return;
+        }
+        if (!a_.EnsureResolved()) {
+            UE_LOGW("%s[worldauth]: DROP request key='%ls' -- class unresolved (slot %u)",
+                    a_.name, key.c_str(), senderSlot);
+            return;
+        }
         void* actor = ResolveFast(key);
-        if (!actor) return;  // the door must exist host-side (it is authoritative there)
+        if (!actor) {
+            UE_LOGW("%s[worldauth]: DROP request key='%ls' -- host actor unresolved (slot %u)",
+                    a_.name, key.c_str(), senderSlot);
+            return;
+        }
         // No hold register for this feature: a client request is simply the host performing
         // the action under its own guards, and the resulting state goes out on the next poll.
         // (Doors need the register because their own autoclose fights an applied state; a
@@ -278,6 +317,9 @@ public:
                 return;
             }
             a_.RequestApply(actor, p.action != 0);
+            UE_LOGI("%s[worldauth]: host REQUEST-APPLY key='%ls' action=%u from slot %u "
+                    "(canonical state will be emitted by poll)",
+                    a_.name, key.c_str(), static_cast<unsigned>(p.action), senderSlot);
             return;
         }
         // holdOpen_[key] is a BITMASK of the peer slots currently holding this door open
@@ -461,15 +503,33 @@ public:
                 for (auto it = pending_.begin(); it != pending_.end();) {
                     void* actor = ResolveFast(it->first);
                     if (actor) {
-                        ApplyResolved(actor, it->first, it->second.want, 0xFF);
+                        const unsigned origin = it->second.senderSlot;
+                        const bool want = it->second.want;
+                        const std::wstring key = it->first;
+                        ApplyResolved(actor, key, want, origin);
+
+                        auto* s = session_.load(std::memory_order_acquire);
+                        if (mode_ == Mode::Symmetric && s &&
+                            s->role() == coop::net::Role::Host &&
+                            origin > 0 && origin < coop::players::kMaxPeers) {
+                            bool canonical = want;
+                            if (a_.ReadState(actor, canonical)) {
+                                BroadcastAndPrime(key, canonical, s);
+                                UE_LOGI("%s[worldauth]: deferred host COMMIT key='%ls' -> %s from slot %u",
+                                        a_.name, key.c_str(), canonical ? "ON" : "OFF", origin);
+                            } else {
+                                UE_LOGW("%s[worldauth]: deferred host READBACK FAILED key='%ls' from slot %u",
+                                        a_.name, key.c_str(), origin);
+                            }
+                        }
                         it = pending_.erase(it);
                         ++applied;
                     } else if (stablePasses_ >= kSettlePassesForExpiry) {
                         // The world stopped streaming and it is still not here -- a real
                         // diagnosis, and the count that grades this lane.
-                        if (ProbeLog())
-                            UE_LOGI("%s: deferred '%ls' expired (index settled %d passes, still "
-                                    "not present on this peer)", a_.name, it->first.c_str(), stablePasses_);
+                        UE_LOGW("%s[worldauth]: DROP deferred key='%ls' from slot %u -- "
+                                "index settled %d passes and actor is still absent",
+                                a_.name, it->first.c_str(), it->second.senderSlot, stablePasses_);
                         it = pending_.erase(it);
                         ++expired;
                     } else if (now >= it->second.deadline) {
@@ -477,10 +537,9 @@ public:
                         // never settled for ten minutes, which is a bug signal about the hub
                         // or the world, not about this instance -- so it says so, loudly, and
                         // is counted separately from the settled expiry above.
-                        UE_LOGW("%s: deferred '%ls' hit the %lld-minute BACKSTOP -- the index "
-                                "never settled (stablePasses=%d); this is a hub/world signal, "
-                                "not a missing instance",
-                                a_.name, it->first.c_str(),
+                        UE_LOGW("%s[worldauth]: deferred key='%ls' from slot %u hit the %lld-minute "
+                                "BACKSTOP -- index never settled (stablePasses=%d); hub/world signal",
+                                a_.name, it->first.c_str(), it->second.senderSlot,
                                 static_cast<long long>(std::chrono::duration_cast<std::chrono::minutes>(kPendingTTL).count()),
                                 stablePasses_);
                         it = pending_.erase(it);
@@ -675,7 +734,11 @@ public:
 
 private:
     struct Ref { void* actor; int32_t idx; };
-    struct Pending { bool want; std::chrono::steady_clock::time_point deadline; };
+    struct Pending {
+        bool want;
+        std::chrono::steady_clock::time_point deadline;
+        unsigned senderSlot = 0xFF;
+    };
 
     void* ResolveFast(const std::wstring& key) {
         if (!IndexCurrent()) return nullptr;  // stale-gen index = another world's actors
@@ -713,8 +776,8 @@ private:
         echo_.store(false, std::memory_order_release);
         { std::lock_guard<std::mutex> lk(stateMutex_); lastKnown_[key] = want; }
         MaybeSuppressClientAutonomy(actor);  // HostAuth client: mute auto-revert so the applied state holds
-        UE_LOGI("%s: applied %s key='%ls' ok=%d (from slot %u)",
-                a_.name, want ? "ON" : "OFF", key.c_str(), ok ? 1 : 0, fromSlot);
+        UE_LOGI("%s[worldauth]: APPLY key='%ls' want=%s ok=%d from slot %u",
+                a_.name, key.c_str(), want ? "ON" : "OFF", ok ? 1 : 0, fromSlot);
     }
 
     // HostAuth + CLIENT role only: render-only doors must not auto-revert the host's

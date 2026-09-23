@@ -14,6 +14,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_snapshot.h"  // b65004: host rest-pose convergence after client releases
 #include "coop/props/prop_stick_sync.h"  // v68: stuck wall-attachable gates (unstick + release)
 #include "coop/element/identity_create.h"  // CreateOrAdoptPropMirror (the prop-mirror bind keystone; RegisterPropMirror forwards)
 #include "coop/props/trash_channel.h"  // docs/piles/08: per-eid sync-time-context (stale carry/convert drop)
@@ -68,6 +69,20 @@ struct PendingUnstick {
 std::array<PendingUnstick, coop::players::kMaxPeers> g_pendingUnstick{};
 constexpr int      kUnstickStreak   = 5;
 constexpr uint64_t kUnstickWindowMs = 400;  // streak resets after this gap (stale burst over)
+
+// b65004: after a CLIENT releases a HOST-OWNED persistent Aprop_C, the host
+// remains the physics authority until that copy settles. At rest we re-express
+// exactly that actor through the already-proven PropSpawn convergence path,
+// which corrects every client to the transform the HOST will save.
+struct HostSettleCorrection {
+    void* actor = nullptr;
+    int32_t actorIdx = -1;
+    uint64_t expiresMs = 0;
+    int sourceSlot = -1;
+};
+std::vector<HostSettleCorrection> g_hostSettle;
+constexpr uint64_t kHostSettleTtlMs = 30000;
+constexpr size_t kHostSettleCap = 64;
 
 // True if `actor` is the cached drive target of ANY slot's drive state.
 }  // namespace [drive helpers part 1]
@@ -153,6 +168,107 @@ bool StickHoldsPhysicsOff(void* actor) {
     // Same validated-or-null param contract as DriveTogglePhysics above.
     return actor && ue_wrap::prop::IsDescendantOfProp(actor) &&
            (ue_wrap::prop::IsFrozen(actor) || ue_wrap::prop::IsStatic(actor));
+}
+
+void QueueHostSettleCorrection(void* actor, int senderSlot) {
+    // Only the HOST broadcasts incremental PropSpawn, and only client-originated
+    // releases need a handback. Client-born mirrors deliberately stay out: they
+    // have no host-local Prop Element and therefore are not part of the host save
+    // authority this correction is meant to persist.
+    if (senderSlot < 0) return;
+    if (!coop::prop_snapshot::ExpressWouldBroadcast()) {
+        // sourceSlot==0 is the ordinary client receiving the HOST's release;
+        // that peer must not queue authority work and does not need a warning.
+        if (senderSlot > 0) {
+            UE_LOGW("remote_prop[worldauth]: REST-SKIP slot=%d -- this peer is not host authority",
+                    senderSlot);
+        }
+        return;
+    }
+    if (!actor) {
+        UE_LOGW("remote_prop[worldauth]: REST-SKIP slot=%d -- released actor unresolved", senderSlot);
+        return;
+    }
+    if (!R::IsLive(actor) || !ue_wrap::prop::IsDescendantOfProp(actor)) {
+        UE_LOGI("remote_prop[worldauth]: REST-SKIP actor=%p slot=%d -- not a live persistent Aprop",
+                actor, senderSlot);
+        return;
+    }
+    if (StickHoldsPhysicsOff(actor)) {
+        UE_LOGI("remote_prop[worldauth]: REST-SKIP actor=%p slot=%d -- frozen/static owns final pose",
+                actor, senderSlot);
+        return;
+    }
+
+    const auto eid = coop::prop_element_tracker::GetPropElementIdForActor(actor);
+    if (eid == coop::element::kInvalidId || eid == 0) {
+        UE_LOGI("remote_prop[worldauth]: REST-SKIP actor=%p slot=%d -- no host-local prop eid",
+                actor, senderSlot);
+        return;
+    }
+
+    const std::wstring key = ue_wrap::prop::GetInteractableKeyString(actor);
+    if (key.empty() || key == L"None") {
+        UE_LOGI("remote_prop[worldauth]: REST-SKIP actor=%p eid=%u slot=%d -- no stable key",
+                actor, static_cast<unsigned>(eid), senderSlot);
+        return;
+    }
+
+    const uint64_t expires = NowMs() + kHostSettleTtlMs;
+    for (auto& p : g_hostSettle) {
+        if (p.actor == actor) {
+            p.actorIdx = R::InternalIndexOf(actor);
+            p.expiresMs = expires;
+            p.sourceSlot = senderSlot;
+            UE_LOGI("remote_prop[worldauth]: REFRESH host rest-pose correction actor=%p slot=%d",
+                    actor, senderSlot);
+            return;
+        }
+    }
+    if (g_hostSettle.size() >= kHostSettleCap) {
+        UE_LOGW("remote_prop[worldauth]: settle queue cap hit -- dropping oldest correction");
+        g_hostSettle.erase(g_hostSettle.begin());
+    }
+    g_hostSettle.push_back(
+        HostSettleCorrection{actor, R::InternalIndexOf(actor), expires, senderSlot});
+    UE_LOGI("remote_prop[worldauth]: QUEUE rest-pose key='%ls' eid=%u source=%s%d",
+            key.c_str(), static_cast<unsigned>(eid),
+            senderSlot == 0 ? "host-local/" : "slot-", senderSlot);
+}
+
+void TickHostSettleCorrections(uint64_t nowMs) {
+    if (g_hostSettle.empty()) return;
+    for (auto it = g_hostSettle.begin(); it != g_hostSettle.end();) {
+        if (!R::IsLiveByIndex(it->actor, it->actorIdx)) {
+            UE_LOGW("remote_prop[worldauth]: REST-DROP actor=%p slot=%d -- actor died before settle",
+                    it->actor, it->sourceSlot);
+            it = g_hostSettle.erase(it);
+            continue;
+        }
+        if (nowMs >= it->expiresMs) {
+            UE_LOGW("remote_prop[worldauth]: host rest-pose correction expired before body settled (slot %d)",
+                    it->sourceSlot);
+            it = g_hostSettle.erase(it);
+            continue;
+        }
+        // Another player grabbed it before it settled. The live PropPose lane
+        // owns position until that later release.
+        if (IsActorUnderAnyDrive(it->actor) ||
+            !E::IsActorRootBodyAtRest(it->actor)) {
+            ++it;
+            continue;
+        }
+
+        const auto loc = E::GetActorLocation(it->actor);
+        const std::wstring key = ue_wrap::prop::GetInteractableKeyString(it->actor);
+        const auto eid = coop::prop_element_tracker::GetPropElementIdForActor(it->actor);
+        UE_LOGI("remote_prop[worldauth]: REST-READY key='%ls' eid=%u actor=%p slot=%d "
+                "loc=(%.1f,%.1f,%.1f) -- requesting host PropSpawn convergence",
+                key.c_str(), static_cast<unsigned>(eid), it->actor, it->sourceSlot,
+                loc.X, loc.Y, loc.Z);
+        coop::prop_snapshot::ExpressIncrementalSpawn(it->actor);
+        it = g_hostSettle.erase(it);
+    }
 }
 
 void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
@@ -262,6 +378,11 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
 
 }  // namespace
 
+void QueueHostAuthoritySettle(void* actor) {
+    // sourceSlot 0 denotes a release authored by the host's own local player.
+    QueueHostSettleCorrection(actor, 0);
+}
+
 void Tick(coop::net::Session& session) {
     // Drives g_drives across all slots (T-10, GT-only). Called every game-
     // thread tick from net_pump::Tick.
@@ -349,6 +470,11 @@ void Tick(coop::net::Session& session) {
             ResetDriveState(drive);
         }
     }
+
+    // b65004: a client release is allowed to run host physics, then the host
+    // commits the eventual rest transform once. This is what closes the
+    // "same drive settles somewhere different on each machine" gap.
+    TickHostSettleCorrections(nowMs);
 }
 
 void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, void* localPlayer) {
@@ -356,6 +482,8 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
     // event_feed on the game thread.
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::OnRelease)");
     const std::wstring keyW = KeyToWString(payload.key);
+    UE_LOGI("remote_prop[worldauth]: RX RELEASE slot=%d key='%ls' eid=%u ctx=%u",
+            senderSlot, keyW.c_str(), payload.elementId, static_cast<unsigned>(payload.ctx));
     const float linSpeedSq = payload.linVelX * payload.linVelX +
                              payload.linVelY * payload.linVelY +
                              payload.linVelZ * payload.linVelZ;
@@ -498,6 +626,11 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
     if (releasedSlot >= 0) {
         ResetDriveState(g_drives[releasedSlot]);
     }
+
+    // Do this AFTER clearing the sender's active drive so a passive drop that
+    // is already resting can commit on the next Tick instead of being held
+    // indefinitely by IsActorUnderAnyDrive().
+    QueueHostSettleCorrection(propActor, senderSlot);
 }
 
 namespace {
@@ -704,6 +837,7 @@ void ForceRelease() {
     if (released > 0) {
         UE_LOGI("remote_prop: force-release on disconnect/teardown (%d active drive(s) cleared)", released);
     }
+    g_hostSettle.clear();
     // A2 (2026-05-29): drain wire-received Prop mirrors on full session
     // teardown. Each mirror's dtor routes through Registry::UnregisterMirror
     // (m_mirror=true) so the Registry's m_byId slots in the foreign

@@ -190,8 +190,10 @@ void AnnounceSlot(int role, bool occupied, uint32_t eid) {
     p.occupied = occupied ? 1 : 0;
     p.censusIdx = 0;
     p.driveEid = eid;
-    s->SendReliable(coop::net::ReliableKind::DriveSlotState, &p, sizeof(p));
+    const bool ok = s->SendReliable(coop::net::ReliableKind::DriveSlotState, &p, sizeof(p));
     ++g_cSlotSent;
+    UE_LOGI("drive_sync[worldauth]: TX slot role=%u occupied=%u eid=%u ok=%d",
+            p.role, p.occupied, p.driveEid, ok ? 1 : 0);
 }
 
 // Read a slot's live state; diff vs baseline; announce the edge. `announce`
@@ -228,6 +230,8 @@ void SendPayload(uint32_t eid, const SD::Row& row, int toSlot /* -1 = all */) {
     else
         coop::blob_chunks::SendBlobToSlot(s, toSlot, coop::net::ReliableKind::DrivePayload, seq, blob);
     ++g_cPayloadSent;
+    UE_LOGI("drive_sync[worldauth]: TX payload eid=%u seq=%u bytes=%zu target=%d",
+            eid, seq, blob.size(), toSlot);
 }
 
 // Diff-gated sweep over every live drive (1 Hz + on dirty-mark). Emission
@@ -293,6 +297,8 @@ void ApplyPayloadBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot, bool
                 UE_LOGW("drive_sync: pending cap hit -- oldest dropped");
             }
             g_pending.push_back(std::move(pd));
+            UE_LOGI("drive_sync[worldauth]: DEFER payload eid=%u from slot %u -- actor unresolved",
+                    eid, senderSlot);
         }
         return;
     }
@@ -327,8 +333,17 @@ void ApplyPayloadBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot, bool
             g_driveBase[eid] = coop::blob_chunks::Fnv64(coop::signal_wire::Serialize(applied, false));
     }
     ++g_cPayloadApplied;
-    UE_LOGI("drive_sync: payload applied eid=%u (name='%ls' size=%.0f) from slot %u",
+    UE_LOGI("drive_sync[worldauth]: APPLY payload eid=%u name='%ls' size=%.0f from slot %u",
             eid, row.name.c_str(), row.size, senderSlot);
+
+    if (IsHost() && senderSlot > 0 && senderSlot < coop::net::kMaxPeers) {
+        SD::Row canonical;
+        if (DC::ReadDriveRow(actor, canonical)) {
+            SendPayload(eid, canonical, -1);
+            UE_LOGI("drive_sync[worldauth]: host COMMIT payload eid=%u from slot %u",
+                    eid, senderSlot);
+        }
+    }
 }
 
 // --------------------------------------------------------------------------
@@ -374,11 +389,12 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
             return;
         }
         if (cur && curEid != p.driveEid) {
-            // Conflict: locally captured a DIFFERENT drive. The HOST is
-            // canonical: host re-announces its state; a client converges to
-            // the incoming line (eject ours, insert theirs).
+            // Conflict: locally captured a DIFFERENT drive. The HOST refuses
+            // the requested replacement; the caller emits one canonical reply.
             if (IsHost()) {
-                AnnounceSlot(p.role, true, curEid);
+                UE_LOGW("drive_sync[worldauth]: REFUSED insert conflict role=%u requestedEid=%u "
+                        "hostEid=%u from slot %u",
+                        p.role, p.driveEid, curEid, senderSlot);
                 return;
             }
             coop::desk_snd_fx::ScopedWireApply guard;
@@ -395,6 +411,16 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
         UE_LOGI("drive_sync: slot role=%u INSERT eid=%u applied (from slot %u)",
                 p.role, p.driveEid, senderSlot);
     } else {
+        // b65004 WORLD AUTHORITY: a client EJECT names the drive it actually
+        // removed. Never let a stale "empty" observation eject a different,
+        // newer host occupant. A zero eid is ambiguous and therefore fails
+        // closed on the host; the canonical occupied row is sent back.
+        if (IsHost() && senderSlot > 0 && cur &&
+            (p.driveEid == 0 || curEid != p.driveEid)) {
+            UE_LOGW("drive_sync[worldauth]: REFUSED stale eject role=%u clientEid=%u hostEid=%u slot=%u",
+                    p.role, p.driveEid, curEid, senderSlot);
+            return;
+        }
         if (!cur) {  // already empty: prime + belt latch completion
             g_slotBase[p.role] = {true, false, 0};
             DC::CompleteEjectLatch(slot, LivePropActor(p.driveEid));
@@ -419,7 +445,16 @@ void RetryPendingTick() {
     std::vector<Pending> keep;
     for (auto& pd : g_pending) {
         if (now >= pd.until) {
-            UE_LOGW("drive_sync: pending apply kind=%d expired (actor never resolved)", pd.kind);
+            if (pd.kind == 0) {
+                UE_LOGW("drive_sync[worldauth]: DROP deferred slot role=%u occupied=%u eid=%u "
+                        "from slot %u -- actor never resolved",
+                        pd.slotLine.role, pd.slotLine.occupied, pd.slotLine.driveEid, pd.senderSlot);
+            } else {
+                uint32_t deadEid = 0;
+                if (pd.blob.size() >= 4) std::memcpy(&deadEid, pd.blob.data(), 4);
+                UE_LOGW("drive_sync[worldauth]: DROP deferred payload eid=%u from slot %u "
+                        "-- actor never resolved", deadEid, pd.senderSlot);
+            }
             continue;
         }
         bool done = false;
@@ -437,6 +472,20 @@ void RetryPendingTick() {
             void* drive = LivePropActor(pd.slotLine.driveEid);
             if (drive || !pd.slotLine.occupied) {
                 OnSlotLine(pd.slotLine, pd.senderSlot, /*fromPending*/true);
+                if (IsHost() && pd.senderSlot > 0 &&
+                    pd.senderSlot < coop::net::kMaxPeers) {
+                    void* slot = DC::SlotActor(pd.slotLine.role);
+                    if (slot) {
+                        void* canonicalDrive = DC::SlotDrive(slot);
+                        const uint32_t canonicalEid = canonicalDrive ? static_cast<uint32_t>(
+                            coop::element::Registry::Get().EidForActor(canonicalDrive)) : 0;
+                        AnnounceSlot(pd.slotLine.role, canonicalDrive != nullptr, canonicalEid);
+                        UE_LOGI("drive_sync[worldauth]: host CANONICAL deferred slot role=%u "
+                                "occupied=%d eid=%u after request from slot %u",
+                                pd.slotLine.role, canonicalDrive ? 1 : 0, canonicalEid,
+                                pd.senderSlot);
+                    }
+                }
                 done = true;
             }
         } else if (pd.kind == 1) {
@@ -533,14 +582,44 @@ void Tick() {
 }
 
 void OnDriveSlotState(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot) {
-    if (!DC::EnsureResolved()) return;
+    UE_LOGI("drive_sync[worldauth]: RX slot role=%u occupied=%u eid=%u from slot %u",
+            p.role, p.occupied, p.driveEid, senderSlot);
+    if (p.role >= DC::kRoleCount) {
+        UE_LOGW("drive_sync[worldauth]: DROP slot -- invalid role=%u from slot %u",
+                p.role, senderSlot);
+        return;
+    }
+    if (!DC::EnsureResolved()) {
+        UE_LOGW("drive_sync[worldauth]: DROP slot role=%u -- drive-chain classes unresolved",
+                p.role);
+        return;
+    }
     OnSlotLine(p, senderSlot, /*fromPending*/false);
+
+    if (IsHost() && senderSlot > 0 && senderSlot < coop::net::kMaxPeers &&
+        (!p.occupied || LivePropActor(p.driveEid))) {
+        void* slot = DC::SlotActor(p.role);
+        if (slot) {
+            void* drive = DC::SlotDrive(slot);
+            const uint32_t eid = drive ? static_cast<uint32_t>(
+                coop::element::Registry::Get().EidForActor(drive)) : 0;
+            AnnounceSlot(p.role, drive != nullptr, eid);
+            UE_LOGI("drive_sync[worldauth]: host CANONICAL slot role=%u occupied=%d eid=%u "
+                    "after request from slot %u",
+                    p.role, drive ? 1 : 0, eid, senderSlot);
+        }
+    }
 }
 
 void OnDrivePayloadChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
     std::vector<uint8_t> blob;
     if (!g_payloadAsm.OnChunk(p, senderSlot, blob)) return;
-    if (!DC::EnsureResolved()) return;
+    UE_LOGI("drive_sync[worldauth]: RX payload-complete bytes=%zu from slot %u",
+            blob.size(), senderSlot);
+    if (!DC::EnsureResolved()) {
+        UE_LOGW("drive_sync[worldauth]: DROP payload-complete -- drive-chain classes unresolved");
+        return;
+    }
     ApplyPayloadBlob(blob, senderSlot, /*fromPending*/false);
 }
 

@@ -599,6 +599,11 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
             session.SendPropRelease(g_lastHeldKey,
                                     vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
                                     vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z, relEid, /*relCtx=*/0u);
+            if (session.role() == coop::net::Role::Host && g_lastHeldProp.Alive()) {
+                UE_LOGI("remote_prop[worldauth]: HOST-LOCAL RELEASE actor=%p -> queue final rest convergence",
+                        g_lastHeldProp.Raw());
+                coop::remote_prop::QueueHostAuthoritySettle(g_lastHeldProp.Raw());
+            }
         }
         g_lastHeldProp.Reset();
         g_lastHeldKey = {};

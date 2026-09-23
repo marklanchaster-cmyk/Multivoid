@@ -2,6 +2,7 @@
 
 #include "coop/interactables/repair_sync.h"
 
+#include "coop/element/portable_identity.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 
@@ -54,9 +55,6 @@ Desc g_descs[] = {
     {kRepairGenerator,  L"transformerMGPanel_C", L"fixed",    L"Fixed",    true},
 };
 
-void* g_saveBase = nullptr;
-int32_t g_saveKeyOff = -1;
-
 std::unordered_map<std::string, bool> g_lastRepaired;
 uint64_t g_lastPoll = 0;
 
@@ -64,17 +62,6 @@ uint64_t NowMs() {
     using namespace std::chrono;
     return static_cast<uint64_t>(
         duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
-}
-
-void ResolveSharedKey() {
-    if (g_saveKeyOff >= 0) return;
-    if (!g_saveBase) g_saveBase = R::FindClass(L"actor_save_C");
-    if (!g_saveBase) return;
-    g_saveKeyOff = R::FindPropertyOffset(g_saveBase, L"Key");
-    if (g_saveKeyOff < 0) {
-        g_saveKeyOff = 0x0230;
-        UE_LOGW("repair_sync: actor_save_C.Key reflection failed -- fallback 0x0230");
-    }
 }
 
 void ResolveDesc(Desc& d) {
@@ -123,39 +110,10 @@ std::string NarrowAscii(const std::wstring& w) {
     return s;
 }
 
-uint64_t Fnv1a64(const std::string& s) {
-    uint64_t h = 1469598103934665603ull;
-    for (unsigned char c : s) {
-        h ^= c;
-        h *= 1099511628211ull;
-    }
-    return h;
-}
-
 std::string ActorIdentity(void* actor) {
-    ResolveSharedKey();
-
-    std::wstring id;
-    if (actor && g_saveBase && g_saveKeyOff >= 0) {
-        void* c = R::ClassOf(actor);
-        void* bases[1] = {g_saveBase};
-        if (c && R::IsDescendantOfAny(c, bases, 1)) {
-            const R::FName& key = *reinterpret_cast<const R::FName*>(
-                reinterpret_cast<const uint8_t*>(actor) + g_saveKeyOff);
-            id = R::ToString(key);
-            if (id == L"None") id.clear();
-        }
-    }
-    if (id.empty())
-        id = R::ToString(R::NameOf(actor));
-
-    std::string s = NarrowAscii(id);
-    if (s.size() <= 31) return s;
-
-    char buf[24]{};
-    std::snprintf(buf, sizeof(buf), "h%016llx",
-                  static_cast<unsigned long long>(Fnv1a64(s)));
-    return std::string(buf);
+    // b65004: one deterministic identity rule on every peer. Do not fall back
+    // to game Keys or UObject instance names that can be process-local.
+    return NarrowAscii(coop::element::PortableWireKey(actor));
 }
 
 void PutWireKey(coop::net::WireKey& out, const std::string& s) {
@@ -248,7 +206,7 @@ bool ApplyRepair(void* actor, Desc& d) {
 
     bool finalState = false;
     const bool ok = IsRepaired(actor, d, finalState) && finalState;
-    UE_LOGI("repair_sync: apply target=%u id='%s' called=%d repaired=%d",
+    UE_LOGI("repair_sync[worldauth]: APPLY target=%u id='%s' called=%d repaired=%d",
             static_cast<unsigned>(d.target), ActorIdentity(actor).c_str(),
             called ? 1 : 0, ok ? 1 : 0);
     return ok;
@@ -259,21 +217,30 @@ std::string BaselineKey(uint8_t target, const std::string& id) {
 }
 
 void NoteBaseline(uint8_t target, void* actor, bool repaired) {
-    g_lastRepaired[BaselineKey(target, ActorIdentity(actor))] = repaired;
+    const std::string id = ActorIdentity(actor);
+    if (!id.empty())
+        g_lastRepaired[BaselineKey(target, id)] = repaired;
 }
 
 void SendOutcome(uint8_t target, void* actor) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !actor) return;
 
+    const std::string id = ActorIdentity(actor);
+    if (id.empty()) {
+        UE_LOGW("repair_sync: target=%u has no portable identity -- outcome not authored",
+                static_cast<unsigned>(target));
+        return;
+    }
+
     coop::net::RepairOutcomePayload p{};
     p.target = target;
     p.repaired = 1;
-    PutWireKey(p.key, ActorIdentity(actor));
+    PutWireKey(p.key, id);
 
     if (s->SendReliable(coop::net::ReliableKind::RepairOutcome, &p, sizeof(p))) {
-        UE_LOGI("repair_sync: %s target=%u id='%s'",
-                s->role() == coop::net::Role::Host ? "host outcome" : "client repair request",
+        UE_LOGI("repair_sync[worldauth]: TX %s target=%u id='%s'",
+                s->role() == coop::net::Role::Host ? "host-outcome" : "client-request",
                 static_cast<unsigned>(target), GetWireKey(p.key).c_str());
     }
 }
@@ -293,8 +260,6 @@ void Tick() {
     if (now - g_lastPoll < kPollMs) return;
     g_lastPoll = now;
 
-    ResolveSharedKey();
-
     for (auto& d : g_descs) {
         ResolveDesc(d);
         if (!d.cls || d.stateOff < 0) continue;
@@ -306,11 +271,14 @@ void Tick() {
             if (!IsRepaired(obj, d, repaired)) continue;
 
             const std::string id = ActorIdentity(obj);
+            if (id.empty()) continue;
             const std::string bk = BaselineKey(d.target, id);
 
             auto it = g_lastRepaired.find(bk);
             if (it == g_lastRepaired.end()) {
                 g_lastRepaired.emplace(bk, repaired);
+                UE_LOGI("repair_sync[worldauth]: BASELINE target=%u id='%s' repaired=%d",
+                        static_cast<unsigned>(d.target), id.c_str(), repaired ? 1 : 0);
                 continue;
             }
 
@@ -335,6 +303,11 @@ void OnReliable(const coop::net::RepairOutcomePayload& p, uint8_t senderSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
 
+    UE_LOGI("repair_sync[worldauth]: RX target=%u id='%s' repaired=%u from slot=%u role=%s",
+            static_cast<unsigned>(p.target), GetWireKey(p.key).c_str(),
+            static_cast<unsigned>(p.repaired), senderSlot,
+            s->role() == coop::net::Role::Host ? "host" : "client");
+
     Desc* d = nullptr;
     void* actor = FindTarget(p, &d);
     if (!actor || !d) {
@@ -357,7 +330,7 @@ void OnReliable(const coop::net::RepairOutcomePayload& p, uint8_t senderSlot) {
 
         NoteBaseline(p.target, actor, true);
         s->SendReliable(coop::net::ReliableKind::RepairOutcome, &p, sizeof(p));
-        UE_LOGI("repair_sync: host ACCEPTED target=%u id='%s' from slot=%u",
+        UE_LOGI("repair_sync[worldauth]: host COMMIT+BROADCAST target=%u id='%s' from slot=%u",
                 static_cast<unsigned>(p.target), GetWireKey(p.key).c_str(), senderSlot);
         return;
     }
@@ -374,8 +347,6 @@ void OnReliable(const coop::net::RepairOutcomePayload& p, uint8_t senderSlot) {
 void OnDisconnect() {
     g_lastRepaired.clear();
     g_lastPoll = 0;
-    g_saveBase = nullptr;
-    g_saveKeyOff = -1;
 
     for (auto& d : g_descs) {
         d.cls = nullptr;

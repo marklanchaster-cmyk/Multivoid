@@ -438,16 +438,21 @@ void Tick() {
     if (!GT::IsGameThread()) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
+
+    ResolvePass();
+
+    if (s->role() != coop::net::Role::Host) {
+        // Suppression is an invariant now, not a 1 Hz maintenance job. A world
+        // load repopulates allEvents; close that window every gameplay tick.
+        ClientSuppressTick();
+        ClientDrainTick();
+        return;
+    }
+
     const long long now = NowMs();
     if (now - g_lastPollMs < kPollIntervalMs) return;
     g_lastPollMs = now;
-    ResolvePass();
-    if (s->role() == coop::net::Role::Host) {
-        HostPollTick();
-    } else {
-        ClientSuppressTick();
-        ClientDrainTick();
-    }
+    HostPollTick();
 }
 
 bool HostFire(FireKind kind, const std::wstring& eventName, const std::wstring& specialName) {
