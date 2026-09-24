@@ -207,62 +207,53 @@ void InstallConsoleInputObserver() {
     UE_LOGI("drone: E/use observer installed for drone-console commands");
 }
 
-bool ReplayConsolePressOnHost() {
+bool TriggerDroneFromConsoleOnHost() {
+    // Static RE of droneConsole_C::actionOptionIndex:
+    //
+    //   console action branch
+    //       -> drone.triggerFly(self)
+    //
+    // player_use itself enters ExecuteUbergraph_droneConsole @512, which is
+    // only EX_PopExecutionFlow. Replaying the host player's E/use therefore
+    // targets the wrong seam. Execute the exact native panel result instead:
+    // call the singleton drone's triggerFly(console).
+    void* drone = D::Find();
+    if (!drone || !R::IsLive(drone)) {
+        UE_LOGW("drone: host command -- drone_C not found");
+        return false;
+    }
+
     void* console = R::FindObjectByClass(L"droneConsole_C");
     if (!console || !R::IsLive(console)) {
         UE_LOGW("drone: host command -- droneConsole_C not found");
         return false;
     }
 
-    // Do NOT call droneConsole_C::player_use directly here. Its native signature is
-    // player_use(Player, Hit), and a synthetic ParamFrame leaves both arguments zero.
-    // Instead, replay the HOST player's real E/use input event while temporarily making
-    // the console the player's lookAtActor. This is the same proven seam used by other
-    // host-auth interactions: the game's own BP chain then constructs Player + Hit and
-    // reaches console.player_use internally exactly as a native local press would.
-    void* player = R::FindObjectByClass(P::name::MainPlayerClass);
-    if (!player || !R::IsLive(player)) {
-        UE_LOGW("drone: host command -- mainPlayer_C not found");
+    void* droneCls = R::ClassOf(drone);
+    void* triggerFn = droneCls ? R::FindFunction(droneCls, L"triggerFly") : nullptr;
+    if (!triggerFn) {
+        UE_LOGW("drone: host command -- drone_C::triggerFly not found");
         return false;
     }
 
-    void* playerCls = R::ClassOf(player);
-    void* useFn = playerCls ? R::FindFunction(playerCls, P::name::MainPlayerUseInputEventFn)
-                            : nullptr;
-    if (!useFn) {
-        UE_LOGW("drone: host command -- main-player E/use UFunction not found");
-        return false;
-    }
-
-    void* const priorAim = ue_wrap::engine::ReadMainPlayerLookAtActor(player);
-    if (!ue_wrap::engine::WriteMainPlayerLookAtActor(player, console)) {
-        UE_LOGW("drone: host command -- failed to override main-player lookAtActor");
-        return false;
-    }
-
-    // RAII restore: if the ProcessEvent path unwinds, do not leave the host player
-    // permanently aimed at the console. The next game tick would normally refresh it,
-    // but restoring here keeps the synthetic press side-effect-free.
-    struct AimRestore {
-        void* player;
-        void* actor;
-        ~AimRestore() {
-            ue_wrap::engine::WriteMainPlayerLookAtActor(player, actor);
-        }
-    } restore{player, priorAim};
-
-    ue_wrap::ParamFrame f(useFn);
+    ue_wrap::ParamFrame f(triggerFn);
     if (!f.valid()) {
-        UE_LOGW("drone: host command -- E/use ParamFrame invalid");
+        UE_LOGW("drone: host command -- triggerFly ParamFrame invalid");
         return false;
     }
 
-    if (!ue_wrap::Call(player, f)) {
-        UE_LOGW("drone: host command -- E/use replay dispatch failed");
+    void* consoleArg = console;
+    if (!f.Set<void*>(L"console", consoleArg)) {
+        UE_LOGW("drone: host command -- triggerFly console parameter unresolved");
         return false;
     }
 
-    UE_LOGI("drone: host command replayed via mainPlayer E/use with console aim override");
+    if (!ue_wrap::Call(drone, f)) {
+        UE_LOGW("drone: host command -- triggerFly dispatch failed");
+        return false;
+    }
+
+    UE_LOGI("drone: host command -> native drone.triggerFly(console)");
     return true;
 }
 
@@ -353,8 +344,8 @@ void OnCommand(const coop::net::DroneCommandPayload& payload, uint8_t senderSlot
         return;
     }
 
-    const bool ok = ReplayConsolePressOnHost();
-    UE_LOGI("drone: host console request from slot=%u replay=%s",
+    const bool ok = TriggerDroneFromConsoleOnHost();
+    UE_LOGI("drone: host console request from slot=%u triggerFly=%s",
             senderSlot, ok ? "OK" : "FAILED");
 }
 

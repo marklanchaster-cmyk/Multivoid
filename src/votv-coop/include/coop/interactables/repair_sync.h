@@ -7,7 +7,7 @@
 // Covered:
 //   serverBox_C                         IsBroken -> false
 //   radiotower_C                        IsBroken/isBroken -> false
-//   generator_C / transformerMGPanel_C  fixed -> true
+//   generator_C                       isBroken -> false (native fullFix)
 //
 // This intentionally syncs the OUTCOME, not each fuse/switch/rotator movement.
 

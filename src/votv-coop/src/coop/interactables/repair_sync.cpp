@@ -49,10 +49,9 @@ struct Desc {
 };
 
 Desc g_descs[] = {
-    {kRepairServer,     L"serverBox_C",          L"IsBroken", L"isBroken", false},
-    {kRepairRadioTower, L"radiotower_C",         L"IsBroken", L"isBroken", false},
-    {kRepairGenerator,  L"generator_C",          L"fixed",    L"Fixed",    true},
-    {kRepairGenerator,  L"transformerMGPanel_C", L"fixed",    L"Fixed",    true},
+    {kRepairServer,     L"serverBox_C",  L"IsBroken", L"isBroken", false},
+    {kRepairRadioTower, L"radiotower_C", L"IsBroken", L"isBroken", false},
+    {kRepairGenerator,  L"generator_C",  L"isBroken", L"IsBroken", false},
 };
 
 std::unordered_map<std::string, bool> g_lastRepaired;
@@ -195,15 +194,16 @@ bool ApplyRepair(void* actor, Desc& d) {
         if (!IsRepaired(actor, d, after) || !after)
             WriteRawBool(actor, d, false);
     } else if (d.target == kRepairGenerator) {
-        called = CallNoArg(actor, L"fix");
-        if (!called)
-            called = CallAllByteParams(actor, L"setFixed", true);
+        // generator_C owns the authoritative transformer repair state.
+        // Its native fullFix() completes the panel state, sets cycle=100,
+        // clears isBroken, fires turnedOn, and calls upd().
+        called = CallNoArg(actor, L"fullFix");
 
         bool after = false;
         if (!IsRepaired(actor, d, after) || !after) {
-            WriteRawBool(actor, d, true);
+            // Fail-safe only: fullFix() is the preferred native path.
+            WriteRawBool(actor, d, false);
             CallNoArg(actor, L"upd");
-            CallNoArg(actor, L"check");
         }
     }
 
