@@ -183,8 +183,11 @@ bool ApplyRepair(void* actor, Desc& d) {
         bool after = false;
         if (!IsRepaired(actor, d, after) || !after) {
             WriteRawBool(actor, d, false);
-            CallNoArg(actor, L"check");
         }
+
+        // check() refreshes the server box presentation from canonical IsBroken.
+        // Run it even when fix() already flipped the bool successfully.
+        CallNoArg(actor, L"check");
     } else if (d.target == kRepairRadioTower) {
         called = CallAllByteParams(actor, L"setBroken", false);
 
