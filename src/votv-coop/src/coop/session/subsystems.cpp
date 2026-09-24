@@ -48,6 +48,7 @@
 #include "coop/voice/voice_chat.h"
 #include "coop/voice/radio_item.h"
 #include "coop/dev/drone_probe.h"
+#include "coop/dev/transformer_probe.h"
 #include "coop/dev/delivery_census_probe.h"  // O-1 gate: COUNT the delivery-path actors
 #include "coop/dev/store_table_probe.h"      // A34 STEP 0: which mechanism can read a list_store row
 #include "coop/dev/order_selftest.h"          // A34: exercise host-side order pricing end to end
@@ -615,6 +616,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Balance};       coop::balance_sync::Tick(); }       // v30: host polls saveSlot.Points + broadcasts on change; client retries the pending mirror apply
     coop::dev::drone_probe::Install();  // dev-only delivery-drone RE probe (ini drone_probe=1; self-latches + retries until the BP class loads)
     coop::dev::drone_probe::Tick(isConnected, isHost);
+    coop::dev::transformer_probe::Tick(isConnected, isHost);  // read-only, targeted; ini transformer_probe=1
     coop::dev::store_table_probe::Tick();  // ini store_table_probe=1; ONE-SHOT: which mechanism can read a list_store row (security A34 STEP 0)
     coop::dev::order_selftest::Tick(isConnected, isHost);  // ini order_selftest=1; ONE-SHOT: a CLIENT places a real shop order -> the host must price + charge (or refuse) it
     coop::dev::delivery_census::Tick(isHost);  // ini delivery_census=1; edges only  // polls drone/order/radar; with drone_probe_drive=1 ALSO auto-fires one delivery (host) / order (client)

@@ -326,6 +326,8 @@ CFG_FLAG(heap_probe, "heap_probe", "dev", false, nullptr,
     "Diagnostic probe: process heap usage.")
 CFG_FLAG(drone_probe, "drone_probe", "dev", false, nullptr,
     "Diagnostic probe: delivery drone state.")
+CFG_FLAG(transformer_probe, "transformer_probe", "dev", false, nullptr,
+    "Read-only targeted transformer state/event probe for host/client runtime validation.")
 CFG_FLAG(drone_probe_drive, "drone_probe_drive", "dev", false, nullptr,
     "Diagnostic probe: drive the delivery drone (test driver).")
 CFG_FLAG(pile_dup_probe, "pile_dup_probe", "dev", false, nullptr,
