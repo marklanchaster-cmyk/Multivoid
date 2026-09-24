@@ -6,7 +6,7 @@
 //
 // Covered:
 //   serverBox_C                         IsBroken -> false
-//   radiotower_C                        IsBroken/isBroken -> false
+//   radiotower_C                      isBroken -> false (native setBroken + updPuzzle)
 //   generator_C                       isBroken -> false (native fullFix)
 //
 // This intentionally syncs the OUTCOME, not each fuse/switch/rotator movement.

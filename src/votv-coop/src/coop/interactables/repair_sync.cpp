@@ -154,18 +154,26 @@ bool CallNoArg(void* actor, const wchar_t* name) {
     return f.valid() && ue_wrap::Call(actor, f);
 }
 
-bool CallAllByteParams(void* actor, const wchar_t* name, bool value) {
+bool CallRadioTowerSetBroken(void* actor, bool broken, bool pullLever) {
     if (!actor) return false;
-    void* fn = R::FindFunction(R::ClassOf(actor), name);
+
+    void* fn = R::FindFunction(R::ClassOf(actor), L"setBroken");
     if (!fn) return false;
+
     ue_wrap::ParamFrame f(fn);
     if (!f.valid()) return false;
 
-    const uint8_t v = value ? 1u : 0u;
-    for (const auto& p : R::FunctionParams(fn)) {
-        if (p.size == 1)
-            f.SetRaw(p.name.c_str(), &v, 1);
-    }
+    // radiotower_C::tryToFix() success path calls:
+    //
+    //     setBroken(false, true)
+    //
+    // Do not use the old "set every byte param to false" helper here:
+    // setBroken has TWO bool parameters with different native values.
+    if (!f.Set<bool>(L"isBroken", broken))
+        return false;
+    if (!f.Set<bool>(L"pullLever", pullLever))
+        return false;
+
     return ue_wrap::Call(actor, f);
 }
 
@@ -188,11 +196,25 @@ bool ApplyRepair(void* actor, Desc& d) {
         // Run it even when fix() already flipped the bool successfully.
         CallNoArg(actor, L"check");
     } else if (d.target == kRepairRadioTower) {
-        called = CallAllByteParams(actor, L"setBroken", false);
+        // Native successful radiotower_C::tryToFix() path:
+        //
+        //     setBroken(false, true)
+        //     updPuzzle()
+        //
+        // setBroken updates canonical isBroken, fires stateChanged and
+        // refreshes the tower's blink timer. updPuzzle then paints the
+        // repaired panel presentation (green when isBroken == false).
+        called = CallRadioTowerSetBroken(actor, false, true);
 
         bool after = false;
-        if (!IsRepaired(actor, d, after) || !after)
+        if (!IsRepaired(actor, d, after) || !after) {
+            // Fail-safe only: the native setBroken path is preferred.
             WriteRawBool(actor, d, false);
+        }
+
+        // Safe even on a peer whose individual puzzle/fuse actions were not
+        // mirrored: repaired isBroken=false selects the completed presentation.
+        CallNoArg(actor, L"updPuzzle");
     } else if (d.target == kRepairGenerator) {
         // generator_C owns the authoritative transformer repair state.
         // Its native fullFix() completes the panel state, sets cycle=100,
