@@ -556,7 +556,6 @@ add_library(votv-coop SHARED
     src/coop/dev/live_store_readout.cpp
     src/coop/dev/drone_probe.cpp
     src/coop/dev/transformer_probe.cpp
-    src/coop/dev/transformer_probe.cpp
     src/coop/dev/gnatives_probe.cpp
     src/coop/dev/native_pile_inert_probe.cpp
     src/coop/dev/client_model_probe.cpp
@@ -564,7 +563,7 @@ add_library(votv-coop SHARED
     src/coop/dev/atv_probe.cpp
     src/coop/dev/atv_tire_probe.cpp
     src/coop/dev/pinecone_probe.cpp
-    src/coop/dev/sleep_probe.cppworldsync-host-authority
+    src/coop/dev/sleep_probe.cpp
 
     src/coop/dev/event_trigger.cpp
     src/coop/dev/event_force.cpp
