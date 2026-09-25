@@ -603,7 +603,7 @@ add_library(votv-coop SHARED
     src/ui/style.cpp
     src/ui/overlay_backend.cpp
     src/ui/overlay_backend_dx11.cpp
-    src/ui/overlay_backend_dx12.cppworldsync-host-authority
+    src/ui/overlay_backend_dx12.cpp
 
     src/ui/overlay_backend_dx12_capture.cpp
     src/ui/dev_menu.cpp
