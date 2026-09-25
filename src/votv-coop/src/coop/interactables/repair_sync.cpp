@@ -178,9 +178,14 @@ bool CallRadioTowerSetBroken(void* actor, bool broken, bool pullLever) {
 }
 
 bool ApplyRepair(void* actor, Desc& d) {
-    bool before = false;
-    if (!IsRepaired(actor, d, before)) return false;
-    if (before) return true;
+    bool wasRepaired = false;
+    if (!IsRepaired(actor, d, wasRepaired)) return false;
+
+    // Do not turn an already-repaired local bool into an implicit success.  A
+    // host handling client intent and a client handling the host's commit both
+    // replay the canonical gameplay verb, then verify the resulting state.
+    // This also makes the originating client converge through the same verb
+    // when its authoritative host commit comes back.
 
     bool called = false;
 
@@ -231,9 +236,9 @@ bool ApplyRepair(void* actor, Desc& d) {
 
     bool finalState = false;
     const bool ok = IsRepaired(actor, d, finalState) && finalState;
-    UE_LOGI("repair_sync[worldauth]: APPLY target=%u id='%s' called=%d repaired=%d",
+    UE_LOGI("repair_sync[worldauth]: APPLY target=%u id='%s' was_repaired=%d called=%d repaired=%d",
             static_cast<unsigned>(d.target), ActorIdentity(actor).c_str(),
-            called ? 1 : 0, ok ? 1 : 0);
+            wasRepaired ? 1 : 0, called ? 1 : 0, ok ? 1 : 0);
     return ok;
 }
 
@@ -247,15 +252,15 @@ void NoteBaseline(uint8_t target, void* actor, bool repaired) {
         g_lastRepaired[BaselineKey(target, id)] = repaired;
 }
 
-void SendOutcome(uint8_t target, void* actor) {
+bool SendOutcome(uint8_t target, void* actor) {
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !actor) return;
+    if (!s || !actor) return false;
 
     const std::string id = ActorIdentity(actor);
     if (id.empty()) {
         UE_LOGW("repair_sync: target=%u has no portable identity -- outcome not authored",
                 static_cast<unsigned>(target));
-        return;
+        return false;
     }
 
     coop::net::RepairOutcomePayload p{};
@@ -263,11 +268,13 @@ void SendOutcome(uint8_t target, void* actor) {
     p.repaired = 1;
     PutWireKey(p.key, id);
 
-    if (s->SendReliable(coop::net::ReliableKind::RepairOutcome, &p, sizeof(p))) {
+    const bool sent = s->SendReliable(coop::net::ReliableKind::RepairOutcome, &p, sizeof(p));
+    if (sent) {
         UE_LOGI("repair_sync[worldauth]: TX %s target=%u id='%s'",
                 s->role() == coop::net::Role::Host ? "host-outcome" : "client-request",
                 static_cast<unsigned>(target), GetWireKey(p.key).c_str());
     }
+    return sent;
 }
 
 }  // namespace
@@ -328,10 +335,23 @@ void OnReliable(const coop::net::RepairOutcomePayload& p, uint8_t senderSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s) return;
 
-    UE_LOGI("repair_sync[worldauth]: RX target=%u id='%s' repaired=%u from slot=%u role=%s",
-            static_cast<unsigned>(p.target), GetWireKey(p.key).c_str(),
-            static_cast<unsigned>(p.repaired), senderSlot,
-            s->role() == coop::net::Role::Host ? "host" : "client");
+    const bool isHost = s->role() == coop::net::Role::Host;
+    if (isHost) {
+        // On the host this packet is only repair intent.  It is never accepted
+        // as proof of repaired world state.
+        if (senderSlot == 0 || senderSlot >= coop::net::kMaxPeers) {
+            UE_LOGW("repair_sync: host refused request from slot=%u", senderSlot);
+            return;
+        }
+    } else if (senderSlot != 0) {
+        // Only slot 0 can author the commit applied by a client.
+        UE_LOGW("repair_sync: client refused non-host outcome from slot=%u", senderSlot);
+        return;
+    }
+
+    UE_LOGI("repair_sync[worldauth]: RX %s target=%u id='%s' repaired=%u from slot=%u",
+            isHost ? "client-request" : "host-outcome", static_cast<unsigned>(p.target),
+            GetWireKey(p.key).c_str(), static_cast<unsigned>(p.repaired), senderSlot);
 
     Desc* d = nullptr;
     void* actor = FindTarget(p, &d);
@@ -341,12 +361,7 @@ void OnReliable(const coop::net::RepairOutcomePayload& p, uint8_t senderSlot) {
         return;
     }
 
-    if (s->role() == coop::net::Role::Host) {
-        if (senderSlot == 0 || senderSlot >= coop::net::kMaxPeers) {
-            UE_LOGW("repair_sync: host refused request from slot=%u", senderSlot);
-            return;
-        }
-
+    if (isHost) {
         if (!ApplyRepair(actor, *d)) {
             UE_LOGW("repair_sync: host failed target=%u id='%s' slot=%u",
                     static_cast<unsigned>(p.target), GetWireKey(p.key).c_str(), senderSlot);
@@ -354,14 +369,16 @@ void OnReliable(const coop::net::RepairOutcomePayload& p, uint8_t senderSlot) {
         }
 
         NoteBaseline(p.target, actor, true);
-        s->SendReliable(coop::net::ReliableKind::RepairOutcome, &p, sizeof(p));
-        UE_LOGI("repair_sync[worldauth]: host COMMIT+BROADCAST target=%u id='%s' from slot=%u",
-                static_cast<unsigned>(p.target), GetWireKey(p.key).c_str(), senderSlot);
-        return;
-    }
-
-    if (senderSlot != 0) {
-        UE_LOGW("repair_sync: client refused non-host outcome from slot=%u", senderSlot);
+        // Rebuild the commit from the host-resolved actor.  Never echo the
+        // client's packet as though it were authoritative state.
+        if (SendOutcome(p.target, actor)) {
+            UE_LOGI("repair_sync[worldauth]: host COMMIT+BROADCAST target=%u id='%s' "
+                    "from slot=%u",
+                    static_cast<unsigned>(p.target), ActorIdentity(actor).c_str(), senderSlot);
+        } else {
+            UE_LOGW("repair_sync: host repaired target=%u id='%s' but broadcast enqueue failed",
+                    static_cast<unsigned>(p.target), ActorIdentity(actor).c_str());
+        }
         return;
     }
 
