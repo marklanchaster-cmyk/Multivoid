@@ -10,6 +10,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/vm_dispatch.h"
 
 #include <algorithm>
 #include <atomic>
@@ -19,12 +20,14 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace coop::repair_sync {
 namespace {
 
 namespace R = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
+namespace VM = ue_wrap::vm_dispatch;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -57,6 +60,26 @@ Desc g_descs[] = {
 std::unordered_map<std::string, bool> g_lastRepaired;
 uint64_t g_lastPoll = 0;
 
+enum NativeVerbId : int {
+    kVerbServerFix = 1,
+    kVerbGeneratorActionOptionIndex = 2,
+    kVerbGeneratorFullFix = 3,
+};
+
+struct PendingNativeCompletion {
+    void* actor = nullptr;
+    int32_t internalIndex = -1;
+    uint8_t target = 0;
+};
+
+// Game-thread-only. One pending check per object folds nested/duplicate watched
+// verbs (for example an actionOptionIndex path that invokes fullFix) into one
+// repair request/outcome.
+std::unordered_map<void*, PendingNativeCompletion> g_pendingNative;
+bool g_nativeRegistrationAttempted = false;
+bool g_serverNativeReady = false;
+bool g_generatorNativeReady = false;
+
 uint64_t NowMs() {
     using namespace std::chrono;
     return static_cast<uint64_t>(
@@ -78,6 +101,13 @@ void ResolveDesc(Desc& d) {
 
     UE_LOGI("repair_sync: resolved %ls repair state @0x%04X mask=0x%02X",
             d.className, d.stateOff, d.stateMask);
+}
+
+Desc* DescForTarget(uint8_t target) {
+    for (auto& d : g_descs) {
+        if (d.target == target) return &d;
+    }
+    return nullptr;
 }
 
 bool ReadRawBool(void* actor, const Desc& d, bool& v) {
@@ -277,16 +307,123 @@ bool SendOutcome(uint8_t target, void* actor) {
     return sent;
 }
 
+void CheckNativeCompletion(PendingNativeCompletion pending) {
+    // A posted task can be drained by a nested ProcessEvent while the original
+    // EX_LocalVirtualFunction is still executing. Leave it in g_pendingNative
+    // for Tick() rather than reposting from inside the pump (which drains until
+    // empty and would otherwise spin on the same task).
+    if (VM::CurrentThreadVerb().active) return;
+
+    const auto it = g_pendingNative.find(pending.actor);
+    if (it == g_pendingNative.end() ||
+        it->second.internalIndex != pending.internalIndex ||
+        it->second.target != pending.target) return;
+    g_pendingNative.erase(it);
+
+    if (!R::IsLiveByIndex(pending.actor, pending.internalIndex)) return;
+    Desc* const d = DescForTarget(pending.target);
+    if (!d) return;
+    ResolveDesc(*d);
+    if (!d->cls || d->stateOff < 0 || R::ClassOf(pending.actor) != d->cls) return;
+
+    bool repaired = false;
+    if (!IsRepaired(pending.actor, *d, repaired) || !repaired) return;
+
+    auto* const s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected()) return;
+    const std::string id = ActorIdentity(pending.actor);
+    if (id.empty()) {
+        UE_LOGW("repair_sync: native completion target=%u has no portable identity",
+                static_cast<unsigned>(pending.target));
+        return;
+    }
+
+    // Baseline first: polling is maintenance-only for native-observed targets,
+    // but this also prevents a future fallback configuration from double-sending.
+    NoteBaseline(pending.target, pending.actor, true);
+    UE_LOGI("repair_sync[worldauth]: NATIVE-COMPLETE %s target=%u id='%s'",
+            s->role() == coop::net::Role::Host ? "host-outcome" : "client-request",
+            static_cast<unsigned>(pending.target), id.c_str());
+    SendOutcome(pending.target, pending.actor);
+}
+
+void DrainNativeCompletions() {
+    if (g_pendingNative.empty() || VM::CurrentThreadVerb().active) return;
+
+    // CheckNativeCompletion erases entries, so snapshot the small pending set
+    // before walking it. A normally posted check will already have consumed
+    // its entry; this drain exists for the nested-ProcessEvent early-drain case.
+    std::vector<PendingNativeCompletion> pending;
+    pending.reserve(g_pendingNative.size());
+    for (const auto& entry : g_pendingNative)
+        pending.push_back(entry.second);
+    for (const PendingNativeCompletion& completion : pending)
+        CheckNativeCompletion(completion);
+}
+
+void OnNativeVerbEntry(const VM::Bracket& bracket) {
+    if (!bracket.ctx || R::InCoopDispatch()) return;
+    auto* const s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected()) return;
+
+    uint8_t target = 0;
+    if (bracket.verbId == kVerbServerFix) {
+        if (!g_serverNativeReady) return;
+        target = kRepairServer;
+    } else if (bracket.verbId == kVerbGeneratorActionOptionIndex ||
+               bracket.verbId == kVerbGeneratorFullFix) {
+        if (!g_generatorNativeReady) return;
+        target = kRepairGenerator;
+    } else {
+        return;
+    }
+
+    Desc* const d = DescForTarget(target);
+    if (!d) return;
+    ResolveDesc(*d);
+    // VM dispatch matches globally by verb name. The exact live class check is
+    // therefore mandatory before reading any target-specific state.
+    if (!d->cls || d->stateOff < 0 || !R::IsLive(bracket.ctx) ||
+        R::ClassOf(bracket.ctx) != d->cls) return;
+
+    bool repaired = false;
+    if (!IsRepaired(bracket.ctx, *d, repaired) || repaired) return;
+
+    const int32_t internalIndex = R::InternalIndexOf(bracket.ctx);
+    if (internalIndex < 0) return;
+
+    PendingNativeCompletion pending{bracket.ctx, internalIndex, target};
+    if (!g_pendingNative.emplace(bracket.ctx, pending).second) return;
+    GT::Post([pending] { CheckNativeCompletion(pending); });
+}
+
 }  // namespace
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    if (!g_nativeRegistrationAttempted) {
+        g_nativeRegistrationAttempted = true;
+        g_serverNativeReady =
+            VM::RegisterVirtualVerb(L"fix", kVerbServerFix, &OnNativeVerbEntry);
+        const bool actionReady = VM::RegisterVirtualVerb(
+            L"actionOptionIndex", kVerbGeneratorActionOptionIndex, &OnNativeVerbEntry);
+        const bool fullFixReady = VM::RegisterVirtualVerb(
+            L"fullFix", kVerbGeneratorFullFix, &OnNativeVerbEntry);
+        g_generatorNativeReady = actionReady && fullFixReady;
+        UE_LOGI("repair_sync[worldauth]: native verb detection server=%d generator=%d "
+                "(fix/actionOptionIndex/fullFix)",
+                g_serverNativeReady ? 1 : 0, g_generatorNativeReady ? 1 : 0);
+    }
 }
 
 void Tick() {
     if (!GT::IsGameThread()) return;
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
+
+    VM::TickResolvePending();
+    VM::SetEnabled(true);
+    DrainNativeCompletions();
 
     const uint64_t now = NowMs();
     if (now - g_lastPoll < kPollMs) return;
@@ -317,7 +454,17 @@ void Tick() {
             const bool was = it->second;
             it->second = repaired;
 
-            if (!was && repaired)
+            const bool nativeDetectorReady =
+                (d.target == kRepairServer && g_serverNativeReady) ||
+                (d.target == kRepairGenerator && g_generatorNativeReady);
+            const auto pending = g_pendingNative.find(obj);
+            const bool nativeCheckPending = nativeDetectorReady &&
+                pending != g_pendingNative.end() &&
+                pending->second.internalIndex == R::InternalIndexOf(obj);
+            // Native detection owns the edge while its post-call check is
+            // pending. Polling remains a fallback if registration/resolution
+            // failed or an unexpected dispatch path never produced a bracket.
+            if (!was && repaired && !nativeCheckPending)
                 SendOutcome(d.target, obj);
         }
     }
@@ -388,7 +535,9 @@ void OnReliable(const coop::net::RepairOutcomePayload& p, uint8_t senderSlot) {
 
 void OnDisconnect() {
     g_lastRepaired.clear();
+    g_pendingNative.clear();
     g_lastPoll = 0;
+    VM::SetEnabled(false);
 
     for (auto& d : g_descs) {
         d.cls = nullptr;
