@@ -555,6 +555,8 @@ add_library(votv-coop SHARED
     src/coop/dev/inventory_probe.cpp
     src/coop/dev/live_store_readout.cpp
     src/coop/dev/drone_probe.cpp
+    src/coop/dev/transformer_probe.cpp
+    src/coop/dev/transformer_probe.cpp
     src/coop/dev/gnatives_probe.cpp
     src/coop/dev/native_pile_inert_probe.cpp
     src/coop/dev/client_model_probe.cpp
@@ -562,7 +564,8 @@ add_library(votv-coop SHARED
     src/coop/dev/atv_probe.cpp
     src/coop/dev/atv_tire_probe.cpp
     src/coop/dev/pinecone_probe.cpp
-    src/coop/dev/sleep_probe.cpp
+    src/coop/dev/sleep_probe.cppworldsync-host-authority
+
     src/coop/dev/event_trigger.cpp
     src/coop/dev/event_force.cpp
     src/coop/dev/light_group_census.cpp
@@ -601,7 +604,8 @@ add_library(votv-coop SHARED
     src/ui/style.cpp
     src/ui/overlay_backend.cpp
     src/ui/overlay_backend_dx11.cpp
-    src/ui/overlay_backend_dx12.cpp
+    src/ui/overlay_backend_dx12.cppworldsync-host-authority
+
     src/ui/overlay_backend_dx12_capture.cpp
     src/ui/dev_menu.cpp
     src/ui/skins_panel.cpp
@@ -792,5 +796,3 @@ if (MSVC)
     # FreeType (the imgui_freetype rasterizer) must match the static CRT too.
     set_property(TARGET freetype PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
-
-
