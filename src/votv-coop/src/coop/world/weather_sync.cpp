@@ -408,6 +408,13 @@ void Install(coop::net::Session* session) {
         }
     }
 
+    // Retry late-loaded direct-event ReceiveBeginPlay gates even after the
+    // FinishSpawningActor fallback and the rest of weather have latched ready.
+    // weather_event_births::Install is idempotent and internally throttles the
+    // unresolved per-class reflection walks.
+    const bool birthsInstalled = session && coop::weather_event_births::Install(
+        session, session->role() == coop::net::Role::Host);
+
     if (g_installed) return;
 
     if (!TryResolveAllFunctions()) {
@@ -535,7 +542,7 @@ void Install(coop::net::Session* session) {
     // seam, so birth is the one place the organic roll surfaces. Gate the
     // latch on it like the fog interceptor: an unsuppressed client is the
     // exact bug this fixes.
-    if (!coop::weather_event_births::Install(session, isHost)) return;
+    if (!birthsInstalled) return;
 
     g_installed = true;
 }

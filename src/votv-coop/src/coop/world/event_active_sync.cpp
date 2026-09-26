@@ -6,6 +6,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -17,10 +18,13 @@
 namespace coop::event_active_sync { namespace {
 namespace R = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
+namespace SG = ue_wrap::script_gate;
 enum : uint8_t { kBegin=0, kEnd=1, kSnapshotBegin=2, kSnapshotItem=3, kSnapshotEnd=4 };
 std::atomic<coop::net::Session*> g_session{nullptr};
 void* g_gmCls=nullptr; int32_t g_offActiveEvents=-1, g_offSenders=-1;
-std::chrono::steady_clock::time_point g_nextResolve{}; int g_resolveAttempts=0; bool g_resolveLatched=false;
+void* g_libCls=nullptr; void* g_setEventFn=nullptr; bool g_setEventWatch=false;
+std::chrono::steady_clock::time_point g_nextResolve{};
+bool g_pollResolved=false; uint32_t g_pollResolveAttempts=0; uint32_t g_edgeResolveAttempts=0;
 void* g_gm=nullptr; int32_t g_gmIdx=-1; void* g_polledGm=nullptr; int32_t g_polledGmIdx=-1;
 bool g_primed=false; long long g_lastPollMs=0; constexpr long long kPollIntervalMs=250;
 struct RawPtrArray { void** Data; int32_t Num; int32_t Max; };
@@ -29,6 +33,16 @@ std::unordered_map<void*,ActiveEntry> g_active; uint64_t g_nextInstanceId=1; uin
 struct ClientEntry { std::string className,rowName; uint16_t elapsedSec=0; };
 std::unordered_map<uint64_t,ClientEntry> g_clientActive,g_stagedActive;
 uint32_t g_clientRevision=0,g_stagedRevision=0; bool g_staging=false;
+
+void HostPollTick();
+void OnSetEventPost(const SG::Call&){
+ auto*s=g_session.load(std::memory_order_acquire);
+ if(!s||!s->connected()||s->role()!=coop::net::Role::Host)return;
+ // setEvent has completed its exact activeEvents_senders add/remove. Diff now,
+ // in the same call stack, so an ON->effect->OFF controller cannot live wholly
+ // between two 250 ms reconciliation polls.
+ HostPollTick();
+}
 
 struct ClassRow { const char* cls; const char* row; };
 const ClassRow kClassRows[]={{"obelisk_C","obelisk"},{"piramid2_C","piramid"},{"trigger_solarBoom_C","solar"},
@@ -45,14 +59,23 @@ std::string Narrow(const std::wstring&w){std::string s;s.reserve(w.size());for(w
 std::string Bound(const char*p,size_t n){size_t z=0;while(z<n&&p[z])++z;return std::string(p,p+z);}
 
 void ResolvePass(){
- if(g_resolveLatched||std::chrono::steady_clock::now()<g_nextResolve)return;
+ if(g_pollResolved&&g_setEventWatch)return;
+ if(std::chrono::steady_clock::now()<g_nextResolve)return;
  g_nextResolve=std::chrono::steady_clock::now()+std::chrono::seconds(2);
  if(!g_gmCls)g_gmCls=R::FindClass(L"mainGamemode_C");
- if(!g_gmCls)return;
- if(g_offActiveEvents<0)g_offActiveEvents=R::FindPropertyOffset(g_gmCls,L"activeEvents");
- if(g_offSenders<0)g_offSenders=R::FindPropertyOffset(g_gmCls,L"activeEvents_senders");
- if(g_offActiveEvents>=0&&g_offSenders>=0){g_resolveLatched=true;UE_LOGI("event_active: resolved activeEvents=0x%X senders=0x%X",g_offActiveEvents,g_offSenders);}
- else if(++g_resolveAttempts>=5){g_resolveLatched=true;UE_LOGW("event_active: reflected fields unresolved; authoritative registry disabled");}
+ if(g_gmCls&&!g_pollResolved){
+  if(g_offActiveEvents<0)g_offActiveEvents=R::FindPropertyOffset(g_gmCls,L"activeEvents");
+  if(g_offSenders<0)g_offSenders=R::FindPropertyOffset(g_gmCls,L"activeEvents_senders");
+  if(g_offActiveEvents>=0&&g_offSenders>=0){g_pollResolved=true;UE_LOGI("event_active: polling fallback resolved activeEvents=0x%X senders=0x%X",g_offActiveEvents,g_offSenders);}
+  else{++g_pollResolveAttempts;if(g_pollResolveAttempts==5||(g_pollResolveAttempts%30)==0)UE_LOGW("event_active: polling fields unresolved after %u attempts; retrying",g_pollResolveAttempts);}
+ }
+ if(!g_setEventWatch){
+  if(!g_libCls)g_libCls=R::FindClass(L"lib_C");
+  if(g_libCls&&!g_setEventFn)g_setEventFn=R::FindFunction(g_libCls,L"setEvent");
+  if(g_setEventFn){SG::SetEnabled(true);g_setEventWatch=SG::Watch(g_setEventFn,650091,nullptr,&OnSetEventPost);}
+  if(g_setEventWatch)UE_LOGI("event_active: lib_C::setEvent post-watch installed (short-lived event edge coverage)");
+  else{++g_edgeResolveAttempts;if(g_edgeResolveAttempts==5||(g_edgeResolveAttempts%30)==0)UE_LOGW("event_active: lib_C::setEvent post-watch unresolved after %u attempts; 250 ms polling remains active, retrying",g_edgeResolveAttempts);}
+ }
 }
 void* Gamemode(){
  if(!g_gm||!R::IsLiveByIndex(g_gm,g_gmIdx)){g_gm=nullptr;g_gmIdx=-1;for(void*o:R::FindObjectsByClass(L"mainGamemode_C"))

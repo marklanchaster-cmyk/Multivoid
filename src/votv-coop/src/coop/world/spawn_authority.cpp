@@ -56,6 +56,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 
 #include <windows.h>
 
@@ -72,6 +73,7 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace E = ue_wrap::engine;
 namespace GT = ue_wrap::game_thread;
+namespace SG = ue_wrap::script_gate;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -107,6 +109,18 @@ MAKE_SPAWN_CANCEL(OnRoachSummonPre,          "cockroachMaster.summonRoach")
 MAKE_SPAWN_CANCEL(OnRoachAddTimerPre,        "cockroachMaster.addRoachTimer")
 MAKE_SPAWN_CANCEL(OnRoachNestTimerPre,       "cockroachMaster.spawnNestTimer")
 MAKE_SPAWN_CANCEL(OnRoachCustomEventPre,     "cockroachMaster.CustomEvent")
+// Static producer census (2026-09-26): these exact entries choose shared,
+// world-anchored actors.  Existing entity lanes carry the result where one
+// exists; otherwise the missing client mirror is an explicit output gap, not
+// permission for the client to invent a different result.
+MAKE_SPAWN_CANCEL(OnDeerTickPre,              "ticker_deerSpawner.ReceiveTick")
+MAKE_SPAWN_CANCEL(OnHexahiveTickPre,          "ticker_hexahiveSpawner.ReceiveTick")
+MAKE_SPAWN_CANCEL(OnTreeTickPre,              "ticker_treeSpawner.ReceiveTick")
+MAKE_SPAWN_CANCEL(OnTickTickPre,              "ticker_tick.ReceiveTick")
+MAKE_SPAWN_CANCEL(OnGostTickPre,              "ticker_gost.ReceiveTick")
+MAKE_SPAWN_CANCEL(OnEgTickPre,                "ticker_egSpawner.ReceiveTick")
+MAKE_SPAWN_CANCEL(OnTriggerTimerMinutePre,     "triggerTimer.newMinute")
+MAKE_SPAWN_CANCEL(OnFallingSkyOverlapPre,      "triggerFallingSky.overlap")
 
 #undef MAKE_SPAWN_CANCEL
 
@@ -116,6 +130,47 @@ struct CancelTarget {
     GT::UFunctionInterceptor cb;
     bool registered;
 };
+
+int32_t g_mannequinSpawnReturnOff = -1;
+
+SG::Verdict SuppressClientScriptProducer(const SG::Call& call) {
+    if (!IsActiveClientSession()) return SG::Verdict::Run;
+    // wMannequinSpawn_C::spawn has a bool OUT parm literally named `return`.
+    // The caller branches on it. Fail closed deterministically when the host
+    // owns the spawn instead of leaving the caller's temporary untouched.
+    if (call.tag == 650092 && g_mannequinSpawnReturnOff >= 0) {
+        if (call.locals) call.locals[g_mannequinSpawnReturnOff] = 0;
+        if (uint8_t* out = SG::OutParamPtr(call, g_mannequinSpawnReturnOff)) *out = 0;
+    }
+    static std::atomic<uint64_t> sCount{0};
+    const uint64_t n = sCount.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (n <= 6 || (n % 300) == 0) {
+        const wchar_t* producer = L"ticker_beehiveSpawner_C";
+        const wchar_t* function = L"spawn";
+        if (call.tag == 650092) producer = L"wMannequinSpawn_C";
+        else if (call.tag == 650093) {
+            producer = L"ticker_bushSpawning_C";
+            function = L"spawnBush";
+        }
+        UE_LOGI("random_event_auth: CLIENT suppressed selector producer=%ls function=%ls",
+                producer, function);
+    }
+    return SG::Verdict::Cancel;
+}
+
+struct ScriptCancelTarget {
+    const wchar_t* cls;
+    const wchar_t* fn;
+    int tag;
+    void* function;
+    bool registered;
+};
+ScriptCancelTarget g_scriptCancelTargets[] = {
+    {L"wMannequinSpawn_C",       L"spawn",     650092, nullptr, false},
+    {L"ticker_bushSpawning_C",   L"spawnBush", 650093, nullptr, false},
+    {L"ticker_beehiveSpawner_C", L"spawn",     650094, nullptr, false},
+};
+
 CancelTarget g_cancelTargets[] = {
     {L"mushroomMaster_C",            L"Spawn",           &OnMushroomMasterSpawnPre,  false},
     {L"mushroomSpawner_C",           L"Spawn",           &OnMushroomSpawnerSpawnPre, false},
@@ -132,6 +187,23 @@ CancelTarget g_cancelTargets[] = {
     {L"cockroachMaster_C",           L"addRoachTimer",   &OnRoachAddTimerPre,        false},
     {L"cockroachMaster_C",           L"spawnNestTimer",  &OnRoachNestTimerPre,       false},
     {L"cockroachMaster_C",           L"CustomEvent",     &OnRoachCustomEventPre,     false},
+    {L"ticker_deerSpawner_C",        L"ReceiveTick",     &OnDeerTickPre,             false},
+    {L"ticker_hexahiveSpawner_C",    L"ReceiveTick",     &OnHexahiveTickPre,         false},
+    {L"ticker_treeSpawner_C",        L"ReceiveTick",     &OnTreeTickPre,             false},
+    {L"ticker_tick_C",               L"ReceiveTick",     &OnTickTickPre,             false},
+    {L"ticker_gost_C",               L"ReceiveTick",     &OnGostTickPre,             false},
+    {L"ticker_egSpawner_C",          L"ReceiveTick",     &OnEgTickPre,               false},
+    // The mannequin marker, bush and beehive exact spawn verbs are installed
+    // through ScriptGate below: mannequin/bush are reached by EX_Local calls,
+    // which a ProcessEvent-only interceptor cannot observe.
+    // grayBoarSpawner.ReceiveTick is deliberately NOT cancelled: its mixed
+    // encounter graph also owns combat bookkeeping and cleanup.  Its class is
+    // conditional (no independent level instance in the measured census), so
+    // the authoritative event-controller birth is the seam to suppress, not
+    // this whole Tick.
+    {L"triggerTimer_C",              L"newMinute",       &OnTriggerTimerMinutePre,   false},
+    {L"triggerFallingSky_C",         L"BndEvt__triggerFallingSky_Sphere_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature",
+                                                       &OnFallingSkyOverlapPre,      false},
 };
 
 // ---- t1 PARK rows ----
@@ -275,12 +347,31 @@ void Install(coop::net::Session* session) {
             ++done;
             UE_LOGI("spawn_authority: t3 PRE-cancel installed -- %ls::%ls", t.cls, t.fn);
         }
-        if (done == static_cast<int>(std::size(g_cancelTargets))) {
+        int scriptDone = 0;
+        for (auto& t : g_scriptCancelTargets) {
+            if (t.registered) { ++scriptDone; continue; }
+            void* cls = R::FindClass(t.cls);
+            if (!cls) continue;
+            if (!t.function) t.function = R::FindFunction(cls, t.fn);
+            if (!t.function) continue;
+            if (t.tag == 650092 && g_mannequinSpawnReturnOff < 0) {
+                g_mannequinSpawnReturnOff = R::FindParamOffset(t.function, L"return");
+                if (g_mannequinSpawnReturnOff < 0) continue;
+            }
+            SG::SetEnabled(true);
+            if (!SG::Watch(t.function, t.tag, &SuppressClientScriptProducer, nullptr)) continue;
+            t.registered = true;
+            ++scriptDone;
+            UE_LOGI("spawn_authority: exact ScriptGate cancel installed -- %ls::%ls",
+                    t.cls, t.fn);
+        }
+        if (done == static_cast<int>(std::size(g_cancelTargets)) &&
+            scriptDone == static_cast<int>(std::size(g_scriptCancelTargets))) {
             g_cancelInstalled.store(true, std::memory_order_release);
-            UE_LOGI("spawn_authority: %zu/%zu t3 cancels registered (mushroom x2, "
-                    "yellowWisp+skyWisp ReceiveTick, cockroachMaster summonRoach+3 timer "
-                    "entries); active only on a running client session",
-                    std::size(g_cancelTargets), std::size(g_cancelTargets));
+            UE_LOGI("spawn_authority: %zu ProcessEvent + %zu ScriptGate producer cancels registered "
+                    "(ambient flora/wisps/roaches + world-event selectors); "
+                    "active only on a running client session",
+                    std::size(g_cancelTargets), std::size(g_scriptCancelTargets));
         }
     }
 

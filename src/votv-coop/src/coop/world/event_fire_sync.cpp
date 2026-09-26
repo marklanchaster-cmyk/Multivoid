@@ -28,6 +28,7 @@
 #include <chrono>
 #include <cstring>
 #include <deque>
+#include <iterator>
 #include <string>
 #include <unordered_set>
 
@@ -53,11 +54,47 @@ void* g_eventerCls = nullptr;
 void* g_runEventFn = nullptr;         // runEvent(FName event, FName special)
 void* g_runSpecialEventFn = nullptr;  // runSpecialEvent(FName eventName1) -> bool
 void* g_summonArirPrankFn = nullptr;  // private RNG selector -> runSpecialEvent
+int32_t g_runSpecialReturnOff = -1;   // bool OUT parm named `return`
 bool g_schedulerWatchesReady = false;
+bool g_producerWatchesReady = false;
 bool g_suppressionLogged = false;
 enum : int { kGateRunEvent=650051, kGateRunSpecial=650052, kGatePrankRoll=650053 };
 std::chrono::steady_clock::time_point g_nextResolve{};
 bool g_loggedResolved = false;
+
+// Independent timer-driven selectors in mainGamemode_C.  The Kismet census
+// proves that each entry below either chooses a world-significant result or
+// starts/spawns its controller.  Player-relative and cosmetic rolls (sleep,
+// dreams, windParticles_check, camera effects) are deliberately absent.
+struct ProducerGate {
+    const wchar_t* fnName;
+    const char* logName;
+    void* fn;
+    int tag;
+    bool armed;
+    bool logged;
+};
+ProducerGate g_producerGates[] = {
+    {L"ufo_midas",              "mainGamemode.ufo_midas",              nullptr, 650060, false, false},
+    {L"ufo_pill",               "mainGamemode.ufo_pill",               nullptr, 650061, false, false},
+    {L"ufo_boo",                "mainGamemode.ufo_boo",                nullptr, 650062, false, false},
+    {L"ufo_joel",               "mainGamemode.ufo_joel",               nullptr, 650063, false, false},
+    {L"ufo_ball",               "mainGamemode.ufo_ball",               nullptr, 650064, false, false},
+    {L"tickerFunguy",           "mainGamemode.tickerFunguy",           nullptr, 650065, false, false},
+    {L"tickerBody",             "mainGamemode.tickerBody",             nullptr, 650066, false, false},
+    {L"ticker_lakeMonsert",     "mainGamemode.ticker_lakeMonsert",     nullptr, 650067, false, false},
+    {L"ticker_lockerhead",      "mainGamemode.ticker_lockerhead",      nullptr, 650068, false, false},
+    {L"ticker_radiotowerPoof",  "mainGamemode.ticker_radiotowerPoof",  nullptr, 650069, false, false},
+    {L"CustomEvent_0",          "mainGamemode.CustomEvent_0(screamingCorpse)", nullptr, 650070, false, false},
+    {L"CustomEvent_3",          "mainGamemode.CustomEvent_3(figura)",  nullptr, 650071, false, false},
+    {L"CustomEvent_5",          "mainGamemode.CustomEvent_5(eg/geomOcta)", nullptr, 650072, false, false},
+    {L"CustomEvent_6",          "mainGamemode.CustomEvent_6(NewBlueprint5)", nullptr, 650073, false, false},
+    {L"CustomEvent_7",          "mainGamemode.CustomEvent_7(NewBlueprint19)", nullptr, 650074, false, false},
+    {L"gorelockertest",         "mainGamemode.gorelockertest",         nullptr, 650075, false, false},
+    {L"spawnBlackFog",          "mainGamemode.spawnBlackFog",          nullptr, 650076, false, false},
+    {L"spawnRedSky",            "mainGamemode.spawnRedSky",            nullptr, 650077, false, false},
+    {L"Spawn Bad Sun",          "mainGamemode.Spawn Bad Sun",          nullptr, 650078, false, false},
+};
 
 // ---- host poll state (game thread) ----------------------------------------------------------
 void* g_polledSaveSlot = nullptr;     // the instance the baseline belongs to
@@ -209,13 +246,21 @@ constexpr int kMaxPostClassAttempts = 5;
 bool MembersMissing() {
     return g_offSaveSlot < 0 || g_offEventer < 0 || g_offPassEvents < 0 || g_offAllEvents < 0 ||
            !g_runEventFn || !g_runSpecialEventFn || !g_summonArirPrankFn ||
-           !g_schedulerWatchesReady;
+           g_runSpecialReturnOff < 0 || !g_schedulerWatchesReady || !g_producerWatchesReady;
 }
 
 SG::Verdict SuppressClientScheduler(const SG::Call& call) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected() || s->role() == coop::net::Role::Host || call.fromOurCode)
         return SG::Verdict::Run;
+    // runSpecialEvent's Blueprint signature has a bool OUT parameter literally
+    // named `return` (not a native ReturnValue).  ScriptGate cancellation skips
+    // the body, so fail it closed explicitly instead of inheriting caller
+    // scratch.  Write both the callee frame and the caller's OutParam storage.
+    if (call.function == g_runSpecialEventFn && g_runSpecialReturnOff >= 0) {
+        if (call.locals) call.locals[g_runSpecialReturnOff] = 0;
+        if (uint8_t* out = SG::OutParamPtr(call, g_runSpecialReturnOff)) *out = 0;
+    }
     if (!g_suppressionLogged) {
         g_suppressionLogged = true;
         UE_LOGI("random_event_auth: CLIENT random scheduler suppressed at %s",
@@ -224,6 +269,40 @@ SG::Verdict SuppressClientScheduler(const SG::Call& call) {
                 "trigger_eventer.summonArirPrank");
     }
     return SG::Verdict::Cancel;
+}
+
+SG::Verdict SuppressClientProducer(const SG::Call& call) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() == coop::net::Role::Host || call.fromOurCode)
+        return SG::Verdict::Run;
+    for (auto& gate : g_producerGates) {
+        if (gate.tag != call.tag) continue;
+        if (!gate.logged) {
+            gate.logged = true;
+            UE_LOGI("random_event_auth: CLIENT suppressed selector producer=%s function=%ls",
+                    gate.logName, gate.fnName);
+        }
+        break;
+    }
+    return SG::Verdict::Cancel;
+}
+
+void ArmProducerWatches() {
+    if (g_producerWatchesReady || !g_gmCls) return;
+    SG::SetEnabled(true);
+    bool all = true;
+    for (auto& gate : g_producerGates) {
+        if (!gate.fn) gate.fn = R::FindFunction(g_gmCls, gate.fnName);
+        if (!gate.fn) { all = false; continue; }
+        if (!gate.armed)
+            gate.armed = SG::Watch(gate.fn, gate.tag, &SuppressClientProducer, nullptr);
+        all = all && gate.armed;
+    }
+    g_producerWatchesReady = all;
+    if (all) {
+        UE_LOGI("random_event_auth: %zu mainGamemode selector/start gates armed",
+                std::size(g_producerGates));
+    }
 }
 
 void ArmSchedulerWatches() {
@@ -254,23 +333,30 @@ void ResolvePass() {
     if (!g_runEventFn) g_runEventFn = R::FindFunction(g_eventerCls, L"runEvent");
     if (!g_runSpecialEventFn) g_runSpecialEventFn = R::FindFunction(g_eventerCls, L"runSpecialEvent");
     if (!g_summonArirPrankFn) g_summonArirPrankFn = R::FindFunction(g_eventerCls, L"summonArirPrank");
+    if (g_runSpecialEventFn && g_runSpecialReturnOff < 0)
+        g_runSpecialReturnOff = R::FindParamOffset(g_runSpecialEventFn, L"return");
     ArmSchedulerWatches();
+    ArmProducerWatches();
     if (!MembersMissing()) {
         g_resolveLatched = true;
         g_loggedResolved = true;
         UE_LOGI("event_fire: resolved (saveSlot=0x%X passEvents=0x%X allEvents=0x%X eventer=0x%X "
-                "runEvent=yes runSpecialEvent=yes summonArirPrank=yes gates=yes)",
-                g_offSaveSlot, g_offPassEvents, g_offAllEvents, g_offEventer);
+                "runEvent=yes runSpecialEvent=yes summonArirPrank=yes gates=yes producerGates=%zu)",
+                g_offSaveSlot, g_offPassEvents, g_offAllEvents, g_offEventer,
+                std::size(g_producerGates));
         return;
     }
     if (++g_postClassAttempts >= kMaxPostClassAttempts) {
         g_resolveLatched = true;  // classes ARE loaded; a member lookup that failed 5x never succeeds
         UE_LOGW("event_fire: resolution INCOMPLETE after %d passes on loaded classes "
                 "(saveSlot=0x%X eventer=0x%X passEvents=0x%X allEvents=0x%X runEvent=%s "
-                "runSpecialEvent=%s summonArirPrank=%s gates=%s) -- latched OFF; game version mismatch?",
+                "runSpecialEvent=%s returnOff=%d summonArirPrank=%s gates=%s producerGates=%s) "
+                "-- latched OFF; game version mismatch?",
                 g_postClassAttempts, g_offSaveSlot, g_offEventer, g_offPassEvents, g_offAllEvents,
                 g_runEventFn ? "yes" : "NO", g_runSpecialEventFn ? "yes" : "NO",
-                g_summonArirPrankFn ? "yes" : "NO", g_schedulerWatchesReady ? "yes" : "NO");
+                g_runSpecialReturnOff,
+                g_summonArirPrankFn ? "yes" : "NO", g_schedulerWatchesReady ? "yes" : "NO",
+                g_producerWatchesReady ? "yes" : "NO");
     }
 }
 
