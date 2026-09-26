@@ -51,6 +51,7 @@ struct Desc {
     void* cls = nullptr;
     int32_t stateOff = -1;
     uint8_t stateMask = 0;
+    int32_t cycleOff = -1;  // generator_C only
 };
 
 Desc g_descs[] = {
@@ -85,10 +86,11 @@ struct NativeDebounce {
 std::unordered_map<void*, PendingNativeCompletion> g_pendingNative;
 std::unordered_map<void*, NativeDebounce> g_nativeDebounce;
 bool g_nativeRegistrationAttempted = false;
-bool g_serverNativeReady = false;
+bool g_serverScriptReady = false;
 bool g_generatorFullFixReady = false;
 bool g_generatorActionReady = false;
 
+void* g_serverFixFn = nullptr;
 void* g_generatorActionFn = nullptr;
 int32_t g_generatorActionOff = -1;
 int32_t g_generatorPanelOff = -1;
@@ -110,19 +112,30 @@ uint64_t NowMs() {
 
 void ResolveDesc(Desc& d) {
     if (!d.cls) d.cls = R::FindClass(d.className);
-    if (!d.cls || d.stateOff >= 0 || d.stateOff == -2) return;
+    if (!d.cls) return;
 
-    if (!R::FindBoolProperty(d.cls, d.stateNameA, d.stateOff, d.stateMask) &&
-        d.stateNameB &&
-        !R::FindBoolProperty(d.cls, d.stateNameB, d.stateOff, d.stateMask)) {
-        UE_LOGW("repair_sync: %ls repair-state bool unresolved (%ls/%ls)",
-                d.className, d.stateNameA, d.stateNameB ? d.stateNameB : L"-");
-        d.stateOff = -2;
-        return;
+    if (d.stateOff == -1) {
+        if (!R::FindBoolProperty(d.cls, d.stateNameA, d.stateOff, d.stateMask) &&
+            d.stateNameB &&
+            !R::FindBoolProperty(d.cls, d.stateNameB, d.stateOff, d.stateMask)) {
+            UE_LOGW("repair_sync: %ls repair-state bool unresolved (%ls/%ls)",
+                    d.className, d.stateNameA, d.stateNameB ? d.stateNameB : L"-");
+            d.stateOff = -2;
+        } else {
+            UE_LOGI("repair_sync: resolved %ls repair state @0x%04X mask=0x%02X",
+                    d.className, d.stateOff, d.stateMask);
+        }
     }
 
-    UE_LOGI("repair_sync: resolved %ls repair state @0x%04X mask=0x%02X",
-            d.className, d.stateOff, d.stateMask);
+    if (d.target == kRepairGenerator && d.cycleOff == -1) {
+        d.cycleOff = R::FindPropertyOffset(d.cls, L"cycle");
+        if (d.cycleOff < 0) {
+            UE_LOGW("repair_sync: generator_C::cycle unresolved");
+            d.cycleOff = -2;
+        } else {
+            UE_LOGI("repair_sync: resolved generator_C::cycle @0x%04X", d.cycleOff);
+        }
+    }
 }
 
 Desc* DescForTarget(uint8_t target) {
@@ -139,10 +152,22 @@ bool ReadRawBool(void* actor, const Desc& d, bool& v) {
     return true;
 }
 
-bool IsRepaired(void* actor, const Desc& d, bool& repaired) {
+bool IsRepairConverged(void* actor, const Desc& d, bool& converged,
+                       int32_t* generatorCycle = nullptr) {
     bool raw = false;
     if (!ReadRawBool(actor, d, raw)) return false;
-    repaired = d.repairedWhenSet ? raw : !raw;
+    const bool repaired = d.repairedWhenSet ? raw : !raw;
+    if (d.target != kRepairGenerator) {
+        converged = repaired;
+        return true;
+    }
+
+    if (d.cycleOff < 0) return false;
+    int32_t cycle = 0;
+    std::memcpy(&cycle, reinterpret_cast<const uint8_t*>(actor) + d.cycleOff,
+                sizeof(cycle));
+    if (generatorCycle) *generatorCycle = cycle;
+    converged = repaired && cycle == 100;
     return true;
 }
 
@@ -228,8 +253,9 @@ bool CallRadioTowerSetBroken(void* actor, bool broken, bool pullLever) {
 }
 
 bool ApplyRepair(void* actor, Desc& d) {
-    bool wasRepaired = false;
-    if (!IsRepaired(actor, d, wasRepaired)) return false;
+    bool wasConverged = false;
+    int32_t cycleBefore = -1;
+    if (!IsRepairConverged(actor, d, wasConverged, &cycleBefore)) return false;
 
     // Do not turn an already-repaired local bool into an implicit success.  A
     // host handling client intent and a client handling the host's commit both
@@ -267,10 +293,21 @@ bool ApplyRepair(void* actor, Desc& d) {
     }
 
     bool finalState = false;
-    const bool ok = called && IsRepaired(actor, d, finalState) && finalState;
-    UE_LOGI("repair_sync[worldauth]: APPLY target=%u id='%s' was_repaired=%d called=%d repaired=%d",
-            static_cast<unsigned>(d.target), ActorIdentity(actor).c_str(),
-            wasRepaired ? 1 : 0, called ? 1 : 0, ok ? 1 : 0);
+    int32_t cycleAfter = -1;
+    const bool ok = called &&
+        IsRepairConverged(actor, d, finalState, &cycleAfter) && finalState;
+    if (d.target == kRepairGenerator) {
+        UE_LOGI("repair_sync[worldauth]: APPLY target=%u id='%s' converged_before=%d "
+                "called_fullFix=%d converged_after=%d cycle_before=%d cycle_after=%d",
+                static_cast<unsigned>(d.target), ActorIdentity(actor).c_str(),
+                wasConverged ? 1 : 0, called ? 1 : 0, ok ? 1 : 0,
+                cycleBefore, cycleAfter);
+    } else {
+        UE_LOGI("repair_sync[worldauth]: APPLY target=%u id='%s' converged_before=%d "
+                "called=%d converged_after=%d",
+                static_cast<unsigned>(d.target), ActorIdentity(actor).c_str(),
+                wasConverged ? 1 : 0, called ? 1 : 0, ok ? 1 : 0);
+    }
     return ok;
 }
 
@@ -347,6 +384,39 @@ void OnGeneratorActionPost(const SG::Call& call) {
     QueueNativeCompletion(call.object, kRepairGenerator);
 }
 
+void OnServerFixPost(const SG::Call& call) {
+    Desc* const d = DescForTarget(kRepairServer);
+    if (call.fromOurCode || !call.object || call.function != g_serverFixFn ||
+        !d || !d->cls || !R::IsLive(call.object) || R::ClassOf(call.object) != d->cls) return;
+
+    // This exact post-body watch is the organic server repair seam. Do not
+    // require the client's pre-call IsBroken value: a stale client may still
+    // legitimately express repair intent after completing the minigame.
+    bool converged = false;
+    if (!IsRepairConverged(call.object, *d, converged) || !converged) return;
+    if (ActorIdentity(call.object).empty()) {
+        UE_LOGW("repair_sync: organic server fix has no portable identity");
+        return;
+    }
+    QueueNativeCompletion(call.object, kRepairServer);
+}
+
+void ResolveServerFixWatch() {
+    if (g_serverScriptReady) return;
+    Desc* const d = DescForTarget(kRepairServer);
+    if (!d) return;
+    ResolveDesc(*d);
+    if (!d->cls || d->stateOff < 0) return;
+
+    if (!g_serverFixFn) g_serverFixFn = R::FindFunction(d->cls, L"fix");
+    if (!g_serverFixFn) return;
+
+    if (SG::Watch(g_serverFixFn, kVerbServerFix, nullptr, &OnServerFixPost)) {
+        g_serverScriptReady = true;
+        UE_LOGI("repair_sync[worldauth]: exact serverBox_C::fix post-watch armed");
+    }
+}
+
 void ResolveGeneratorHumanWatch() {
     if (g_generatorActionReady) return;
     Desc* const d = DescForTarget(kRepairGenerator);
@@ -403,8 +473,8 @@ void CheckNativeCompletion(PendingNativeCompletion pending) {
     ResolveDesc(*d);
     if (!d->cls || d->stateOff < 0 || R::ClassOf(pending.actor) != d->cls) return;
 
-    bool repaired = false;
-    if (!IsRepaired(pending.actor, *d, repaired) || !repaired) return;
+    bool converged = false;
+    if (!IsRepairConverged(pending.actor, *d, converged) || !converged) return;
 
     auto* const s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
@@ -444,16 +514,8 @@ void OnNativeVerbEntry(const VM::Bracket& bracket) {
     auto* const s = g_session.load(std::memory_order_acquire);
     if (!s || !s->connected()) return;
 
-    uint8_t target = 0;
-    if (bracket.verbId == kVerbServerFix) {
-        if (!g_serverNativeReady) return;
-        target = kRepairServer;
-    } else if (bracket.verbId == kVerbGeneratorFullFix) {
-        if (!g_generatorFullFixReady) return;
-        target = kRepairGenerator;
-    } else {
-        return;
-    }
+    if (bracket.verbId != kVerbGeneratorFullFix || !g_generatorFullFixReady) return;
+    constexpr uint8_t target = kRepairGenerator;
 
     Desc* const d = DescForTarget(target);
     if (!d) return;
@@ -474,13 +536,11 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     if (!g_nativeRegistrationAttempted) {
         g_nativeRegistrationAttempted = true;
-        g_serverNativeReady =
-            VM::RegisterVirtualVerb(L"fix", kVerbServerFix, &OnNativeVerbEntry);
         g_generatorFullFixReady = VM::RegisterVirtualVerb(
             L"fullFix", kVerbGeneratorFullFix, &OnNativeVerbEntry);
-        UE_LOGI("repair_sync[worldauth]: canonical verb detection server_fix=%d generator_fullFix=%d; "
-                "human action watch pending reflection",
-                g_serverNativeReady ? 1 : 0, g_generatorFullFixReady ? 1 : 0);
+        UE_LOGI("repair_sync[worldauth]: canonical verb detection generator_fullFix=%d; "
+                "exact server fix and human action watches pending reflection",
+                g_generatorFullFixReady ? 1 : 0);
     }
 }
 
@@ -493,6 +553,7 @@ void Tick() {
     VM::SetEnabled(true);
     SG::SetEnabled(true);
     SG::ResolvePendingNames();
+    ResolveServerFixWatch();
     ResolveGeneratorHumanWatch();
     DrainNativeCompletions();
 
@@ -508,7 +569,7 @@ void Tick() {
             if (!obj || !R::IsLive(obj)) continue;
 
             bool repaired = false;
-            if (!IsRepaired(obj, d, repaired)) continue;
+            if (!IsRepairConverged(obj, d, repaired)) continue;
 
             const std::string id = ActorIdentity(obj);
             if (id.empty()) continue;
@@ -526,7 +587,7 @@ void Tick() {
             it->second = repaired;
 
             const bool nativeDetectorReady =
-                (d.target == kRepairServer && g_serverNativeReady) ||
+                (d.target == kRepairServer && g_serverScriptReady) ||
                 (d.target == kRepairGenerator &&
                  (g_generatorFullFixReady || g_generatorActionReady));
             const auto pending = g_pendingNative.find(obj);
@@ -581,19 +642,26 @@ void OnReliable(const coop::net::RepairOutcomePayload& p, uint8_t senderSlot) {
     }
 
     if (isHost) {
-        bool hostRepaired = false;
-        if (!IsRepaired(actor, *d, hostRepaired)) {
+        bool hostConverged = false;
+        int32_t hostCycle = -1;
+        if (!IsRepairConverged(actor, *d, hostConverged, &hostCycle)) {
             UE_LOGW("repair_sync: host could not read authoritative target=%u id='%s' slot=%u",
                     static_cast<unsigned>(p.target), GetWireKey(p.key).c_str(), senderSlot);
             return;
         }
-        if (!hostRepaired) {
+        if (d->target == kRepairGenerator) {
+            UE_LOGI("repair_sync[worldauth]: host generator convergence id='%s' "
+                    "cycle=%d converged=%d slot=%u",
+                    GetWireKey(p.key).c_str(), hostCycle,
+                    hostConverged ? 1 : 0, senderSlot);
+        }
+        if (!hostConverged) {
             if (!ApplyRepair(actor, *d)) {
                 UE_LOGW("repair_sync: host canonical repair failed target=%u id='%s' slot=%u",
                         static_cast<unsigned>(p.target), GetWireKey(p.key).c_str(), senderSlot);
                 return;
             }
-            if (!IsRepaired(actor, *d, hostRepaired) || !hostRepaired) {
+            if (!IsRepairConverged(actor, *d, hostConverged, &hostCycle) || !hostConverged) {
                 UE_LOGW("repair_sync: host repair did not verify target=%u id='%s' slot=%u",
                         static_cast<unsigned>(p.target), GetWireKey(p.key).c_str(), senderSlot);
                 return;
@@ -634,6 +702,7 @@ void OnDisconnect() {
         d.cls = nullptr;
         d.stateOff = -1;
         d.stateMask = 0;
+        d.cycleOff = -1;
     }
 }
 
