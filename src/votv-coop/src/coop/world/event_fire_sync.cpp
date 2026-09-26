@@ -22,6 +22,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 
 #include <atomic>
 #include <chrono>
@@ -35,6 +36,7 @@ namespace {
 
 namespace R  = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
+namespace SG = ue_wrap::script_gate;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -50,6 +52,10 @@ int32_t g_offAllEvents = -1;          // saveSlot.allEvents  (TArray<FName>)
 void* g_eventerCls = nullptr;
 void* g_runEventFn = nullptr;         // runEvent(FName event, FName special)
 void* g_runSpecialEventFn = nullptr;  // runSpecialEvent(FName eventName1) -> bool
+void* g_summonArirPrankFn = nullptr;  // private RNG selector -> runSpecialEvent
+bool g_schedulerWatchesReady = false;
+bool g_suppressionLogged = false;
+enum : int { kGateRunEvent=650051, kGateRunSpecial=650052, kGatePrankRoll=650053 };
 std::chrono::steady_clock::time_point g_nextResolve{};
 bool g_loggedResolved = false;
 
@@ -202,7 +208,34 @@ constexpr int kMaxPostClassAttempts = 5;
 
 bool MembersMissing() {
     return g_offSaveSlot < 0 || g_offEventer < 0 || g_offPassEvents < 0 || g_offAllEvents < 0 ||
-           !g_runEventFn || !g_runSpecialEventFn;
+           !g_runEventFn || !g_runSpecialEventFn || !g_summonArirPrankFn ||
+           !g_schedulerWatchesReady;
+}
+
+SG::Verdict SuppressClientScheduler(const SG::Call& call) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() == coop::net::Role::Host || call.fromOurCode)
+        return SG::Verdict::Run;
+    if (!g_suppressionLogged) {
+        g_suppressionLogged = true;
+        UE_LOGI("random_event_auth: CLIENT random scheduler suppressed at %s",
+                call.function == g_runEventFn ? "trigger_eventer.runEvent" :
+                call.function == g_runSpecialEventFn ? "trigger_eventer.runSpecialEvent" :
+                "trigger_eventer.summonArirPrank");
+    }
+    return SG::Verdict::Cancel;
+}
+
+void ArmSchedulerWatches() {
+    if (g_schedulerWatchesReady || !g_runEventFn || !g_runSpecialEventFn || !g_summonArirPrankFn)
+        return;
+    SG::SetEnabled(true);
+    const bool a = SG::Watch(g_runEventFn, kGateRunEvent, &SuppressClientScheduler, nullptr);
+    const bool b = SG::Watch(g_runSpecialEventFn, kGateRunSpecial, &SuppressClientScheduler, nullptr);
+    const bool c = SG::Watch(g_summonArirPrankFn, kGatePrankRoll, &SuppressClientScheduler, nullptr);
+    g_schedulerWatchesReady = a && b && c;
+    if (g_schedulerWatchesReady)
+        UE_LOGI("random_event_auth: scheduler gates armed (runEvent/runSpecialEvent/summonArirPrank)");
 }
 
 void ResolvePass() {
@@ -220,11 +253,13 @@ void ResolvePass() {
     if (g_offAllEvents < 0) g_offAllEvents = R::FindPropertyOffset(g_saveSlotCls, L"allEvents");
     if (!g_runEventFn) g_runEventFn = R::FindFunction(g_eventerCls, L"runEvent");
     if (!g_runSpecialEventFn) g_runSpecialEventFn = R::FindFunction(g_eventerCls, L"runSpecialEvent");
+    if (!g_summonArirPrankFn) g_summonArirPrankFn = R::FindFunction(g_eventerCls, L"summonArirPrank");
+    ArmSchedulerWatches();
     if (!MembersMissing()) {
         g_resolveLatched = true;
         g_loggedResolved = true;
         UE_LOGI("event_fire: resolved (saveSlot=0x%X passEvents=0x%X allEvents=0x%X eventer=0x%X "
-                "runEvent=yes runSpecialEvent=yes)",
+                "runEvent=yes runSpecialEvent=yes summonArirPrank=yes gates=yes)",
                 g_offSaveSlot, g_offPassEvents, g_offAllEvents, g_offEventer);
         return;
     }
@@ -232,9 +267,10 @@ void ResolvePass() {
         g_resolveLatched = true;  // classes ARE loaded; a member lookup that failed 5x never succeeds
         UE_LOGW("event_fire: resolution INCOMPLETE after %d passes on loaded classes "
                 "(saveSlot=0x%X eventer=0x%X passEvents=0x%X allEvents=0x%X runEvent=%s "
-                "runSpecialEvent=%s) -- latched OFF; game version mismatch?",
+                "runSpecialEvent=%s summonArirPrank=%s gates=%s) -- latched OFF; game version mismatch?",
                 g_postClassAttempts, g_offSaveSlot, g_offEventer, g_offPassEvents, g_offAllEvents,
-                g_runEventFn ? "yes" : "NO", g_runSpecialEventFn ? "yes" : "NO");
+                g_runEventFn ? "yes" : "NO", g_runSpecialEventFn ? "yes" : "NO",
+                g_summonArirPrankFn ? "yes" : "NO", g_schedulerWatchesReady ? "yes" : "NO");
     }
 }
 
@@ -417,8 +453,10 @@ void ClientSuppressTick() {
     g_zeroedSaveSlot = ss;
     g_zeroedSaveSlotIdx = R::InternalIndexOf(ss);
     all->Num = 0;
-    UE_LOGI("event_fire: client scheduler SUPPRESSED (allEvents %d -> 0; host is the only firer; "
-            "restored on disconnect)", g_zeroedAllEventsNum);
+    g_suppressionLogged = true;
+    UE_LOGI("random_event_auth: CLIENT random scheduler suppressed "
+            "(allEvents %d -> 0; exact launch/RNG gates armed=%d; restored on disconnect)",
+            g_zeroedAllEventsNum, g_schedulerWatchesReady ? 1 : 0);
 }
 
 void ClientDrainTick() {
@@ -432,6 +470,7 @@ void ClientDrainTick() {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    SG::SetEnabled(true);
 }
 
 void Tick() {
@@ -582,6 +621,7 @@ void OnDisconnect() {
     g_passBaseline = -1;
     g_pending.clear();
     g_replayed.clear();
+    g_suppressionLogged = false;
     g_session.store(nullptr, std::memory_order_release);
 }
 

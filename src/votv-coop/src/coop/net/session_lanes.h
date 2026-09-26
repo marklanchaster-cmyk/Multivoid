@@ -190,6 +190,12 @@ inline Lane LaneForKind(ReliableKind k) {
     case ReliableKind::LaptopBlob:     return Lane::Normal;
     case ReliableKind::LaptopQuad:     return Lane::Normal;
     case ReliableKind::FloppyBoxState: return Lane::Normal;
+    // b65005: event registry deltas/snapshot brackets are one revision stream.
+    // GeneratorBreakState and RepairOutcome must share this FIFO so an unfrozen
+    // client cannot apply an older break after the later repair commit.
+    case ReliableKind::EventAuthority: return Lane::Normal;
+    case ReliableKind::GeneratorBreakState: return Lane::Normal;
+    case ReliableKind::RepairOutcome: return Lane::Normal;
     // v124 (R11): the container-contents slice must stay behind the entity lifecycle it
     // references -- a contents blob for an eid whose PropSpawn has not landed parks and retries,
     // so keeping it in the one Normal FIFO makes the park the rare case, not the norm.

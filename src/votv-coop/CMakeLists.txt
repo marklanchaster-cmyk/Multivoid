@@ -371,6 +371,7 @@ add_library(votv-coop SHARED
     src/coop/world/alarm_sync.cpp
     src/coop/interactables/serverbox_sync.cpp
     src/coop/interactables/repair_sync.cpp
+    src/coop/interactables/generator_break_sync.cpp
     src/coop/interactables/window_sync.cpp
     src/coop/interactables/grime_sync.cpp
     src/coop/session/player_handshake.cpp

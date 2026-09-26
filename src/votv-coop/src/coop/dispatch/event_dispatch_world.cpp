@@ -15,6 +15,7 @@
 #include "coop/world/event_active_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/world/event_fire_sync.h"
+#include "coop/interactables/generator_break_sync.h"
 #include "coop/world/firefly_sync.h"
 #include "coop/items/inventory_pickup_sync.h"
 #include "coop/world/sky_sync.h"
@@ -151,6 +152,34 @@ bool HandleWorldEvent(net::Session& session,
         net::EventSnapshotPayload sp{};
         std::memcpy(&sp, msg.payload, sizeof(sp));
         coop::event_active_sync::OnReliable(sp);
+        break;
+    }
+    case net::ReliableKind::EventAuthority: {
+        if (msg.payloadLen < sizeof(net::EventAuthorityPayload)) {
+            UE_LOGW("event_feed: EventAuthority payload too short");
+            break;
+        }
+        if (session.role() == net::Role::Host || msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: EventAuthority rejected (role=%s sender=%d)",
+                    session.role() == net::Role::Host ? "host" : "client", msg.senderPeerSlot);
+            break;
+        }
+        net::EventAuthorityPayload p{}; std::memcpy(&p, msg.payload, sizeof(p));
+        coop::event_active_sync::OnReliable(p);
+        break;
+    }
+    case net::ReliableKind::GeneratorBreakState: {
+        if (msg.payloadLen < sizeof(net::GeneratorBreakStatePayload)) {
+            UE_LOGW("event_feed: GeneratorBreakState payload too short");
+            break;
+        }
+        if (session.role() == net::Role::Host || msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: GeneratorBreakState rejected (role=%s sender=%d)",
+                    session.role() == net::Role::Host ? "host" : "client", msg.senderPeerSlot);
+            break;
+        }
+        net::GeneratorBreakStatePayload p{}; std::memcpy(&p, msg.payload, sizeof(p));
+        coop::generator_break_sync::OnReliable(p, 0);
         break;
     }
     case net::ReliableKind::AlarmState: {

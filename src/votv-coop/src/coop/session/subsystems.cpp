@@ -129,6 +129,7 @@
 #include "coop/world/alarm_sync.h"         // v101 base radar alarm shared-world toggle (docs/events/alarm.md)
 #include "coop/interactables/serverbox_sync.h"        // v107 host-authoritative signal-server sim state (Inc-1)
 #include "coop/interactables/repair_sync.h"           // custom 65003 cooperative repair outcomes
+#include "coop/interactables/generator_break_sync.h"  // b65005 host canonical transformer breaks
 #include "coop/creatures/roach_sync.h"     // v108 host-authoritative roach-infestation mirror
 #include "coop/creatures/owner_entity_sync.h"  // v108 OWNER-ENTITY lane (eyer: per-peer owned, cross-peer mirrored)
 #include "coop/world/event_active_sync.h"  // join-during-event Phase 0: native activeEvents registry probe (docs/COOP_EVENT_JOIN.md)
@@ -165,6 +166,7 @@ void Install(coop::net::Session& session) {
     coop::alarm_sync::Install(&session);     // v101 base radar alarm shared-world toggle (1 Hz active poll both roles; docs/events/alarm.md)
     coop::serverbox_sync::Install(&session);    // v107 signal-server sim state: host polls+broadcasts, client drive-reals + kills its ticker_serverBreaker
     coop::repair_sync::Install(&session);       // custom 65003: server/tower/generator completed repairs
+    coop::generator_break_sync::Install(&session);
     coop::roach_sync::Install(&session);        // v108 roach infestation: host paged snapshots, client ordinal apply + consumption intents
     coop::owner_entity_sync::Install(&session); // v108 owner-entity lane: eyer per-peer owned + cross-peer display mirrors
     coop::inventory_pickup_sync::Install(&session);  // v58 inventory-collect blip (PlaySound2D observer)
@@ -335,6 +337,7 @@ void ConnectReplayForSlot(int slot) {
     // join-during-event Phase 1 (v98): one EventSnapshot per in-flight registry entry -- the
     // joiner replays replay-safe rows with the active-override (COOP_EVENT_JOIN.md 3.2).
     coop::event_active_sync::SendJoinSnapshotForSlot(slot);
+    coop::generator_break_sync::SendJoinSnapshotForSlot(slot);
     // alarm lane late-join answer (COOP_EVENT_JOIN.md 3.4): the CURRENT alarm state,
     // unconditionally -- a mid-alarm joiner starts its klaxon on arrival (v101).
     coop::alarm_sync::QueueConnectBroadcastForSlot(slot);
@@ -447,6 +450,7 @@ DisconnectStats DisconnectAll() {
     coop::alarm_sync::OnDisconnect();        // v101 drop the cached trigger + poll baseline
     coop::serverbox_sync::OnDisconnect();       // v107 drop cached gamemode/offsets + baseline + breaker-kill latch
     coop::repair_sync::OnDisconnect();          // custom 65003 repair baselines
+    coop::generator_break_sync::OnDisconnect();
     coop::roach_sync::OnDisconnect();           // v108 drop snapshot assembly + tracked set + baselines (park restore = spawn_authority)
     coop::owner_entity_sync::OnDisconnect();    // v108 destroy ALL owner-entity mirrors (our spawned actors must not linger into SP)
     coop::spawn_authority::OnDisconnect();      // T1 Inc-1: restore parked spawner ticks (loan repayment belt)
@@ -534,6 +538,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:event_cue"}; coop::event_cue_sync::Tick(); }      // v79 cosmetic event cues (B1): host ~1 Hz new-PSC poll -> EventCue broadcast (host-only, no-op on client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:event_fire"}; coop::event_fire_sync::Tick(); }     // v95 scheduled events: host 1 Hz passEvents growth poll -> EventFire / client allEvents suppress + replay drain
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:event_active"}; coop::event_active_sync::Tick(); }  // join-during-event Phase 0: host 1 Hz activeEvents_senders diff -> BEGIN/END edge log (host-only, no-op on client)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:generator_break"}; coop::generator_break_sync::Tick(); }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:alarm"}; coop::alarm_sync::Tick(); }               // v101 base radar alarm: 1 Hz active-bit poll BOTH roles (host broadcasts transitions; client forwards local ones)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:server"}; coop::serverbox_sync::Tick();
     coop::repair_sync::Tick(); }             // v107 signal-server sim: HOST 1 Hz state poll -> broadcast on change; CLIENT keeps its ticker_serverBreaker neutralized
