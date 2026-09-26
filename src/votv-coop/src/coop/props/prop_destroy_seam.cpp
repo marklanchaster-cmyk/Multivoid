@@ -21,6 +21,7 @@
 #include "coop/items/coingun_sync.h"
 #include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
+#include "coop/props/remote_prop.h"
 #include "coop/session/world_load_episode.h"
 #include "ue_wrap/engine/engine.h"  // IsChildActor (child-actor exclusion, take-7 floating-CCTV RCA)
 #include "ue_wrap/core/game_thread.h"
@@ -58,7 +59,16 @@ void DestroySeamBody(void* self) {
     // Capture the Prop Element id BEFORE UnmarkKnownKeyedProp drains the
     // shadow (audit fix 2026-05-28 -- the prior order returned kInvalidId
     // on every destroy broadcast).
-    const coop::element::ElementId destroyEid = PT::GetPropElementIdForActor(self);
+    coop::element::ElementId destroyEid = PT::GetPropElementIdForActor(self);
+    // GetPropElementIdForActor intentionally has a locals-only contract. A
+    // legitimate CLIENT-authored destroy of an established host mirror must
+    // retain that mirror's wire identity instead of degrading to key+eid=0.
+    // Capture before UnmarkKnownKeyedProp drains actor bookkeeping.
+    if (destroyEid == coop::element::kInvalidId &&
+        s->role() == coop::net::Role::Client) {
+        destroyEid = coop::remote_prop::ResolveMirrorEidByActor(
+            self, /*wireMirrorOnly=*/true);
+    }
     PT::UnmarkProcessedInit(self);
     PT::UnmarkKnownKeyedProp(self);
     if (!s->connected()) return;
@@ -150,6 +160,20 @@ void DestroySeamBody(void* self) {
     // Consults AFTER the echo/episode gates (wire teardowns + load churn are not conversions); the
     // capture converges/owns the wire itself when it returns true. Cheap class-pointer gate inside.
     if (coop::kerfur_convert::TryCaptureKerfurPropDestroy(self, destroyEid)) return;
+    // Explicitly-attributed gameplay transactions take precedence over the
+    // short-lived floppy convergence expectation. Kerfur already had first
+    // refusal above; coin-gun keeps its sale+destroy transaction below. Trash
+    // and conversion ownership remain on their existing class-specific paths
+    // (the expectation is armed only for a host-authored floppy actor+eid).
+    const bool inCoinGunVerb = coop::coingun_sync::IsInCoinGunVerb();
+    if (!inCoinGunVerb && s->role() == coop::net::Role::Client &&
+        coop::prop_echo_suppress::ConsumeHostMirrorConvergenceDestroy(
+            self, static_cast<uint32_t>(destroyEid))) {
+        UE_LOGI("grab_hook[destroy-seam]: CLIENT suppressed host-floppy mirror convergence "
+                "destroy actor=%p eid=%u -- display/local cleanup is not client authority",
+                self, static_cast<unsigned>(destroyEid));
+        return;
+    }
     coop::net::WireKey wk{};
     wk.len = 0;
     if (!keyless) {
@@ -200,7 +224,7 @@ void DestroySeamBody(void* self) {
     // keyless fallback. v137 passed the eid alone and `[V]` a v122 client mints no Element row for
     // its own save-loaded keyed prop, so it was 0 for exactly the props a player shoots and the
     // lane could never author at all. `keyStr` is what the destroy itself is about to name.
-    if (coop::coingun_sync::IsInCoinGunVerb())
+    if (inCoinGunVerb)
         coop::coingun_sync::SendSaleForDyingProp(keyless ? std::wstring() : keyStr, dp.elementId);
 
     s->SendPropDestroy(dp);  // channel queues internally; always accepted

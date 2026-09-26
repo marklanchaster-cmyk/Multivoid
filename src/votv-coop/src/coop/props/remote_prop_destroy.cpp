@@ -85,6 +85,11 @@ void DestroyResolvedLocalActor_(void* actor, const std::wstring& keyW,
     }
     UE_LOGI("remote_prop::OnDestroy: key '%ls' eid=%u -> destroying local actor %p",
             keyW.c_str(), payload.elementId, actor);
+    // Preserve the wire-driven old-incarnation edge long enough for a later
+    // host PropSpawn with the same key to identify insert/eject reincarnation.
+    // Merely recording the key suppresses nothing; the fresh-host-floppy path
+    // consumes it before arming its exact actor+eid one-shot expectation.
+    coop::prop_echo_suppress::NoteWireDestroyedKey(keyW);
     if (ue_wrap::prop::IsChipPile(actor) || ue_wrap::prop::IsGarbageClump(actor)) {
         UE_LOGI("[PILE] CLIENT destroy eid=%u -> mirror %p removed (the pile/clump vanished here too, "
                 "matching the host)", payload.elementId, actor);

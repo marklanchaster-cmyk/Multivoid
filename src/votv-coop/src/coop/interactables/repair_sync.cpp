@@ -3,6 +3,7 @@
 #include "coop/interactables/repair_sync.h"
 
 #include "coop/element/portable_identity.h"
+#include "coop/interactables/serverbox_sync.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 
@@ -91,6 +92,7 @@ bool g_generatorFullFixReady = false;
 bool g_generatorActionReady = false;
 
 void* g_serverFixFn = nullptr;
+void* g_serverCheckFn = nullptr;
 void* g_generatorActionFn = nullptr;
 int32_t g_generatorActionOff = -1;
 int32_t g_generatorPanelOff = -1;
@@ -143,6 +145,24 @@ Desc* DescForTarget(uint8_t target) {
         if (d.target == target) return &d;
     }
     return nullptr;
+}
+
+bool IsTargetInstance(void* object, const Desc& d) {
+    if (!object || !d.cls) return false;
+    void* const cls = R::ClassOf(object);
+    if (!cls) return false;
+    if (d.target == kRepairServer)
+        return R::IsDescendantOfAny(cls, &d.cls, 1);
+    return cls == d.cls;
+}
+
+void SnapshotTargets(const Desc& d, std::vector<void*>& out) {
+    out.clear();
+    if (d.target == kRepairServer) {
+        coop::serverbox_sync::SnapshotServers(out);
+        return;
+    }
+    out = R::FindObjectsByClass(d.className);
 }
 
 bool ReadRawBool(void* actor, const Desc& d, bool& v) {
@@ -211,8 +231,10 @@ void* FindTarget(const coop::net::RepairOutcomePayload& p, Desc** outDesc = null
         ResolveDesc(d);
         if (!d.cls || d.stateOff < 0) continue;
 
-        for (void* obj : R::FindObjectsByClass(d.className)) {
-            if (!obj || !R::IsLive(obj)) continue;
+        std::vector<void*> candidates;
+        SnapshotTargets(d, candidates);
+        for (void* obj : candidates) {
+            if (!obj || !R::IsLive(obj) || !IsTargetInstance(obj, d)) continue;
             if (ActorIdentity(obj) != want) continue;
             if (outDesc) *outDesc = &d;
             return obj;
@@ -227,6 +249,19 @@ bool CallNoArg(void* actor, const wchar_t* name) {
     if (!fn) return false;
     ue_wrap::ParamFrame f(fn);
     return f.valid() && ue_wrap::Call(actor, f);
+}
+
+bool CallExactNoArg(void* actor, void* fn) {
+    if (!actor || !fn) return false;
+    ue_wrap::ParamFrame f(fn);
+    return f.valid() && ue_wrap::Call(actor, f);
+}
+
+bool ResolveServerFunctions(Desc& d) {
+    if (d.target != kRepairServer || !d.cls) return false;
+    if (!g_serverFixFn) g_serverFixFn = R::FindFunction(d.cls, L"fix");
+    if (!g_serverCheckFn) g_serverCheckFn = R::FindFunction(d.cls, L"check");
+    return g_serverFixFn && g_serverCheckFn;
 }
 
 bool CallRadioTowerSetBroken(void* actor, bool broken, bool pullLever) {
@@ -266,11 +301,12 @@ bool ApplyRepair(void* actor, Desc& d) {
     bool called = false;
 
     if (d.target == kRepairServer) {
-        called = CallNoArg(actor, L"fix");
+        if (!ResolveServerFunctions(d)) return false;
+        called = CallExactNoArg(actor, g_serverFixFn);
 
         // check() refreshes the server box presentation from canonical IsBroken.
         // Run it even when fix() already flipped the bool successfully.
-        CallNoArg(actor, L"check");
+        CallExactNoArg(actor, g_serverCheckFn);
     } else if (d.target == kRepairRadioTower) {
         // Native successful radiotower_C::tryToFix() path:
         //
@@ -387,7 +423,7 @@ void OnGeneratorActionPost(const SG::Call& call) {
 void OnServerFixPost(const SG::Call& call) {
     Desc* const d = DescForTarget(kRepairServer);
     if (call.fromOurCode || !call.object || call.function != g_serverFixFn ||
-        !d || !d->cls || !R::IsLive(call.object) || R::ClassOf(call.object) != d->cls) return;
+        !d || !d->cls || !R::IsLive(call.object) || !IsTargetInstance(call.object, *d)) return;
 
     // This exact post-body watch is the organic server repair seam. Do not
     // require the client's pre-call IsBroken value: a stale client may still
@@ -408,8 +444,7 @@ void ResolveServerFixWatch() {
     ResolveDesc(*d);
     if (!d->cls || d->stateOff < 0) return;
 
-    if (!g_serverFixFn) g_serverFixFn = R::FindFunction(d->cls, L"fix");
-    if (!g_serverFixFn) return;
+    if (!ResolveServerFunctions(*d)) return;
 
     if (SG::Watch(g_serverFixFn, kVerbServerFix, nullptr, &OnServerFixPost)) {
         g_serverScriptReady = true;
@@ -471,7 +506,7 @@ void CheckNativeCompletion(PendingNativeCompletion pending) {
     Desc* const d = DescForTarget(pending.target);
     if (!d) return;
     ResolveDesc(*d);
-    if (!d->cls || d->stateOff < 0 || R::ClassOf(pending.actor) != d->cls) return;
+    if (!d->cls || d->stateOff < 0 || !IsTargetInstance(pending.actor, *d)) return;
 
     bool converged = false;
     if (!IsRepairConverged(pending.actor, *d, converged) || !converged) return;
@@ -565,8 +600,10 @@ void Tick() {
         ResolveDesc(d);
         if (!d.cls || d.stateOff < 0) continue;
 
-        for (void* obj : R::FindObjectsByClass(d.className)) {
-            if (!obj || !R::IsLive(obj)) continue;
+        std::vector<void*> candidates;
+        SnapshotTargets(d, candidates);
+        for (void* obj : candidates) {
+            if (!obj || !R::IsLive(obj) || !IsTargetInstance(obj, d)) continue;
 
             bool repaired = false;
             if (!IsRepairConverged(obj, d, repaired)) continue;

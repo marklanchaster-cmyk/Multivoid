@@ -250,6 +250,19 @@ void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
 }
 
+bool SnapshotServers(std::vector<void*>& out) {
+    out.clear();
+    if (!GT::IsGameThread()) return false;
+    ResolvePass();
+    // Repair discovery only needs the canonical server array; do not couple it
+    // to unrelated aggregate/check-function resolution used by ServerState.
+    if (g_offServers < 0) return false;
+    void* gm = Gamemode();
+    if (!gm) return false;
+    ReadServers(gm, out);
+    return true;
+}
+
 void Tick() {
     if (!GT::IsGameThread()) return;
     auto* s = g_session.load(std::memory_order_acquire);

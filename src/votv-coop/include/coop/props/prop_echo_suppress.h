@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 namespace coop::prop_echo_suppress {
@@ -31,6 +32,21 @@ bool ConsumeIncomingSpawn(void* actor);
 bool PeekIncomingSpawn(void* actor);
 void MarkIncomingDestroy(void* actor);
 bool ConsumeIncomingDestroy(void* actor);
+
+// Remember a wire-driven keyed teardown long enough to recognize the game's
+// insert/eject reincarnation pattern (old disc K destroyed, new disc K spawned).
+// The remembered key is consumed once and never suppresses anything by itself.
+void NoteWireDestroyedKey(const std::wstring& key);
+bool ConsumeRecentlyWireDestroyedKey(const std::wstring& key);
+
+// A freshly materialized HOST floppy mirror can be torn down immediately by
+// the receiver's stale local drive/eject cleanup. That display-side teardown
+// is not a client-authored world transaction. Arm an exact actor+wire-eid,
+// short-lived, one-shot expectation after the mirror bind; the destroy seam
+// consumes it instead of sending PropDestroy upstream. This is deliberately
+// not a blanket mirror-destroy suppression.
+void ExpectHostMirrorConvergenceDestroy(void* actor, uint32_t wireEid);
+bool ConsumeHostMirrorConvergenceDestroy(void* actor, uint32_t wireEid);
 
 // ---- the ARBITER-CONSUMED key (2026-08-25) -----------------------------------------------------
 // "I, the host, already destroyed the prop with this save key myself, as the authority's half of a

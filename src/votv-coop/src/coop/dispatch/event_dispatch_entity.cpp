@@ -21,6 +21,7 @@
 #include "coop/player/remote_player.h"
 #include "coop/props/remote_prop.h"
 #include "coop/props/remote_prop_spawn.h"
+#include "coop/props/prop_element_tracker.h"
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/props/trash_pile_sync.h"
 
@@ -37,7 +38,6 @@ namespace coop::event_feed {
 bool HandleEntityEvent(net::Session& session,
                        const net::Session::ReliableMessage& msg,
                        void* localPlayer) {
-    (void)session;
     switch (msg.kind) {
     case net::ReliableKind::PropStickState: {
         // v68: a peer stuck a wall-attachable (camera) to a surface. Symmetric
@@ -256,12 +256,13 @@ bool HandleEntityEvent(net::Session& session,
         // K2_DestroyActor is echo-suppressed via the incoming-destroy
         // set so it doesn't bounce back to the sender.
         //
-        // TRUST BOUNDARY: with bidirectional destroy, CLIENT can command
-        // HOST to destroy any prop by wire-Key. Acceptable for LAN coop
-        // (trusted peers); review before Internet coop -- a malicious
-        // client could replay crafted Keys to destroy host's quest items.
-        // Mitigation if needed: authority model (host validates destroy
-        // requests against current world state / quest progress).
+        // TRUST BOUNDARY: bidirectional destroy still lets a CLIENT request a
+        // shared prop destroy, but an established host-owned incarnation must
+        // be named by its current eid. The host-local identity check below
+        // prevents a stale teardown from aliasing a newer actor that reused
+        // its save key.
+        // This remains trusted-peer gameplay authorization, not an Internet
+        // anti-cheat boundary; the host does not validate quest progress here.
         if (msg.payloadLen < sizeof(net::PropDestroyPayload)) {
             UE_LOGW("event_feed: PropDestroy payload too short (%zu < %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::PropDestroyPayload));
@@ -280,15 +281,38 @@ bool HandleEntityEvent(net::Session& session,
         // grabber's. So we must accept EITHER range here (was: IsAllowedSenderEid(role) ->
         // it dropped a client's PropDestroy of a host-owned pile = the cross-grab clump DUPE,
         // proven 2026-06-09 host log "0x918 out of allowed peer range"). We still reject a
-        // genuinely invalid id (0 / kInvalidId / out of both ranges) so UnregisterPropMirror /
-        // OnDestroy never see a forged out-of-bounds eid. (Trust note above already documents
-        // that a LAN peer can command any prop destroy -- this is consistent with that model.)
+        // genuinely out-of-range allocated id; 0/kInvalidId are no-id sentinels and the
+        // host-owned keyed check below rejects them when exact incarnation identity is required.
+        // Thus UnregisterPropMirror / OnDestroy never see a forged out-of-bounds eid. (Trust note above already documents
+        // that a LAN peer can command a correctly-identified prop destroy -- this is consistent
+        // with that model.)
         if (p.elementId != 0 && p.elementId != coop::element::kInvalidId &&
             !coop::element::Registry::IsAllowedHostAllocatedEid(p.elementId) &&
             !coop::element::Registry::IsAllowedPeerAllocatedEid(p.elementId)) {
             UE_LOGW("event_feed: PropDestroy elementId=0x%08x not a valid allocated id "
                     "(out of both ranges) -- dropping", p.elementId);
             break;
+        }
+        // A client key does not identify an incarnation. Established host
+        // props are expressed/bound as wire mirrors, and the client destroy
+        // seam preserves that mirror eid. Therefore a packet whose key hits a
+        // host-owned actor must name that actor's CURRENT eid; zero or an old
+        // eid is stale/unattributed cleanup, not authority to destroy whatever
+        // newer incarnation happens to reuse the save key.
+        if (session.role() == net::Role::Host && msg.senderPeerSlot > 0 &&
+            p.key.len > 0) {
+            const std::wstring key = remote_prop::KeyToWString(p.key);
+            void* const actor = coop::prop_element_tracker::ResolveLiveActorByKey(key);
+            const coop::element::ElementId hostEid =
+                coop::prop_element_tracker::GetPropElementIdForActor(actor);
+            if (actor && hostEid != coop::element::kInvalidId && hostEid != 0 &&
+                p.elementId != hostEid) {
+                UE_LOGW("event_feed: HOST refused client PropDestroy slot=%d key='%ls' "
+                        "packetEid=%u currentHostEid=%u (missing/stale incarnation)",
+                        msg.senderPeerSlot, key.c_str(),
+                        static_cast<unsigned>(p.elementId), static_cast<unsigned>(hostEid));
+                break;
+            }
         }
         // (v15 also had a senderContext compare here -- moved to
         // header senderEpoch in v16 PR-FOUNDATION-1b.)

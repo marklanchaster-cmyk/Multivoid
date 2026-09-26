@@ -27,6 +27,8 @@
 
 #pragma once
 
+#include <vector>
+
 namespace coop::net {
 class Session;
 struct ServerStatePayload;
@@ -36,6 +38,12 @@ namespace coop::serverbox_sync {
 
 // Cache the session. Class + offset + check() resolution is lazy in Tick.
 void Install(coop::net::Session* session);
+
+// Game-thread snapshot of mainGamemode.servers. This is the game's canonical,
+// bounded satellite list and includes serverBox_C descendants (for example
+// serverBox_dish_C). Returns false until the reflected list is available.
+// Callers must still liveness/type-check entries before use.
+bool SnapshotServers(std::vector<void*>& out);
 
 // Per net-pump tick, game thread, ~1 Hz internally throttled. HOST: poll server state -> broadcast on
 // change. CLIENT: neutralize the local ticker_serverBreaker (cached, idempotent). No-op until resolved.
