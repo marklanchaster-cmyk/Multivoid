@@ -2852,9 +2852,9 @@ enum class ReliableKind : uint8_t {
                        //     still reaches the host as a LightState edge, and the host's own
                        //     use() is what produces the authoritative group change.
 
-    RepairOutcome = 130, // custom 65004: cooperative repair COMPLETION.
-                       //     CLIENT->HOST request when a locally-solved server/radio-tower/
-                       //     generator flips to repaired; HOST applies the real repaired
+    RepairOutcome = 130, // custom 65004: cooperative repair request/commit.
+                       //     CLIENT->HOST intent after an organic server/radio-tower/
+                       //     generator repair verb; HOST checks its own state and applies the real repaired
                        //     outcome and broadcasts the accepted result. The compound puzzle
                        //     internals remain local/cosmetic. Payload: RepairOutcomePayload.
     DroneCommandRequest = 131, // custom 65003: CLIENT->HOST delivery-drone console press.
@@ -4274,7 +4274,8 @@ struct DroneStatePayload {
 };
 static_assert(sizeof(DroneStatePayload) == 40, "DroneStatePayload must be 40 bytes");
 
-// custom 65004: a peer completed one of the previously-local repair minigames.
+// custom 65004: direction-sensitive repair message. Client->host is organic interaction intent;
+// host->client is the authoritative repaired commit after host-side resolution and verification.
 struct RepairOutcomePayload {
     WireKey key;          // deterministic coop::element::PortableWireKey (mv_<16 hex>)
     uint8_t target;       // 1=serverBox, 2=radiotower, 3=generator/transformer panel

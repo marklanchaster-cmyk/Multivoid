@@ -36,6 +36,8 @@ namespace E  = ue_wrap::engine;
 namespace GT = ue_wrap::game_thread;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
+coop::net::ServerStatePayload g_pendingState{};
+bool g_hasPendingState = false;
 
 constexpr int      kMaxServers    = 64;    // the isBrokenMask width; VOTV has a handful
 constexpr long long kPollIntervalMs = 1000;
@@ -186,15 +188,22 @@ void UpdateBaseline(const coop::net::ServerStatePayload& p) {
 }
 
 // ---- client apply (drive-real) --------------------------------------------------------------------
-void ApplyState(const coop::net::ServerStatePayload& p) {
+bool ApplyState(const coop::net::ServerStatePayload& p) {
     void* gm = Gamemode();
-    if (!gm || !g_checkFn) return;
+    if (!gm || !g_checkFn) return false;
+    std::vector<void*> servers;
+    ReadServers(gm, servers);
+    const size_t expected = p.serverCount < kMaxServers ? p.serverCount : kMaxServers;
+    // During world startup the gamemode can exist before its server array is
+    // populated. Keep the durable snapshot pending rather than applying only
+    // the aggregates and silently losing the per-server mask.
+    if (servers.size() < expected) return false;
+    for (size_t i = 0; i < expected; ++i)
+        if (!servers[i] || !R::IsLive(servers[i])) return false;
     // Aggregate mirror (so the SAT-console sv.*/tw.* queries read TRUE host state).
     WriteInt(gm, g_offBroken, p.brokenServers);
     WriteFlt(gm, g_offEffCalc, p.effCalc);
     WriteFlt(gm, g_offEffDownl, p.effDownl);
-    std::vector<void*> servers;
-    ReadServers(gm, servers);
     int applied = 0;
     const int32_t n = static_cast<int32_t>(servers.size());
     const int32_t take = n < p.serverCount ? n : p.serverCount;
@@ -211,6 +220,7 @@ void ApplyState(const coop::net::ServerStatePayload& p) {
     if (applied)
         UE_LOGI("serverbox_sync: client applied host state (broken=%d mask=0x%llX, %d server(s) re-skinned)",
                 p.brokenServers, p.isBrokenMask, applied);
+    return true;
 }
 
 // ---- client breaker-kill: neutralize the local ticker_serverBreaker (disable its actor tick, the
@@ -252,6 +262,10 @@ void Tick() {
 
     if (s->role() != coop::net::Role::Host) {
         // CLIENT: state is push-only (OnReliable). Keep the local autonomous breaker neutralized.
+        if (g_hasPendingState && ApplyState(g_pendingState)) {
+            g_hasPendingState = false;
+            UE_LOGI("serverbox_sync: ServerState deferred snapshot applied");
+        }
         KillLocalBreaker();
         return;
     }
@@ -308,20 +322,32 @@ void OnReliable(const coop::net::ServerStatePayload& payload, int senderPeerSlot
         UE_LOGW("serverbox_sync: ServerState from non-host senderPeerSlot=%d -- dropping", senderPeerSlot);
         return;
     }
+    UE_LOGI("serverbox_sync: ServerState RX from host (broken=%d mask=0x%llX count=%u)",
+            payload.brokenServers, payload.isBrokenMask,
+            static_cast<unsigned>(payload.serverCount));
     ResolvePass();
     if (!Resolved()) {
-        UE_LOGW("serverbox_sync: ServerState arrived before resolution -- dropped (the next host change / "
-                "connect-snapshot re-delivers)");
+        g_pendingState = payload;
+        g_hasPendingState = true;
+        UE_LOGI("serverbox_sync: ServerState deferred awaiting resolution");
         return;
     }
-    ApplyState(payload);
-    KillLocalBreaker();  // ensure the local breaker stays off (join-window timing)
+    if (ApplyState(payload)) {
+        g_hasPendingState = false;
+        KillLocalBreaker();  // ensure the local breaker stays off (join-window timing)
+    } else {
+        g_pendingState = payload;
+        g_hasPendingState = true;
+        UE_LOGI("serverbox_sync: ServerState deferred awaiting live gamemode");
+    }
 }
 
 void OnDisconnect() {
     g_gm = nullptr; g_gmIdx = -1;
     g_polledGm = nullptr; g_primed = false;
     g_lastMask = 0; g_lastBroken = 0; g_lastPollMs = 0;
+    g_hasPendingState = false;
+    g_pendingState = {};
     // Restore the neutralized breaker (audit 2026-07-10 HIGH): KillLocalBreaker disabled the actor tick;
     // resetting only the latch left servers permanently unbreakable in the SAME process after the session
     // (solo play / re-host) -- the event_fire_sync restore precedent ("local scheduler resumes") applies

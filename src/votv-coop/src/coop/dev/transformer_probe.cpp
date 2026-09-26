@@ -52,6 +52,7 @@ void* g_genCls = nullptr;
 void* g_panelCls = nullptr;
 void* g_powerCls = nullptr;
 bool  g_installed = false;
+bool  g_installFailed = false;
 bool  g_connected = false;
 bool  g_isHost = false;
 
@@ -304,13 +305,14 @@ bool ResolveFields() {
 }
 
 void Install() {
-    if (g_installed || !Enabled() || !g_connected) return;
+    if (g_installed || g_installFailed || !Enabled() || !g_connected) return;
     g_genCls = R::FindClass(L"generator_C");
     g_panelCls = R::FindClass(L"transformerMGPanel_C");
     g_powerCls = R::FindClass(L"powerControl_C");
     if (!g_genCls || !g_panelCls || !g_powerCls) return;
     if (!ResolveFields()) {
         UE_LOGE("[transformer_probe] required reflected field missing; probe not installed");
+        g_installFailed = true;
         return;
     }
 

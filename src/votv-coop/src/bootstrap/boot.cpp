@@ -15,6 +15,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/paths.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 
 #include <windows.h>
 
@@ -231,6 +232,9 @@ DWORD WINAPI BootThread(LPVOID rawTag) {
             UE_LOGI("==== GAME-THREAD CONTEXT: LIVE ====");
         });
         UE_LOGI("boot: game-thread dispatcher installed; self-test task posted");
+
+        if (!ue_wrap::script_gate::Install())
+            UE_LOGE("boot: script-body gate did not install; argument-aware Blueprint watches unavailable");
 
         // Autonomous test harness (ported from the UE4SS Lua coopTestHarness):
         // skip the menus into gameplay, screenshot, report -- standalone.

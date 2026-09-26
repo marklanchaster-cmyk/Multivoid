@@ -10,6 +10,7 @@
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/vm_dispatch.h"
 
 #include <algorithm>
@@ -28,6 +29,7 @@ namespace {
 namespace R = ue_wrap::reflection;
 namespace GT = ue_wrap::game_thread;
 namespace VM = ue_wrap::vm_dispatch;
+namespace SG = ue_wrap::script_gate;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -72,13 +74,33 @@ struct PendingNativeCompletion {
     uint8_t target = 0;
 };
 
+struct NativeDebounce {
+    int32_t internalIndex = -1;
+    uint64_t sentAtMs = 0;
+};
+
 // Game-thread-only. One pending check per object folds nested/duplicate watched
 // verbs (for example an actionOptionIndex path that invokes fullFix) into one
 // repair request/outcome.
 std::unordered_map<void*, PendingNativeCompletion> g_pendingNative;
+std::unordered_map<void*, NativeDebounce> g_nativeDebounce;
 bool g_nativeRegistrationAttempted = false;
 bool g_serverNativeReady = false;
-bool g_generatorNativeReady = false;
+bool g_generatorFullFixReady = false;
+bool g_generatorActionReady = false;
+
+void* g_generatorActionFn = nullptr;
+int32_t g_generatorActionOff = -1;
+int32_t g_generatorPanelOff = -1;
+void* g_transformerPanelCls = nullptr;
+int32_t g_sineCompleteOff = -1;
+uint8_t g_sineCompleteMask = 0;
+int32_t g_switchesCompleteOff = -1;
+uint8_t g_switchesCompleteMask = 0;
+int32_t g_rotatorsCompleteOff = -1;
+uint8_t g_rotatorsCompleteMask = 0;
+
+constexpr uint64_t kNativeDebounceMs = 1000;
 
 uint64_t NowMs() {
     using namespace std::chrono;
@@ -117,18 +139,16 @@ bool ReadRawBool(void* actor, const Desc& d, bool& v) {
     return true;
 }
 
-void WriteRawBool(void* actor, const Desc& d, bool v) {
-    if (!actor || d.stateOff < 0 || d.stateMask == 0) return;
-    uint8_t* p = reinterpret_cast<uint8_t*>(actor) + d.stateOff;
-    if (v) *p |= d.stateMask;
-    else   *p &= static_cast<uint8_t>(~d.stateMask);
-}
-
 bool IsRepaired(void* actor, const Desc& d, bool& repaired) {
     bool raw = false;
     if (!ReadRawBool(actor, d, raw)) return false;
     repaired = d.repairedWhenSet ? raw : !raw;
     return true;
+}
+
+bool ReadBoolAt(void* object, int32_t off, uint8_t mask) {
+    if (!object || off < 0 || mask == 0) return false;
+    return (*(reinterpret_cast<const uint8_t*>(object) + off) & mask) != 0;
 }
 
 std::string NarrowAscii(const std::wstring& w) {
@@ -222,11 +242,6 @@ bool ApplyRepair(void* actor, Desc& d) {
     if (d.target == kRepairServer) {
         called = CallNoArg(actor, L"fix");
 
-        bool after = false;
-        if (!IsRepaired(actor, d, after) || !after) {
-            WriteRawBool(actor, d, false);
-        }
-
         // check() refreshes the server box presentation from canonical IsBroken.
         // Run it even when fix() already flipped the bool successfully.
         CallNoArg(actor, L"check");
@@ -241,12 +256,6 @@ bool ApplyRepair(void* actor, Desc& d) {
         // repaired panel presentation (green when isBroken == false).
         called = CallRadioTowerSetBroken(actor, false, true);
 
-        bool after = false;
-        if (!IsRepaired(actor, d, after) || !after) {
-            // Fail-safe only: the native setBroken path is preferred.
-            WriteRawBool(actor, d, false);
-        }
-
         // Safe even on a peer whose individual puzzle/fuse actions were not
         // mirrored: repaired isBroken=false selects the completed presentation.
         CallNoArg(actor, L"updPuzzle");
@@ -255,17 +264,10 @@ bool ApplyRepair(void* actor, Desc& d) {
         // Its native fullFix() completes the panel state, sets cycle=100,
         // clears isBroken, fires turnedOn, and calls upd().
         called = CallNoArg(actor, L"fullFix");
-
-        bool after = false;
-        if (!IsRepaired(actor, d, after) || !after) {
-            // Fail-safe only: fullFix() is the preferred native path.
-            WriteRawBool(actor, d, false);
-            CallNoArg(actor, L"upd");
-        }
     }
 
     bool finalState = false;
-    const bool ok = IsRepaired(actor, d, finalState) && finalState;
+    const bool ok = called && IsRepaired(actor, d, finalState) && finalState;
     UE_LOGI("repair_sync[worldauth]: APPLY target=%u id='%s' was_repaired=%d called=%d repaired=%d",
             static_cast<unsigned>(d.target), ActorIdentity(actor).c_str(),
             wasRepaired ? 1 : 0, called ? 1 : 0, ok ? 1 : 0);
@@ -307,6 +309,81 @@ bool SendOutcome(uint8_t target, void* actor) {
     return sent;
 }
 
+void CheckNativeCompletion(PendingNativeCompletion pending);
+
+bool RecentlyAuthoredNative(void* actor, int32_t internalIndex) {
+    const auto it = g_nativeDebounce.find(actor);
+    return it != g_nativeDebounce.end() && it->second.internalIndex == internalIndex &&
+           NowMs() - it->second.sentAtMs < kNativeDebounceMs;
+}
+
+void QueueNativeCompletion(void* actor, uint8_t target) {
+    if (!actor || !R::IsLive(actor)) return;
+    const int32_t internalIndex = R::InternalIndexOf(actor);
+    if (internalIndex < 0 || RecentlyAuthoredNative(actor, internalIndex)) return;
+
+    PendingNativeCompletion pending{actor, internalIndex, target};
+    if (!g_pendingNative.emplace(actor, pending).second) return;
+    GT::Post([pending] { CheckNativeCompletion(pending); });
+}
+
+bool GeneratorHumanCompletion(void* generator) {
+    if (!generator || g_generatorPanelOff < 0 || !g_transformerPanelCls) return false;
+    void* panel = *reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(generator) + g_generatorPanelOff);
+    return panel && R::IsLive(panel) && R::ClassOf(panel) == g_transformerPanelCls &&
+           ReadBoolAt(panel, g_sineCompleteOff, g_sineCompleteMask) &&
+           ReadBoolAt(panel, g_switchesCompleteOff, g_switchesCompleteMask) &&
+           ReadBoolAt(panel, g_rotatorsCompleteOff, g_rotatorsCompleteMask);
+}
+
+void OnGeneratorActionPost(const SG::Call& call) {
+    Desc* const d = DescForTarget(kRepairGenerator);
+    if (call.fromOurCode || !call.object || !call.locals ||
+        call.function != g_generatorActionFn || g_generatorActionOff < 0 ||
+        !d || !d->cls || !R::IsLive(call.object) || R::ClassOf(call.object) != d->cls) return;
+
+    const uint8_t action = *(call.locals + g_generatorActionOff);
+    if (action != 4 || !GeneratorHumanCompletion(call.object)) return;
+    QueueNativeCompletion(call.object, kRepairGenerator);
+}
+
+void ResolveGeneratorHumanWatch() {
+    if (g_generatorActionReady) return;
+    Desc* const d = DescForTarget(kRepairGenerator);
+    if (!d) return;
+    ResolveDesc(*d);
+    if (!d->cls) return;
+
+    if (!g_transformerPanelCls) g_transformerPanelCls = R::FindClass(L"transformerMGPanel_C");
+    if (!g_transformerPanelCls) return;
+    if (g_generatorPanelOff < 0) g_generatorPanelOff = R::FindPropertyOffset(d->cls, L"panelObj");
+    if (g_sineCompleteOff < 0)
+        R::FindBoolProperty(g_transformerPanelCls, L"isSineComplete",
+                            g_sineCompleteOff, g_sineCompleteMask);
+    if (g_switchesCompleteOff < 0)
+        R::FindBoolProperty(g_transformerPanelCls, L"isSwitchesComplete",
+                            g_switchesCompleteOff, g_switchesCompleteMask);
+    if (g_rotatorsCompleteOff < 0)
+        R::FindBoolProperty(g_transformerPanelCls, L"isRotatorsComplete",
+                            g_rotatorsCompleteOff, g_rotatorsCompleteMask);
+    if (!g_generatorActionFn)
+        g_generatorActionFn = R::FindFunction(d->cls, L"actionOptionIndex");
+    if (g_generatorActionFn && g_generatorActionOff < 0)
+        g_generatorActionOff = R::FindParamOffset(g_generatorActionFn, L"action");
+
+    if (g_generatorPanelOff < 0 || g_sineCompleteOff < 0 || g_sineCompleteMask == 0 ||
+        g_switchesCompleteOff < 0 || g_switchesCompleteMask == 0 ||
+        g_rotatorsCompleteOff < 0 || g_rotatorsCompleteMask == 0 ||
+        !g_generatorActionFn || g_generatorActionOff < 0) return;
+
+    if (SG::Watch(g_generatorActionFn, kVerbGeneratorActionOptionIndex,
+                  nullptr, &OnGeneratorActionPost)) {
+        g_generatorActionReady = true;
+        UE_LOGI("repair_sync[worldauth]: generator human completion watch armed "
+                "(action==4 + panel S/W/R complete)");
+    }
+}
+
 void CheckNativeCompletion(PendingNativeCompletion pending) {
     // A posted task can be drained by a nested ProcessEvent while the original
     // EX_LocalVirtualFunction is still executing. Leave it in g_pendingNative
@@ -344,7 +421,8 @@ void CheckNativeCompletion(PendingNativeCompletion pending) {
     UE_LOGI("repair_sync[worldauth]: NATIVE-COMPLETE %s target=%u id='%s'",
             s->role() == coop::net::Role::Host ? "host-outcome" : "client-request",
             static_cast<unsigned>(pending.target), id.c_str());
-    SendOutcome(pending.target, pending.actor);
+    if (SendOutcome(pending.target, pending.actor))
+        g_nativeDebounce[pending.actor] = {pending.internalIndex, NowMs()};
 }
 
 void DrainNativeCompletions() {
@@ -370,9 +448,8 @@ void OnNativeVerbEntry(const VM::Bracket& bracket) {
     if (bracket.verbId == kVerbServerFix) {
         if (!g_serverNativeReady) return;
         target = kRepairServer;
-    } else if (bracket.verbId == kVerbGeneratorActionOptionIndex ||
-               bracket.verbId == kVerbGeneratorFullFix) {
-        if (!g_generatorNativeReady) return;
+    } else if (bracket.verbId == kVerbGeneratorFullFix) {
+        if (!g_generatorFullFixReady) return;
         target = kRepairGenerator;
     } else {
         return;
@@ -386,15 +463,9 @@ void OnNativeVerbEntry(const VM::Bracket& bracket) {
     if (!d->cls || d->stateOff < 0 || !R::IsLive(bracket.ctx) ||
         R::ClassOf(bracket.ctx) != d->cls) return;
 
-    bool repaired = false;
-    if (!IsRepaired(bracket.ctx, *d, repaired) || repaired) return;
-
-    const int32_t internalIndex = R::InternalIndexOf(bracket.ctx);
-    if (internalIndex < 0) return;
-
-    PendingNativeCompletion pending{bracket.ctx, internalIndex, target};
-    if (!g_pendingNative.emplace(bracket.ctx, pending).second) return;
-    GT::Post([pending] { CheckNativeCompletion(pending); });
+    // Organic fix/fullFix is intent even if this peer's stale copy already says
+    // repaired. The host alone decides whether canonical state is broken.
+    QueueNativeCompletion(bracket.ctx, target);
 }
 
 }  // namespace
@@ -405,14 +476,11 @@ void Install(coop::net::Session* session) {
         g_nativeRegistrationAttempted = true;
         g_serverNativeReady =
             VM::RegisterVirtualVerb(L"fix", kVerbServerFix, &OnNativeVerbEntry);
-        const bool actionReady = VM::RegisterVirtualVerb(
-            L"actionOptionIndex", kVerbGeneratorActionOptionIndex, &OnNativeVerbEntry);
-        const bool fullFixReady = VM::RegisterVirtualVerb(
+        g_generatorFullFixReady = VM::RegisterVirtualVerb(
             L"fullFix", kVerbGeneratorFullFix, &OnNativeVerbEntry);
-        g_generatorNativeReady = actionReady && fullFixReady;
-        UE_LOGI("repair_sync[worldauth]: native verb detection server=%d generator=%d "
-                "(fix/actionOptionIndex/fullFix)",
-                g_serverNativeReady ? 1 : 0, g_generatorNativeReady ? 1 : 0);
+        UE_LOGI("repair_sync[worldauth]: canonical verb detection server_fix=%d generator_fullFix=%d; "
+                "human action watch pending reflection",
+                g_serverNativeReady ? 1 : 0, g_generatorFullFixReady ? 1 : 0);
     }
 }
 
@@ -423,6 +491,9 @@ void Tick() {
 
     VM::TickResolvePending();
     VM::SetEnabled(true);
+    SG::SetEnabled(true);
+    SG::ResolvePendingNames();
+    ResolveGeneratorHumanWatch();
     DrainNativeCompletions();
 
     const uint64_t now = NowMs();
@@ -456,7 +527,8 @@ void Tick() {
 
             const bool nativeDetectorReady =
                 (d.target == kRepairServer && g_serverNativeReady) ||
-                (d.target == kRepairGenerator && g_generatorNativeReady);
+                (d.target == kRepairGenerator &&
+                 (g_generatorFullFixReady || g_generatorActionReady));
             const auto pending = g_pendingNative.find(obj);
             const bool nativeCheckPending = nativeDetectorReady &&
                 pending != g_pendingNative.end() &&
@@ -509,10 +581,27 @@ void OnReliable(const coop::net::RepairOutcomePayload& p, uint8_t senderSlot) {
     }
 
     if (isHost) {
-        if (!ApplyRepair(actor, *d)) {
-            UE_LOGW("repair_sync: host failed target=%u id='%s' slot=%u",
+        bool hostRepaired = false;
+        if (!IsRepaired(actor, *d, hostRepaired)) {
+            UE_LOGW("repair_sync: host could not read authoritative target=%u id='%s' slot=%u",
                     static_cast<unsigned>(p.target), GetWireKey(p.key).c_str(), senderSlot);
             return;
+        }
+        if (!hostRepaired) {
+            if (!ApplyRepair(actor, *d)) {
+                UE_LOGW("repair_sync: host canonical repair failed target=%u id='%s' slot=%u",
+                        static_cast<unsigned>(p.target), GetWireKey(p.key).c_str(), senderSlot);
+                return;
+            }
+            if (!IsRepaired(actor, *d, hostRepaired) || !hostRepaired) {
+                UE_LOGW("repair_sync: host repair did not verify target=%u id='%s' slot=%u",
+                        static_cast<unsigned>(p.target), GetWireKey(p.key).c_str(), senderSlot);
+                return;
+            }
+        } else {
+            UE_LOGI("repair_sync[worldauth]: host target already repaired; issuing idempotent commit "
+                    "target=%u id='%s' slot=%u",
+                    static_cast<unsigned>(p.target), GetWireKey(p.key).c_str(), senderSlot);
         }
 
         NoteBaseline(p.target, actor, true);
@@ -536,8 +625,10 @@ void OnReliable(const coop::net::RepairOutcomePayload& p, uint8_t senderSlot) {
 void OnDisconnect() {
     g_lastRepaired.clear();
     g_pendingNative.clear();
+    g_nativeDebounce.clear();
     g_lastPoll = 0;
     VM::SetEnabled(false);
+    SG::SetEnabled(false);
 
     for (auto& d : g_descs) {
         d.cls = nullptr;

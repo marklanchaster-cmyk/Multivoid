@@ -411,6 +411,18 @@ inline constexpr size_t UFunction_Func = 0xD8;
 //     the stream, NOT Locals -- so a native-thunk hook reads Object, never Locals).
 inline constexpr size_t FFrame_Object = 0x18;             // UObject* (the executing/source object)
 inline constexpr size_t FFrame_Code   = 0x20;             // uint8* (instruction ptr; null on the ProcessInternal path)
+// Script-body frame fields used by script_gate. Derived from the same UE4.27
+// ProcessScriptFunction frame layout as Object/Code above.
+inline constexpr size_t FFrame_Node          = 0x10;      // UFunction*
+inline constexpr size_t FFrame_Locals        = 0x28;      // uint8* parameter/persistent frame
+inline constexpr size_t FFrame_PreviousFrame = 0x70;      // FFrame*
+inline constexpr size_t FFrame_OutParms      = 0x78;      // FOutParmRec*
+inline constexpr size_t FOutParmRec_Property = 0x00;      // FProperty*
+inline constexpr size_t FOutParmRec_PropAddr = 0x08;      // uint8*
+inline constexpr size_t FOutParmRec_Next     = 0x10;      // FOutParmRec*
+inline constexpr size_t UFunction_FunctionFlags = 0xB0;   // uint32 EFunctionFlags
+inline constexpr uint32_t FUNC_Native             = 0x400;
+inline constexpr size_t UStruct_ScriptNum       = 0x68;   // TArray<uint8>::Num
 
 // UWorld spawn-refusal window (the join-window BeginDeferred-null root, 2026-07-04).
 // IDA-pinned against exe ad478218 from UWorld::SpawnActor (0x142C12D20), the two

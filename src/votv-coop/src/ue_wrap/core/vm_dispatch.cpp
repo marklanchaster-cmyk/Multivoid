@@ -130,22 +130,23 @@ inline const std::uint32_t* PeekOperand(void* stack) {
     return reinterpret_cast<const std::uint32_t*>(code);
 }
 
-// Return the index of the registered verb the operand matches, or -1. Both threads
-// (an off-GT match is a tripwire the caller reports). op[0]=ComparisonIndex,
-// op[2]=Number@byte8 (the CORRECTED decode -- see the header).
-inline int MatchIndex(void* stack) {
+// Decode the operand once and collect every subscriber for that verb. Multiple
+// consumers intentionally may register the same Blueprint name; the original
+// one-result lookup silently starved every subscriber after the first.
+inline int CollectMatches(void* stack, int (&matches)[kMaxVerbs]) {
     const std::uint32_t* op = PeekOperand(stack);
     const std::uint32_t opCmp = op[0];
     const std::uint32_t opNum = op[2];
     const int n = g_verbCount.load(std::memory_order_acquire);
+    int found = 0;
     for (int i = 0; i < n; ++i) {
         const VerbEntry& e = g_verbs[i];
         if (!e.resolved.load(std::memory_order_acquire)) continue;
         if (opCmp == e.cmpIdx.load(std::memory_order_relaxed) &&
             opNum == e.number.load(std::memory_order_relaxed))
-            return i;
+            matches[found++] = i;
     }
-    return -1;
+    return found;
 }
 
 std::uintptr_t __fastcall WrapperVirtual(void* ctx, void* stack, void* result) {
@@ -159,8 +160,9 @@ std::uintptr_t __fastcall WrapperVirtual(void* ctx, void* stack, void* result) {
     if (gt) g_gtDispatch.fetch_add(1, std::memory_order_relaxed);
     else    g_workerDispatch.fetch_add(1, std::memory_order_relaxed);
 
-    const int idx = MatchIndex(stack);
-    if (idx < 0)
+    int matches[kMaxVerbs];
+    const int matchCount = CollectMatches(stack, matches);
+    if (matchCount == 0)
         return g_origVirtual(ctx, stack, result);
 
     g_nameMatch.fetch_add(1, std::memory_order_relaxed);
@@ -171,19 +173,26 @@ std::uintptr_t __fastcall WrapperVirtual(void* ctx, void* stack, void* result) {
         return g_origVirtual(ctx, stack, result);
     }
 
-    // GT match: fire the consumer's ENTRY callback, then run the real verb body
+    // GT match: fire every subscriber's ENTRY callback, then run the real verb body
     // inside an unwind-safe depth+window bracket so a nested matched dispatch sees
     // depth+1 AND the consumer's own FinishSpawningActor / K2_DestroyActor seam hooks
     // -- which fire INSIDE g_origVirtual -- can query CurrentThreadVerb() to attribute
     // the spawn/destroy to this verb. (Increment 1 is observe-only: an entry cb + the
     // published window feed the consumer's containment counter; no state mutation yet
     // -- capture/suppress/converge are 2a-2c.)
-    const VerbEntry& e = g_verbs[idx];
-    g_callbackFired.fetch_add(1, std::memory_order_relaxed);
-    MatchScope scope(e.verbId, e.name, ctx);
-    if (e.cb) {
-        Bracket b{ctx, e.verbId, t_matchDepth};
-        e.cb(b);
+    // The ambient identity spans the complete fan-out and the original body.
+    // All subscribers matched the same FName, so the first entry supplies the
+    // globally meaningful name. Its consumer-local id is retained only for
+    // backwards-compatible ambient diagnostics; cross-module code must use name.
+    const VerbEntry& ambient = g_verbs[matches[0]];
+    MatchScope scope(ambient.verbId, ambient.name, ctx);
+    for (int i = 0; i < matchCount; ++i) {
+        const VerbEntry& e = g_verbs[matches[i]];
+        g_callbackFired.fetch_add(1, std::memory_order_relaxed);
+        if (e.cb) {
+            Bracket b{ctx, e.verbId, t_matchDepth};
+            e.cb(b);
+        }
     }
     return g_origVirtual(ctx, stack, result);  // scope restores depth/window on return or unwind
 }
