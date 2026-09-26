@@ -188,10 +188,12 @@ Current allowlist: `treehouse_0..5`, `break_RomeoSierra`, `break_Victor`,
 ### ACTOR_MIRROR
 
 Known covered/no-replay rows include `piramid`, `wisps`, `arirFollower`,
-`ventCrawler`, `vehtp`, picnic/prop rows, and prop-lane pranks. Known actor gaps:
-`arirShip`, `ventKnocker`, `tentacleBalls`, `morningGay`, `borgRozital`,
-`graysforest`, `graystank`, `arirBuster`, `eggvasion`, `boarwar`, `soltoClean`,
-`salt`, `rozitalHole`, `dreambase`, `fallbody/fallcar`, `rockThrow`,
+`ventCrawler`, `ventKnocker`, `morningGay`, `borgRozital`, `graystank`,
+`eggvasion`, `fallbody/fallcar`, `vehtp`, picnic/prop rows, and
+prop-lane pranks. The 2026-09-26 output pass closed the previously invisible
+`EX_CallMath` birth seam for the newly listed rows; exact scope is recorded
+below. Remaining actor gaps include `arirShip`, `tentacleBalls`, `graysforest`,
+`arirBuster`, `boarwar`, `salt`, `rozitalHole`, `dreambase`, `rockThrow`,
 `hillRoller`, `alienJump`, and `trashBase`.
 
 ### TRANSIENT_CUE
@@ -215,6 +217,94 @@ Highest-priority remaining gaps are no-lane actor spawners, `agrav` component
 and reputation results, and runtime verification of independent ambient/main-
 gamemode rolls marked NEEDS-PROBE. These need targeted Blueprint work or the
 existing RNG census, not another broad native scan.
+
+## `blackFog_C` complete output synchronization (2026-09-26)
+
+The exact organic start is an hourly branch in
+`daynightCycle_C::ReceiveTick`: after `saveSlot.settime` reports a new hour and
+game mode is not 6, `RandomBoolWithWeight(0.0005)` calls
+`mainGamemode_C::spawnBlackFog`. That function is only an idempotent deferred
+spawn at `(0,0,0)` and stores the result in `mainGamemode.blackFog`. Connected
+clients cannot independently select it: the exact `spawnBlackFog` ScriptGate
+cancels organic client calls, `blackFog_C::ReceiveBeginPlay` is separately
+PRE-gated, and the FinishSpawning fallback removes an uncommanded inert shell.
+
+The cooked controller has no height-fog, sky, light, particle, inventory,
+reward, reputation, or persistent-save mutation. Its complete active behavior
+is:
+
+- `ReceiveBeginPlay` creates a dynamic `Inst_pp_blackFog`, puts it in the
+  authored PostProcess component's first weighted blendable, and ramps float
+  `a` by `WorldDeltaSeconds / spd`; the CDO has `spd=300`.
+- `set()` clamps `a` to `[0,1]`, writes material scalar `alpha`, writes
+  `gamemode.birber.noBirb = (a > 0.5)`, and calls `setVol2(1-a)` on every
+  `gamemode.ambMaster.ambience_triggers` entry.
+- Two local presentation loops play a camera-relative
+  `blackFog_whispers_Cue` after random 5--30 second delays and
+  `blackFog_thump` every five seconds. Their position/timing is deliberately
+  per-player presentation RNG, not shared world state.
+- `ReceiveTick` detects the `a >= 0.9` edge. It activates the named
+  `blackfog` reverb and calls `lib.setEvent(true,false,self)` on entry; it
+  deactivates/unregisters on the falling edge.
+- A 40-second looping timer calls `spawnGhost`, whose guarded body requires
+  `a >= 1`, chooses a world angle/nav point, and deferred-spawns `eyer_C` with
+  concrete `distance` plus `ignoreDaySpawn=true` and `fog=true`. Under the
+  shipped 300-second ramp, its normal ticks are at 40-second multiples through
+  280 while `a<1`; the controller enters its approximately one-second terminal
+  fade at 300 and is gone before 320. Thus the default graph has no qualifying
+  ghost tick. The client mirror nevertheless suppresses `spawnGhost` so a
+  changed schedule cannot create client-authored world RNG; any real host
+  `eyer_C` birth remains a concrete OwnerEntity spawn/pose/destroy result.
+- At full intensity the graph destroys every actor in `eyes`, then subtracts
+  delta from `a`, calls `set()` until zero, and destroys itself. The apparent
+  `a=180` assignment is immediately clamped to 1 by `set()`, so it is not a
+  180-second hold. `ReceiveDestroyed` clears `mainGamemode.blackFog` and calls
+  `setEvent(false,false,self)`.
+
+The synchronization reuses `EventAuthority`; no new kind or payload was
+needed. `black_fog_sync` watches the exact live `mainGamemode.blackFog` pointer
+and asks `event_active_sync` to BEGIN that controller at birth. This early
+entry owns **presentation lifetime only**. The normal game does not enter
+`activeEvents_senders` until alpha 0.9 (about 270 seconds), and only that native
+membership contributes to radio interference. The later poll sees the same
+pointer, marks that instance natively active rather than minting another, and
+clears the radio contribution again when native membership ends during the
+terminal fade. Repeated controllers get new IDs and simultaneous same-class
+identity remains pointer + `InternalIndex` scoped.
+
+On connected clients the authoritative BEGIN calls the shipped
+`spawnBlackFog` inside the black-fog mirror echo scope. The normal Blueprint
+therefore owns post-process, ambience, bird, whisper, thump, and reverb behavior
+without replaying the host selector. The client `spawnGhost` callback is
+cancelled. For JIP, the already-existing `EventAuthority.flags` byte has a
+narrow class-specific interpretation: bit 7 is terminal-fade direction, bit 6
+is native `activeEvents_senders` membership, and bits 0--5 are host alpha. A
+snapshot creates the controller once and applies that current alpha before its
+next latent update. Connected clients also receive ordered UPDATEs on the same
+instance whenever those quantized authoritative flags change, including during
+terminal fade. An UPDATE neither rerolls nor respawns the controller. Elapsed
+age remains diagnostic, not phase authority: missing-presentation retries use
+the last host alpha and never derive completion from `steady_clock`, so a
+paused/tabbed client cannot complete or refuse reconstruction based on time it
+did not simulate.
+
+END is ordered on the same Normal lane as BEGIN/snapshot. Before destroying a
+still-live client presentation, the module writes alpha zero and calls the
+shipped `set()` once; this restores ambient volumes and `noBirb` even if local
+timing diverged. `ReceiveDestroyed` then deactivates reverb and unregisters.
+The instance is removed before any later retry can recreate it, snapshot
+replacement ends omitted IDs, and disconnect performs the same cleanup. This
+covers connected clients, JIP current phase, END, and repeated instances.
+
+Development compatibility note: this branch deliberately remains protocol
+65006, but its EventAuthority UPDATE operation and black-fog flag interpretation
+are not compatible with older 65006 binaries. Black-fog tests must use the same
+branch build on every peer. The release compatibility bump is deferred until
+the event-output branch is ready to merge.
+
+Evidence: `research/bp_reflection/blackFog.json`,
+`reverse_engineering/exports/kismet-cfg/blackFog/blackFog.txt`, and
+`reverse_engineering/exports/kismet-cfg/daynightCycle/daynightCycle.txt`.
 
 ## Completed producer census and authority pass (2026-09-26)
 
@@ -246,8 +336,8 @@ authority-safe selector can still leave a `HOST event / CLIENT nothing` gap.
   mirrors pass only inside their existing echo scopes. `FinishSpawningActor`
   then destroys the inert uncommanded
   `redSkyEvent_C`, `weatherFogController_C`, or `blackFog_C` birth unless the
-  exact red-sky/fog mirror echo scope is active. `RedSky` and fog/weather state
-  own the covered outputs; black fog remains an output gap.
+  exact event-specific mirror echo scope is active. `RedSky`, fog/weather
+  state, and `black_fog_sync` own their respective outputs.
 - **Server breaking:** the connected client disables the one
   `ticker_serverBreaker_C` actor Tick, so it cannot select a server to break;
   `ServerBoxState` is the authoritative output. Tick is restored on disconnect.
@@ -296,10 +386,10 @@ callee frame and caller out storage to `false` before skipping the body.
 | `daynightCycle_C` | `superFogEvent` | timer | super-fog start | EVENT_SELECTOR | AUTHORITY_SAFE | exact PRE | No | Fog state output. |
 | `daynightCycle_C` | `permaRain_timer` | timer | permanent-rain transition | EVENT_SELECTOR | AUTHORITY_SAFE | exact PRE | No | `WeatherState` output. |
 | `mainGamemode_C` | `spawnRedSky` | new-day roll/start | red-sky controller | EVENT_SELECTOR | AUTHORITY_SAFE | exact ScriptGate | No | `RedSky` owns output. |
-| `mainGamemode_C` | `spawnBlackFog` | new-day roll/start | black-fog controller | EVENT_SELECTOR | AUTHORITY_SAFE | exact ScriptGate | Unproven | No client output lane. |
+| `mainGamemode_C` | `spawnBlackFog` | new-hour 0.0005 roll/start | black-fog controller | EVENT_SELECTOR | AUTHORITY_SAFE | exact ScriptGate + BeginPlay/birth fallback | Yes, natively only at alpha >=0.9; Multivoid begins the same pointer at birth | Complete local presentation/JIP/end through EventAuthority + `black_fog_sync`; client ghost RNG suppressed. |
 | `mainGamemode_C` | `Spawn Bad Sun` | new-day roll/start | bad-sun controller | EVENT_SELECTOR | AUTHORITY_SAFE | exact ScriptGate | Yes (`setEvent`) | No client output lane. |
 | `event_fleshRain_C` | `ReceiveBeginPlay` | direct day/night birth | registers, rolls locations, spawns rain results | EVENT_SELECTOR + HOST_RESULT_SELECTOR | AUTHORITY_SAFE | exact BeginPlay PRE; inert shell removed at FinishSpawn | Yes | Host output is not mirrored completely. |
-| `event_fossilBoarWar_C` | `ReceiveBeginPlay` | direct day/night birth | registers, rolls and spawns boars | EVENT_SELECTOR + HOST_RESULT_SELECTOR | AUTHORITY_SAFE | exact BeginPlay PRE; inert shell removed at FinishSpawn | Yes | Host output is not mirrored. |
+| `event_fossilBoarWar_C` | `ReceiveBeginPlay` | direct day/night birth | registers, rolls and spawns fossilhound/boar results | EVENT_SELECTOR + HOST_RESULT_SELECTOR | AUTHORITY_SAFE | exact BeginPlay PRE; inert shell removed at FinishSpawn | Yes | Host output is not mirrored; fossilhound has an exposed float birth write. |
 | `mainGamemode_C` | `ufo_midas` | timer delegate | selected target `runTrigger` | EVENT_SELECTOR | AUTHORITY_SAFE | exact ScriptGate | Unknown | Output is unresolved. |
 | `mainGamemode_C` | `ufo_pill` | timer delegate | `ufo_pillfo_C` birth | EVENT_SELECTOR | AUTHORITY_SAFE | exact ScriptGate | No evidence | Actor-mirror gap. |
 | `mainGamemode_C` | `ufo_boo` | timer delegate | `ufo_boofo_spawn1_C` birth | EVENT_SELECTOR | AUTHORITY_SAFE | exact ScriptGate | No evidence | Actor-mirror gap. |
@@ -346,17 +436,22 @@ not silently declared safe; its mixed Tick was not disabled.
 |---|---|---|---|---|---|---|---|
 | scheduled safe rows | `trigger_eventer_C` targets | host `settime/runEvent` | SAFE_CLIENT_REPLAY | `EventFire` | Allowed rows replay through `fromOurCode` | Per-row gaps remain listed in the earlier roadmap | FULLY_SYNCED for allowlist |
 | prank result | `trigger_eventer_C::runSpecialEvent` cases | host prank selector | ACTOR_MIRROR / TRANSIENT_CUE / UNKNOWN | prop/NPC/vehicle where applicable | Covered spawned entities appear; no reroll occurs | `rockThrow`, `hillRoller`, `alienJump`, `trashBase`, `alienSounds` | ACTOR_MIRROR_GAP / TRANSIENT_CUE_GAP |
-| rain/fog/lightning | day/night weather controllers | host weather schedulers | RESULT_SYNC / TRANSIENT_CUE | `WeatherState`, fog, `LightningStrike` | Covered weather converges | black-fog presentation has no proved lane | FULLY_SYNCED except black fog |
+| rain/fog/lightning | day/night weather controllers | host weather schedulers | RESULT_SYNC / TRANSIENT_CUE | `WeatherState`, fog, `LightningStrike` | Covered weather converges | none known | FULLY_SYNCED |
 | red sky | `redSkyEvent_C` | host new-day roll | RESULT_SYNC | `RedSky` | Client creates/applies the commanded red-sky state | none known | FULLY_SYNCED |
+| black fog | `blackFog_C` | host hourly roll | SAFE_CLIENT_REPLAY + RESULT_SYNC + PER_PLAYER cues | early exact-pointer `EventAuthority`; shipped local controller; OwnerEntity only for any concrete host eyer | Connected client receives native PP/ambience/bird/audio/reverb behavior without rerolling world output; JIP snaps alpha/direction | runtime smoke validation | FULLY_SYNCED (static evidence) |
 | bad sun | `badSun_C` | host new-day roll | RESULT_SYNC + TRANSIENT_CUE | EventAuthority metadata only | Client knows an unmapped event may be active, but does not experience it | state/sky/audio lane | AUTHORITY_SAFE_PRESENTATION_INCOMPLETE |
 | flesh rain | `event_fleshRain_C` | host direct day/night birth | RESULT_SYNC + ACTOR_MIRROR + PER_PLAYER | EventAuthority metadata; generic prop coverage unproven | No whole-event replay | spawned result and cue coverage | RESULT_SYNC_GAP |
-| fossil boar war | `event_fossilBoarWar_C` | host direct day/night birth | ACTOR_MIRROR + TRANSIENT_CUE | EventAuthority metadata only | Client receives activity metadata, not boars/shake | `grayboar_C` mirror plus cue | ACTOR_MIRROR_GAP |
-| UFO timer outputs | `ufo_*` controllers | host `mainGamemode` timers | ACTOR_MIRROR / UNKNOWN | none proved for controller classes | Client does not invent a different UFO | host event may be invisible | ACTOR_MIRROR_GAP |
+| fossil boar war | `event_fossilBoarWar_C` | host direct day/night birth | ACTOR_MIRROR + TRANSIENT_CUE + birth state | EventAuthority metadata only | Client receives activity metadata, not fossilhound/boars/shake | fossilhound exposed float, `grayboar_C`, and cues | ACTOR_MIRROR_GAP |
+| UFO timer outputs | `ufo_pillfo_C`, `ufo_boofo_spawn1_C`, `ufo_joel_C`, `ufo_ballfo_C` | host `mainGamemode` timers | ACTOR_MIRROR | WorldActor birth/pose/destroy/snapshot | Connected clients and joiners receive the exact host-selected class and transform | class-specific non-transform state not carried | PARTIAL: ACTOR LIFECYCLE SYNCED |
 | funguy ticker | `npc_funguy_C` | host `tickerFunguy` | ACTOR_MIRROR | NPC lane | Host spawn/pose/despawn is mirrored | none known | FULLY_SYNCED |
-| body/lake monster/locker/radiotower | respective controllers | host main timers | ACTOR_MIRROR / RESULT_SYNC / CUE | none proved | Client no longer selects independently | controller/state/cue visibility | AUTHORITY_SAFE_PRESENTATION_INCOMPLETE |
-| screaming corpse / figura / eg / geometric and rare actors | respective classes above | host main timers | ACTOR_MIRROR / PER_PLAYER cue | none proved | Client no longer selects independently | mirror/cue lane per class | ACTOR_MIRROR_GAP |
+| body/locker/radiotower | `theBody_C`, `lockerCorpse_C`, `radiotowerPoof_C` | host main timers | ACTOR_MIRROR | WorldActor birth/pose/destroy/snapshot | Exact host actor is reconstructed for connected clients and joiners | class-specific cues not independently carried | PARTIAL: ACTOR LIFECYCLE SYNCED |
+| lake monster | level `lakeglow_C` | host `ticker_lakeMonsert` | RESULT_SYNC / CUE | none | Client no longer selects independently | `setActive` state, phase, cleanup | AUTHORITY_SAFE_PRESENTATION_INCOMPLETE |
+| figura / eg / geometric actors | `figura_C`, `eg_C`, `geomOcta_C` | host main timers | ACTOR_MIRROR / PER_PLAYER cue | NPC birth/pose/despawn/snapshot | Exact host actor lifecycle reaches connected clients and joiners | class-specific non-transform state/cues | PARTIAL: ACTOR LIFECYCLE SYNCED |
+| screaming corpse and rare `NewBlueprint*` actors | `screamingCorpse_C`, `NewBlueprint5_C`, `NewBlueprint19_C`, `NewBlueprint17_C` | host main timer/controller or ticker | ACTOR_MIRROR + birth state | none | Client no longer selects independently | deferred-window bool/string birth fields are not carried by WorldActorSpawn | ACTOR_MIRROR_GAP |
 | ambient mannequin | `prop_wMannequin_C` | host mannequin marker | ACTOR_MIRROR | PropSpawn/PropDestroy | Host-created prop is mirrored | presentation details unverified | FULLY_SYNCED for identity/lifecycle |
-| deer/hexahive/tree/tick/gost/eg | classes above | host world tickers | ACTOR_MIRROR | none of these classes is in the NPC/world-actor allowlists | Client no longer invents its own result | exact actor classes need lanes | ACTOR_MIRROR_GAP |
+| deer/tree/gost/eg | `deer_C`, `walkingTree_C`, `poolwalker_C`, `eg_C` | host world tickers | ACTOR_MIRROR | NPC birth/pose/despawn/snapshot | Exact host-selected actor reaches connected clients and joiners | class-specific non-transform state | PARTIAL: ACTOR LIFECYCLE SYNCED |
+| tick ticker | `NewBlueprint17_C` | host world ticker | ACTOR_MIRROR + birth state | none | Client no longer invents its own result | deferred-window bool and string fields must be carried before actor mirroring is safe | ACTOR_MIRROR_GAP |
+| hexahive | `hexahiveSPawner_C` and descendants | host world ticker | ACTOR_MIRROR / RESULT_SYNC | none | Client no longer invents its own result | generated hive actors/state | ACTOR_MIRROR_GAP |
 | bush/beehive | `growingPlant_C`, `beehiveBranch_C` | host exact spawn verbs | RESULT_SYNC / ACTOR_MIRROR | none proved | Client no longer invents its own result | persistent actor/state lane | RESULT_SYNC_GAP |
 | timed trigger targets | target-specific | host `triggerTimer.newMinute` | UNKNOWN | target-specific | Selection is host-only | audit each concrete target output | UNKNOWN |
 | falling sky | `skyFallingEvent_C` | host overlap, including collision-enabled remote `mainPlayer_C` puppet | SAFE_CLIENT_REPLAY not proven | none proved | Client cannot start a rogue local event; its host puppet can drive the authoritative overlap | output/presentation still unproved | UNKNOWN |
@@ -366,10 +461,171 @@ The newly gated selectors intentionally received no generic whole-event replay.
 Where Table B says gap, the present behavior is **HOST A / CLIENT nothing or
 partial output**, which is authority-correct but not presentation-complete.
 
+Targeted follow-up decoded `badSun_C` plus `ui_badSun_C` rather than treating
+it as another black-fog-style presentation actor. `daynightCycle` starts it on
+the new-day path (game mode 7 or December 24 guarantees it; otherwise the
+proved branch includes a 0.001 roll, subject to the achievement condition).
+`mainGamemode."Spawn Bad Sun"` only deferred-spawns the controller and stores
+`gamemode.badSun`. After parent `actor_save.ReceiveBeginPlay`, the controller
+finds the RuntimeVirtualTexture volume, installs a 15-second invalidation
+timer, stores itself in `gamemode.badSun`, waits until hour 7--18, registers
+through `setEvent`, and creates `ui_badSun_C` with `sunObj=self` and its `super`
+flag. Its `siren()` owns a local Audio component/timeline plus a random 50--60
+second delay and three pitched thumps. `remove()` unregisters, removes the
+widget, clears `gamemode.badSun`, awards the `badsun` achievement, and destroys
+the controller.
+
+The companion widget is not presentation-only: its Tick traces the local
+camera against the sun, calls `Add Player Damage` with a random 2--3 result,
+spawns blood/cues, can drive player control rotation, writes sky-sphere sun
+intensity/color, calls `gamemode.setDryness`, reads/writes the dry-state fields,
+and contains achievement/save/game-over work. Therefore replaying the whole
+widget on a client without separating per-player exposure/damage from shared
+dryness/current phase would be an authority leak, while replaying only the
+controller would omit the event. Bad sun deliberately remains
+**OUTPUT-MISSING** pending a narrow current-state design; no unsafe replay was
+added in this pass. Evidence is
+`reverse_engineering/exports/kismet-cfg/{badSun,ui_badSun}/`.
+
+## Complete event/output inventory (event-output-sync-pass)
+
+### Inventory accounting
+
+The cooked `trigger_eventer_C` switch contains **66 `runEvent` names** and
+**42 `runSpecialEvent` names**. Twelve names are accepted by both dispatchers,
+leaving **96 unique eventer actions**. The developer event catalog exposes those
+96 actions plus **8 ambient/weather verbs**, for **104 triggerable inventory
+entries**. Table A separately enumerates **47 producer/start seams** outside or
+under those actions. Producer seams and event names intentionally are not added
+together: for example, `mainGamemode.spawnRedSky` is both an ambient verb and a
+producer, while the five weather schedulers share output state.
+
+Evidence is `research/bp_reflection/trigger_eventer.json`,
+`reverse_engineering/exports/kismet-cfg/trigger_eventer/trigger_eventer.txt`,
+the 104-entry table in `coop/dev/event_trigger.cpp`, and the 47 rows in Table A.
+The following matrices account for every event name and every Table A producer.
+An entity row marked lifecycle-synced means birth, streamed transform, destroy,
+and current live actors on join; it does **not** silently claim arbitrary
+class-specific fields or transient cues.
+
+### Dispatcher actions: complete or output-owned
+
+| Exact event names | Meaningful output(s) | Classification | Exact owner/lane | Connected / JIP / end |
+|---|---|---|---|---|
+| `treehouse_0..5` | deterministic authored build-stage mutation | SAFE_CLIENT_REPLAY | `EventFire -> runEvent` | connected replay; save carries current stage on join; native graph owns permanence |
+| `break_RomeoSierra`, `break_Victor`, `break_Victor2` | selected server broken state and native side effects | SAFE_CLIENT_REPLAY | `EventFire`; server state later reconciles through `ServerBoxState` | connected replay; save/server snapshot supplies current state; native repair owns end |
+| `obelisk` | authored trigger state, alarm/radar presentation | SAFE_CLIENT_REPLAY | `EventFire -> runEvent` | connected replay; save carries authored state; native event cleanup |
+| `looker_0-1..4-1`, `peace`, `arirSignal`, `arirSpk`, `picSignal`, `arirSat_0..2`, `piramid_sig` | deterministic `forceObjects`/signal progression | SAFE_CLIENT_REPLAY | `EventFire -> runEvent` | connected replay; transferred save supplies persistent array; no transient instance |
+| `solar`, `call0` | deterministic sky/light/sound or end-state verb | SAFE_CLIENT_REPLAY | `EventFire`; light state also has its normal lane | connected replay; persistent flags come from save; native verb ends its cues |
+| `toeStab`, `falseEnter`, `mann`, `vent`, `crys`, `fakeGrays`, `susArir` | per-player scare arm/presentation | PER_PLAYER + SAFE_CLIENT_REPLAY | `EventFire -> runEvent` | each connected player receives the arm; not reconstructed for a joiner after the moment has passed |
+| `arirGraff_0..6` | exact deterministic decal variant | SAFE_CLIENT_REPLAY | `EventFire -> runSpecialEvent` | connected replay; persistent/JIP lifetime remains the game's decal/save behavior |
+| `starRain` | shooting-star particle/cue | TRANSIENT_CUE | `event_cue_sync` cue 0 | connected start/stop; active particle component re-sent on join; native stop clears it |
+| `piramid` | `piramid2_C`, four killer wisps, pose/brain/gather behavior | ACTOR_MIRROR | WorldActor + NPC + `piramid_sync` | connected and JIP actor snapshots; destroy lanes close all tracked actors |
+| `wisps` | exact host-created wisp variants | ACTOR_MIRROR | NPC birth/pose/despawn/snapshot | connected and JIP complete for creature identity/lifecycle; host deaths remove mirrors |
+| `arirFollower` | follower creature | ACTOR_MIRROR | NPC birth/pose/despawn/snapshot | connected and JIP lifecycle; host despawn owns end |
+| `ventCrawler` | `ventCrawler_C` | ACTOR_MIRROR | NPC lane; this pass adds the missing `trigger_eventer_C` EX-spawn source | connected and JIP lifecycle; host despawn owns end |
+| `ventKnocker` | `kocker_C` | ACTOR_MIRROR | WorldActor lane; this pass adds the missing EX-spawn source | connected and JIP lifecycle; host destroy owns end |
+| `morningGay`, `borgRozital`, `eggvasion` | respectively `morningUfo_C`, `rozitBorg_C`, `superEgger_C` | ACTOR_MIRROR | WorldActor lane; exact host class/transform, no client reroll | connected and JIP lifecycle; host destroy owns end |
+| `fallbody_0`, `fallbody_1`, `fallcar_0`, `graystank` | host-selected `ufoDropper_body/car/tank/pig_C` craft variants | ACTOR_MIRROR | WorldActor lane; `ufoDropper_pig_C` and EX source added this pass | connected and JIP craft lifecycle; separately dropped payload uses its normal prop/vehicle lane where supported |
+| `picnic`, `destroyPicnic`, `enasus`, `enacros`, `cookier`, `paperGray`, `arirEgg` | concrete prop placement/removal/arming | PROP_MIRROR | PropSpawn/PropDestroy/PropPose plus keyed save state | connected lifecycle; prop snapshot/save supplies JIP; PropDestroy closes it |
+| `food`, `drive`, `poisonFood`, `expDrive`, `cookiebox`, `trashPiles`, `vaccine`, `oil`, `begos`, `gascans`, `bombBox` | host-created concrete prop/result actors | PROP_MIRROR | prop lifecycle and pose lanes | connected and JIP for enrolled props; destroy lane closes them; controller-only cues remain unclaimed |
+| `atvFuel`, `atvFix`, `atvExplode` | ATV fuel/condition/trap result | RESULT_SYNC | ATV authoritative state lane | connected state convergence and JIP current state; later native state supersedes it |
+| `vehtp` | authoritative ATV transform | RESULT_SYNC | ATV lane | connected and JIP current vehicle pose/state; no event replay |
+| `console`, `lightswitch`, `keypadGuess` | device interaction result | RESULT_SYNC | existing console/light/door device lanes | connected and JIP according to each device's state owner; no client prank reroll |
+
+The twelve dual-dispatch names (`falseEnter`, `fakeGrays`, `paperGray`, `vent`,
+`mann`, `crys`, `bedEvent`, `susArir`, `vehtp`, `agrav`, `arirFollower`, and
+`arirEgg`) retain the same output verdict regardless of which dispatcher called
+them; they are counted once in the 96-name total.
+
+### Dispatcher actions: partial, authority-only, or unknown
+
+| Exact event names | Meaningful output(s) | Classification/current owner | Exact remaining gap |
+|---|---|---|---|
+| `agrav` | generator break; exact lifted props; craft cloak/light/audio; conditional `addAriralRep(15)` | RESULT_SYNC + PER_PLAYER + TRANSIENT_CUE via `GeneratorBreakState`, `AgravState`, and presentation reconciliation | reputation write remains RESULT_SYNC gap; concurrent controller presentation unsupported |
+| `arirShip` | authored overlap arm; ship, alarm lamp, possible NPC leaves | ACTOR_MIRROR / RESULT_SYNC | later overlap spawn source and alarm/result coupling are not enrolled by the eventer EX source |
+| `tentacleBalls` | activates the level-placed `tentacleBallsFollower_C` via `runTrigger` | RESULT_SYNC | placed-controller phase/state and cues; spawning a duplicate WorldActor is explicitly not a solution |
+| `arirBuster` | `arirBusterSpawner_C` and its selected products | ACTOR_MIRROR / UNKNOWN | controller/product census and lifecycle lane |
+| `soltoClean` | `soltomiaCleaning_C` plus exposed `doorJam2`/`doorJam3` references | ACTOR_MIRROR + birth state | the two references are written between Begin/Finish and are not carried; the new EX catch deliberately excludes this pair |
+| `graysforest` | `grayEventController_C`, grays and encounter state | ACTOR_MIRROR + RESULT_SYNC | controller phase plus exact creature births/deaths |
+| `boarwar` | `boarInvasion_C`, boars, long-lived phase/timer | ACTOR_MIRROR + RESULT_SYNC | boar identity/pose, current phase on join, and 90-minute cleanup |
+| `salt` | `saltpile_C` persistent save actor | RESULT_SYNC / ACTOR_MIRROR | reconcile against save-loaded twin; generic fresh actor mirror risks duplication |
+| `rozitalHole`, `dreambase` | persistent controller/save actors and child pivots | RESULT_SYNC / ACTOR_MIRROR | current phase/children plus save-twin adoption and cleanup |
+| `rockThrow`, `hillRoller`, `alienJump`, `trashBase` | controller birth; selected thrown food/rocks/trash; local audio/overlap behavior | PROP_MIRROR + ACTOR_MIRROR + TRANSIENT_CUE | child props may enroll normally, but controller lifecycle/cues and exact output census are not complete |
+| `alienSounds` | three `noiser_C` actors and alien audio | ACTOR_MIRROR + TRANSIENT_CUE | NPC pose alone would not reproduce its timer/audio; needs an authored sound/result design |
+| `earthTp` | teleport of the intended triggering player | PER_PLAYER | current host replay/pose behavior does not prove the intended remote-player recipient semantics |
+| `bedEvent`, `treehouseSleep` | player sleep/dream/teleport presentation | PER_PLAYER | remote recipient, phase, and reconnect semantics require targeted sleep-state evidence |
+
+### Non-eventer selectors/controllers and each output family
+
+| Producers (Table A rows) | Outputs | Classification and exact lane | Remaining output/JIP/end result |
+|---|---|---|---|
+| `timerRain`, `permaRain_timer` | rain enabled/amount/timing | RESULT_SYNC: `WeatherState` | connected and JIP current state; later host weather state ends it |
+| `timerLightning` | exact strike occurrence/location and cue | RESULT_SYNC + TRANSIENT_CUE: `LightningStrike` | connected strikes; intentionally no JIP replay for an expired strike |
+| `fogEvent`, `superFogEvent` | fog state/controller | RESULT_SYNC: fog/weather modules | connected and JIP current fog; host clear ends it |
+| `spawnRedSky` / `redSkyEvent_C` | red-sky state and controller birth | RESULT_SYNC: `RedSky`; client organic BeginPlay suppressed | connected and JIP current state; host clear/destroy ends it |
+| `spawnBlackFog` / `blackFog_C` | local black PP; ambience/bird suppression; whispers/thumps; reverb; guarded eyer output | SAFE_CLIENT_REPLAY + RESULT_SYNC + PER_PLAYER; concrete eyer uses OwnerEntity if one occurs | connected BEGIN materializes the shipped local presentation; JIP applies current alpha + fade direction; END forces `set(0)` then destroys; client `spawnGhost` RNG is cancelled |
+| `Spawn Bad Sun` / `badSun_C` | sky/light/fog mutation and siren/audio | RESULT_SYNC + TRANSIENT_CUE | EventAuthority metadata only; client presentation, current phase, and cleanup are missing |
+| `event_fleshRain_C` | `prop_garbageClump_C`; two local camera shakes; two 2D sounds | PROP_MIRROR + PER_PLAYER + TRANSIENT_CUE | clump `Init` feeds the existing prop lane; shake/sound are missing and are not replayed on JIP after expiry |
+| `event_fossilBoarWar_C` | `fossilhound_C`, `grayboar_C`, camera shake, sound | ACTOR_MIRROR + birth state + PER_PLAYER + TRANSIENT_CUE | fossilhound receives a pre-Finish float property, so both actors/cues/current phase remain missing rather than creating an incorrect generic mirror |
+| `ufo_midas` | selected target controller `runTrigger` | RESULT_SYNC / UNKNOWN | exact target and resulting state need targeted BP decode |
+| `ufo_pill`, `ufo_boo`, `ufo_joel`, `ufo_ball` | exact UFO actor class and transform | ACTOR_MIRROR: WorldActor | connected/JIP birth+pose+destroy now covered; class-specific fields/cues remain partial |
+| `tickerFunguy` | `npc_funguy_C` | ACTOR_MIRROR: NPC | the missing mainGamemode EX source is added; connected/JIP/despawn covered |
+| `tickerBody`, `ticker_lockerhead`, `ticker_radiotowerPoof` | `theBody_C`, `lockerCorpse_C`, `radiotowerPoof_C` | ACTOR_MIRROR: WorldActor | connected/JIP lifecycle covered; one-shot local cues not independently guaranteed |
+| `CustomEvent_0` / `screamingCorpseController_C` | controller plus `screamingCorpse_C` children | ACTOR_MIRROR + birth state | host controller remains host-only; child `SetStringPropertyByName` in the deferred window is uncarried, so no unsafe generic mirror was added |
+| `CustomEvent_3`, `CustomEvent_5` | `figura_C`; `eg_C`/`geomOcta_C` | ACTOR_MIRROR: NPC | connected/JIP lifecycle now covered; per-class cues/fields remain partial |
+| `CustomEvent_6`, `CustomEvent_7` | `NewBlueprint5_C`; `NewBlueprint19_C` | ACTOR_MIRROR + birth state | each has a deferred-window `SetBoolPropertyByName`; no mirror until the exact birth field is represented |
+| `ticker_lakeMonsert` | level `lakeglow.setActive` phase/pull effect | RESULT_SYNC + PER_PLAYER | no state lane, JIP phase, or proved end reconciliation |
+| deer/tree/gost/eg ticker rows | `deer_C`, `walkingTree_C`, `poolwalker_C`, `eg_C` | ACTOR_MIRROR: NPC | connected/JIP/despawn now covered by exact EX sources |
+| tick ticker row | `NewBlueprint17_C` plus deferred bool/string inputs | ACTOR_MIRROR + birth state | output remains missing until both pre-BeginPlay fields are represented |
+| hexahive ticker | `hexahiveSPawner_C` then generated hive state | ACTOR_MIRROR + RESULT_SYNC | controller/child generation and cleanup remain missing |
+| mannequin ticker | `prop_wMannequin_C` | PROP_MIRROR | connected/JIP/destroy covered by prop lane |
+| bush ticker / `growingPlant_C` | persistent plant actor, growth/fruit/save state | RESULT_SYNC + ACTOR_MIRROR | no authoritative growth/state lane or save-twin convergence |
+| beehive ticker / `beehiveBranch_C` | persistent branch/bees/save state | RESULT_SYNC + ACTOR_MIRROR | no authoritative state/child lane or save-twin convergence |
+| `triggerTimer.newMinute` | target-specific `runTrigger` | UNKNOWN per target | selection is host-only; each concrete target still needs enumeration and an output owner |
+| `triggerFallingSky` / `skyFallingEvent_C` | falling-sky actor, sky/particle/audio/player effects | ACTOR_MIRROR + TRANSIENT_CUE / UNKNOWN | host puppet preserves remote triggering; output phase and cleanup remain unproved |
+| `grayBoarSpawner.ReceiveTick` | gray-boar encounter and combat cleanup | UNKNOWN | selector seam itself remains UNKNOWN; do not classify it safe or disable the mixed Tick |
+| `ticker_bp7Spawner`, `ticker_susHoleSpawner`, `ticker_eyers`, `ticker_fireflySpawner`, `CustomEvent_1/2/4` | player/camera-relative actors, emitter, UI/footstep/hallucination | PER_PLAYER / PRESENTATION_RANDOM | intentionally local; not shared-world output and no host result lane required |
+| server breaker, roach master/ticker, sky/yellow wisps | servers; roach population; exact wisps | RESULT_SYNC / ACTOR_MIRROR | `ServerBoxState`, `RoachState`, NPC lanes already provide connected/JIP/current cleanup |
+
+### Implementation added by this pass
+
+The native deferred-spawn UFunction has a second observation path for Blueprint
+`EX_CallMath`. Previously that path accepted only four broad source classes, so
+an allowlisted event product could still be invisible. This pass adds **24 exact
+source+product pairs** for `trigger_eventer_C`, `mainGamemode_C`,
+and the deer/tree/gost/eg tickers. The concrete output
+must also match the curated NPC or WorldActor allowlist. Pair gating is
+intentional: a broad `mainGamemode_C` row would accidentally enroll save-loaded
+antibreathers as transient actors, and the `trigger_eventer_C ->
+soltomiaCleaning_C` pair has uncarried exposed-on-spawn references.
+The apparently easy `event_fossilBoarWar_C -> fossilhound_C` pair was also
+excluded because that graph writes a float property before FinishSpawning.
+
+New NPC products are `deer_C`, `figura_C`, `eg_C`, `geomOcta_C`,
+`walkingTree_C`, and `poolwalker_C`. New WorldActor products are
+`ufoDropper_pig_C`, `theBody_C`, `lockerCorpse_C`, `radiotowerPoof_C`,
+`ufo_pillfo_C`, `ufo_boofo_spawn1_C`, `ufo_joel_C`, and `ufo_ballfo_C`.
+`NewBlueprint5_C`, `NewBlueprint19_C`, `NewBlueprint17_C`, and
+`screamingCorpse_C` were deliberately excluded after the deferred-window audit
+found uncarried bool/string writes before `FinishSpawningActor`. Parent classes
+were verified from the extracted cooked exports before choosing a lane: the
+first admitted set are `Character`; the second are `Actor` (or an existing
+Actor-derived allowlisted family).
+
+No payload or reliable kind changed, so protocol remains **65006**. Existing
+NPC/WorldActor sender-slot rules remain host-only. Both lanes already provide
+live-actor join snapshots, monotonic host EIDs, streamed transforms, and exact
+destroy cleanup. This closes entity lifecycle, not every internal property or
+one-shot cue; those residuals remain explicitly PARTIAL above.
+
 ### Active instance correlation and short-lived events
 
-`event_active_sync` creates instances only from the live
-`activeEvents_senders` registry. Selector gates do not create instances. An
+`event_active_sync` normally creates instances from the live
+`activeEvents_senders` registry. The one proven earlier lifetime seam is
+`mainGamemode.blackFog`: its exact controller pointer is admitted at birth,
+then correlated with that same pointer when the shipped graph later registers
+at alpha 0.9. Other selector gates do not create instances. An
 exact post-watch on `lib_C::setEvent` immediately diffs that same registry, so
 an ON/OFF event cannot live wholly between 250 ms reconciliation polls. A later
 poll of the same sender cannot double-BEGIN it because the map already contains
@@ -380,3 +636,20 @@ class without a `list_events` mapping remains valid with an empty row.
 
 `AgravState` adds reliable kind 134 and an 80-byte host-only payload. Protocol
 is 65006; EventAuthority and AgravState both use the ordered Normal lane.
+
+### Output-status counts
+
+Using the 22 grouped rows in Table B as the accounting unit (so one grouped row
+is not inflated by every named variant), the current matrix is:
+
+- **COMPLETE: 6** -- scheduled safe rows, weather rain/fog/lightning, red sky,
+  black fog, funguy, and mannequin lifecycle.
+- **PARTIAL: 6** -- prank results, UFO actors, body/locker/radiotower, the
+  figura/eg group, deer/tree/gost/eg, and `agrav`.
+- **OUTPUT-MISSING: 8** -- bad sun, flesh rain, fossil boar war, lake monster,
+  screaming/rare actors, tick ticker, hexahive, and bush/beehive.
+- **UNKNOWN: 2** -- timed-trigger targets and falling-sky output semantics.
+
+These counts measure meaningful output coverage, not merely selection safety
+or actor birth. `grayBoarSpawner_C::ReceiveTick` remains a producer-authority
+UNKNOWN outside the 22 Table B output groups.

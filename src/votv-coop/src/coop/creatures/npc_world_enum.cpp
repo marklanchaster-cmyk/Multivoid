@@ -28,6 +28,7 @@
 #include "ue_wrap/core/ufunction_hook.h"   // the EX_CallMath spawn-catch thunk
 
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -120,8 +121,8 @@ coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& 
 
 // ---- the EX_CallMath spawn catch -------------------------------------------------------
 // Source spawner classes whose BeginDeferred output is HOST-AUTHORITATIVE (mirrored).
-// Future creature events (boars/grays/buster) add their trigger class here once their
-// target class joins kNpcAllowlist.
+// A source row is still inert unless the concrete product belongs to the NPC or
+// WorldActor allowlist; this table grants observability, not arbitrary spawn trust.
 constexpr const wchar_t* kExSpawnSourceClasses[] = {
     L"trigger_wispSwarm_C",   // the `wisps` event swarm -> up to 32x wisp_C over ~8-32 s
     L"piramidSpawner_C",      // the `piramid` event chain -> 4x killerwisp_C (npc lane) +
@@ -144,6 +145,40 @@ constexpr const wchar_t* kExSpawnSourceClasses[] = {
                               // re-commit of a client's sale (we invoke `sell` via ProcessEvent, but
                               // the BeginDeferred INSIDE it is still EX_CallMath from the gun's
                               // bytecode, so FFrame::Object is still the gun).
+};
+
+// Event-output additions are exact SOURCE + PRODUCT pairs.  `mainGamemode_C`
+// also EX-spawns save-loaded antibreathers and many unrelated actors; making it
+// a broad source would mis-enroll those as transient event NPCs.  Likewise,
+// trigger_eventer writes soltomiaCleaning_C.doorJam2/doorJam3 between Begin and
+// Finish, which the generic birth payload cannot carry.  Exact pairs keep both
+// families out while closing only the bytecode-proven result births below.
+struct ExSpawnPair { const wchar_t* source; const wchar_t* product; };
+constexpr ExSpawnPair kEventExSpawnPairs[] = {
+    {L"trigger_eventer_C", L"morningUfo_C"},
+    {L"trigger_eventer_C", L"rozitBorg_C"},
+    {L"trigger_eventer_C", L"ventCrawler_C"},
+    {L"trigger_eventer_C", L"kocker_C"},
+    {L"trigger_eventer_C", L"ufoDropper_body_C"},
+    {L"trigger_eventer_C", L"ufoDropper_car_C"},
+    {L"trigger_eventer_C", L"ufoDropper_tank_C"},
+    {L"trigger_eventer_C", L"ufoDropper_pig_C"},
+    {L"trigger_eventer_C", L"superEgger_C"},
+    {L"mainGamemode_C", L"npc_funguy_C"},
+    {L"mainGamemode_C", L"theBody_C"},
+    {L"mainGamemode_C", L"lockerCorpse_C"},
+    {L"mainGamemode_C", L"radiotowerPoof_C"},
+    {L"mainGamemode_C", L"figura_C"},
+    {L"mainGamemode_C", L"geomOcta_C"},
+    {L"mainGamemode_C", L"eg_C"},
+    {L"mainGamemode_C", L"ufo_pillfo_C"},
+    {L"mainGamemode_C", L"ufo_joel_C"},
+    {L"mainGamemode_C", L"ufo_ballfo_C"},
+    {L"mainGamemode_C", L"ufo_boofo_spawn1_C"},
+    {L"ticker_deerSpawner_C", L"deer_C"},
+    {L"ticker_treeSpawner_C", L"walkingTree_C"},
+    {L"ticker_gost_C", L"poolwalker_C"},
+    {L"ticker_egSpawner_C", L"eg_C"},
 };
 
 // A source's output may be a WorldActor-lane class (piramid2_C): same catch seam, drained to
@@ -193,9 +228,20 @@ void OnBeginDeferredExSpawn(void* /*context*/, void* srcObj, void* spawned) {
     for (const wchar_t* name : kExSpawnSourceClasses) {
         if (R::NameEquals(R::NameOf(srcCls), name)) { sourceMatch = true; break; }
     }
-    if (!sourceMatch) return;
     void* cls = R::ClassOf(spawned);
     if (!cls) return;
+    if (!sourceMatch) {
+        const auto& srcName = R::NameOf(srcCls);
+        const auto& productName = R::NameOf(cls);
+        for (const auto& pair : kEventExSpawnPairs) {
+            if (R::NameEquals(srcName, pair.source) &&
+                R::NameEquals(productName, pair.product)) {
+                sourceMatch = true;
+                break;
+            }
+        }
+    }
+    if (!sourceMatch) return;
     if (!coop::npc_sync::IsAllowlistedClass(cls) && !IsWaAllowlistedClass(cls)) return;
     const int32_t idx = R::InternalIndexOf(spawned);
     std::lock_guard<std::mutex> lk(g_pendingMx);
@@ -210,9 +256,9 @@ void InstallExSpawnCatch(void* beginDeferredFn) {
     // Idempotent per (ufunction, cb) inside InstallPostHook; chains after any other Func-thunk
     // on the same UFunction (trash_collect's ambient-prop observer) -- both callbacks fire.
     if (ue_wrap::ufunction_hook::InstallPostHook(beginDeferredFn, &OnBeginDeferredExSpawn)) {
-        UE_LOGI("npc-sync[ex-spawn]: Func-thunk catch installed on BeginDeferred (source-gated: "
-                "trigger_wispSwarm_C -> wisp_C, piramidSpawner_C -> killerwisp_C + piramid2_C; "
-                "EX_CallMath spawns now enroll)");
+        UE_LOGI("npc-sync[ex-spawn]: Func-thunk catch installed on BeginDeferred "
+                "(%zu broad sources + %zu exact event source/product pairs)",
+                std::size(kExSpawnSourceClasses), std::size(kEventExSpawnPairs));
     } else {
         UE_LOGW("npc-sync[ex-spawn]: InstallPostHook FAILED -- EX_CallMath creature spawns will "
                 "NOT mirror this session (event-swarm wisps host-only)");

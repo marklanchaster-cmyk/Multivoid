@@ -3902,14 +3902,17 @@ static_assert(sizeof(EventSnapshotPayload) <= 256 - 20 - 8,
               "EventSnapshotPayload must fit in one reliable datagram");
 
 // b65005: authoritative active-event registry. op: 0=BEGIN, 1=END,
-// 2=SNAPSHOT_BEGIN, 3=SNAPSHOT_ITEM, 4=SNAPSHOT_END. A snapshot is an atomic
-// replacement bracket; instanceId is meaningful for BEGIN/END/ITEM.
+// 2=SNAPSHOT_BEGIN, 3=SNAPSHOT_ITEM, 4=SNAPSHOT_END, 5=UPDATE. A snapshot is
+// an atomic replacement bracket; instanceId is meaningful for BEGIN/END/ITEM/
+// UPDATE. UPDATE retains the existing instance and only refreshes flags.
 struct EventAuthorityPayload {
     uint64_t instanceId;
     uint32_t setRevision;
     uint16_t elapsedSec;
     uint8_t op;
-    uint8_t flags;
+    uint8_t flags;  // class-specific current-state hint; blackFog_C: bit7 fade,
+                    // bit6 native activeEvents membership (radio), bits0..5
+                    // current presentation alpha (0..63). Zero otherwise.
     char className[48];
     char rowName[48];
 };

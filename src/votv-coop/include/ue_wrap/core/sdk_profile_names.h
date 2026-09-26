@@ -181,6 +181,15 @@ inline constexpr const wchar_t* kNpcAllowlist[] = {
     NpcClass_WispO,
     NpcClass_WispP,
     NpcClass_WispBlu,
+    // Host-selected ambient/event Characters. Their selectors are suppressed on
+    // connected clients; the EX_CallMath source catch enrolls the concrete host
+    // result into the normal NPC birth/pose/despawn + join-snapshot lane.
+    L"deer_C",
+    L"figura_C",
+    L"eg_C",
+    L"geomOcta_C",
+    L"walkingTree_C",
+    L"poolwalker_C",
 };
 inline constexpr size_t kNpcAllowlistSize = sizeof(kNpcAllowlist) / sizeof(kNpcAllowlist[0]);
 
@@ -198,6 +207,7 @@ inline constexpr const wchar_t* kWorldActorAllowlist[] = {
     L"ufoDropper_body_C",          // ufoDropper delivery saucer body (the gray "drop pod")
     L"ufoDropper_car_C",           // ufoDropper car variant
     L"ufoDropper_tank_C",          // ufoDropper tank variant
+    L"ufoDropper_pig_C",           // graystank companion variant (same ufoDropper_C base)
     L"rozitBorg_C",                // Rozital mothership (borgRozital event)
     L"arirShip_C",                 // ariral ship
     L"skyUfo_C",                   // high-altitude sky UFO
@@ -222,6 +232,17 @@ inline constexpr const wchar_t* kWorldActorAllowlist[] = {
                                    // it. `prop_coingun_C` is in kExSpawnSourceClasses so the Func-thunk
                                    // drain reaches world_actor_sync::HostEnrollExSpawn -- that is what
                                    // allocates the eid and broadcasts WorldActorSpawn.
+    // Host-selected story/ambient actors whose cooked classes are plain AActor
+    // (not ACharacter/Aprop). The generic WA lane owns exact birth transform,
+    // full-rotation pose, destruction and join snapshots; client-local selectors
+    // remain suppressed by event_fire_sync/spawn_authority.
+    L"theBody_C",
+    L"lockerCorpse_C",
+    L"radiotowerPoof_C",
+    L"ufo_pillfo_C",
+    L"ufo_boofo_spawn1_C",
+    L"ufo_joel_C",
+    L"ufo_ballfo_C",
 };
 inline constexpr size_t kWorldActorAllowlistSize =
     sizeof(kWorldActorAllowlist) / sizeof(kWorldActorAllowlist[0]);

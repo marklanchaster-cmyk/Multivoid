@@ -194,21 +194,27 @@ const NoReplayRow kNoReplayRows[] = {
     // host-local by design:
     { "agrav", "physics divergence (by-design host-local)" },
     { "treehouseSleep", "per-player teleport" },
-    // creature / save-actor spawns: host-only until allowlisted (RE 10.2). ventCrawler_C IS
-    // npc-allowlisted (sdk_profile NpcClass_VentCrawler) -- its no-replay reason is MIRRORS:
-    { "ventCrawler", "npc lane (allowlisted)" }, { "ventKnocker", "creature spawn (no lane yet)" },
-    { "tentacleBalls", "creature spawn (no lane yet)" }, { "morningGay", "creature spawn (no lane yet)" },
-    { "borgRozital", "creature spawn (no lane yet)" }, { "graysforest", "creature spawn (no lane yet)" },
-    { "graystank", "creature spawn (no lane yet)" }, { "arirBuster", "creature spawn (no lane yet)" },
-    { "eggvasion", "creature spawn (no lane yet)" }, { "boarwar", "creature spawn (no lane yet)" },
+    // Creature/save-actor results: replaying the selector would reroll or
+    // duplicate them; an exact entity/state lane is required.
+    { "ventCrawler", "npc lane (allowlisted + exact EX source/product pair)" },
+    { "ventKnocker", "world-actor lane (kocker_C + exact EX source/product pair)" },
+    { "tentacleBalls", "placed-controller state (no lane yet)" },
+    { "morningGay", "world-actor lane (morningUfo_C + exact EX source/product pair)" },
+    { "borgRozital", "world-actor lane (rozitBorg_C + exact EX source/product pair)" },
+    { "graysforest", "creature spawn (no lane yet)" },
+    { "graystank", "world-actor lane (ufoDropper_tank_C + pig_C exact EX pairs)" },
+    { "arirBuster", "creature spawn (no lane yet)" },
+    { "eggvasion", "world-actor lane (superEgger_C + exact EX source/product pair)" },
+    { "boarwar", "creature spawn (no lane yet)" },
     { "soltoClean", "creature spawn (no lane yet)" },
     { "salt", "save-actor spawn (no lane)" }, { "rozitalHole", "save-actor spawn (no lane)" },
     { "dreambase", "save-actor spawn (no lane)" },
-    { "fallbody_0", "dropper spawn (no lane)" }, { "fallbody_1", "dropper spawn (no lane)" },
-    { "fallcar_0", "dropper spawn (no lane)" },
+    { "fallbody_0", "world-actor lane (ufoDropper_body_C exact EX pair)" },
+    { "fallbody_1", "world-actor lane (ufoDropper_body_C exact EX pair)" },
+    { "fallcar_0", "world-actor lane (ufoDropper_car_C exact EX pair)" },
     // prank layer (host-local RNG; thrown-prop outputs ride the prop lane):
     { "food", "prank special (prop lane)" }, { "drive", "prank special (prop lane)" },
-    { "atvFuel", "prank special (prop lane)" }, { "atvFix", "prank special (prop lane)" },
+    { "atvFuel", "ATV state lane" }, { "atvFix", "ATV state lane" },
     { "poisonFood", "prank special (prop lane)" }, { "expDrive", "prank special (prop lane)" },
     { "cookiebox", "prank special (prop lane)" }, { "trashPiles", "prank special (prop lane)" },
     { "vaccine", "prank special (prop lane)" }, { "oil", "prank special (prop lane)" },

@@ -4,6 +4,7 @@
 
 #include "coop/net/session.h"
 #include "coop/world/weather_fog.h"
+#include "coop/world/black_fog_sync.h"
 #include "coop/world/weather_redsky.h"
 #include "ue_wrap/core/fname_utils.h"
 #include "ue_wrap/core/game_thread.h"
@@ -65,6 +66,7 @@ bool OnWeatherFogBeginPlay(void* self, void*) {
     return SuppressDirectEventStart(L"weatherFogController_C", self);
 }
 bool OnBlackFogBeginPlay(void* self, void*) {
+    if (coop::black_fog_sync::MirrorEchoActive()) return false;
     return SuppressDirectEventStart(L"blackFog_C", self);
 }
 bool OnFleshRainBeginPlay(void* self, void*) {
@@ -150,6 +152,7 @@ void OnFinishSpawnPost(void* /*context*/, void* /*srcObj*/, void* result) {
     // client birth yet, so every client instance of those is organic.
     if (match == 0 && coop::weather_redsky::ApplyEchoActive()) return;
     if (match == 1 && coop::weather_fog::MirrorEchoActive()) return;
+    if (match == 2 && coop::black_fog_sync::MirrorEchoActive()) return;
     if (!R::IsLive(actor)) return;
     E::DestroyActor(actor);
     const uint32_t nSup = ++g_suppressed[match];
