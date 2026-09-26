@@ -33,11 +33,34 @@ bool PeekIncomingSpawn(void* actor);
 void MarkIncomingDestroy(void* actor);
 bool ConsumeIncomingDestroy(void* actor);
 
-// Remember a wire-driven keyed teardown long enough to recognize the game's
-// insert/eject reincarnation pattern (old disc K destroyed, new disc K spawned).
-// The remembered key is consumed once and never suppresses anything by itself.
-void NoteWireDestroyedKey(const std::wstring& key);
-bool ConsumeRecentlyWireDestroyedKey(const std::wstring& key);
+// The game retires a floppy actor when it is inserted, then may reincarnate the
+// same logical floppy (same portable save key) on eject much later. Remember
+// that lifecycle edge until the session/world ends or the first qualifying
+// fresh floppy consumes it. The key marker alone never suppresses a destroy.
+void NoteFloppyRetiredForReincarnation(void* actor, const std::wstring& key);
+
+// Receiver-side correlation for an incoming PropDestroy: capture a bounded candidate from the
+// dying disc, then promote it to the long-lived marker only when the applied laptop INSERT state
+// matches its concrete type/content. This handles cross-lane arrival in either order without
+// treating every wire floppy destroy as an insertion.
+void NoteWireFloppyRetirementCandidate(void* actor, const std::wstring& key);
+void ConfirmWireFloppyInsertRetirement();
+
+// Query used only by the host PropDropIntent materialization seam: if this
+// exact portable floppy key is awaiting reincarnation, assign its eid now
+// rather than waiting for the normal next-tick watcher. Does not consume.
+bool IsFloppyReincarnationAwaiting(void* actor, const std::wstring& key);
+
+// Central fresh-floppy convergence arm. Qualifies the actor as a floppy and
+// consumes the portable-key marker only after a valid exact eid exists. An
+// invalid/zero eid leaves the marker pending for a later assignment seam.
+// Final suppression remains the existing exact actor+eid 500 ms one-shot.
+bool TryArmFloppyReincarnation(void* actor, uint32_t wireEid,
+                               const std::wstring& key);
+
+// Session/world teardown: discard unconsumed lifecycle markers and exact
+// expectations so neither can bleed into a later world.
+void ResetFloppyConvergence();
 
 // A freshly materialized HOST floppy mirror can be torn down immediately by
 // the receiver's stale local drive/eject cleanup. That display-side teardown

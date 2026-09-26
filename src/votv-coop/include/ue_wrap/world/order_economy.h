@@ -73,6 +73,12 @@ int32_t OrderCount();
 // from ue_wrap::store_catalog, which owns the row's shape). Game thread.
 bool ReadOrder(int32_t index, OrderData& out);
 
+// Read the live ui_laptop_C.cart before the shipped order-button graph mutates/clears it. The
+// returned identities are list_store row names, with multiplicity preserved, exactly like
+// ReadOrder. This is the client intent seam used when the local saveSlot.orders write does not
+// occur. Pass the widget whose button event is executing, or null to resolve the current laptop.
+bool ReadCart(void* expectedLaptop, OrderData& out);
+
 // HOST: commit `order` as a real delivery via the native Uui_laptop_C::makeAnOrder.
 //
 // Every item is looked up in ue_wrap::store_catalog and the LIVE table row is copied wholesale into

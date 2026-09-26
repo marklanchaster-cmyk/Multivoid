@@ -9,6 +9,7 @@
 #include "coop/interactables/laptop_buffer_sync.h"  // v121: PrimeQuadBaseline piggyback
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
+#include "coop/props/prop_echo_suppress.h"
 
 #include "ue_wrap/devices/laptop.h"
 #include "ue_wrap/devices/portable_pc.h"
@@ -316,6 +317,7 @@ void ApplyAssembledContent(coop::net::Session* s, uint8_t kind, uint32_t eid,
             return;
         }
         L::WriteSlot(st, UnpackSlotContent(bytes));
+        coop::prop_echo_suppress::ConfirmWireFloppyInsertRetirement();
         PrimeBaselines();
         UE_LOGI("laptop_sync: slot scalars+content applied atomically (type=%d, %zu B, "
                 "from slot %u)", st.floppyType, bytes.size(),

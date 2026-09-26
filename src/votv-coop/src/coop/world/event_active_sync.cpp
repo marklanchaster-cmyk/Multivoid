@@ -1,5 +1,6 @@
 // Host-authoritative mirror of mainGamemode_C.activeEvents_senders.
 #include "coop/world/event_active_sync.h"
+#include "coop/world/agrav_sync.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/voice/radio_state.h"
@@ -95,16 +96,20 @@ void Broadcast(uint8_t op,const ActiveEntry*e){auto*s=g_session.load(std::memory
 void HostPollTick(){
  if(g_offActiveEvents<0||g_offSenders<0)return;
  void*gm=Gamemode();if(!gm)return;
- if(gm!=g_polledGm||!R::IsLiveByIndex(g_polledGm,g_polledGmIdx)){for(const auto&[oldObj,e]:g_active){(void)oldObj;Broadcast(kEnd,&e);}g_active.clear();g_polledGm=gm;g_polledGmIdx=g_gmIdx;g_primed=false;}
+ if(gm!=g_polledGm||!R::IsLiveByIndex(g_polledGm,g_polledGmIdx)){for(const auto&[oldObj,e]:g_active){Broadcast(kEnd,&e);if(e.className=="trigger_agrav_C")coop::agrav_sync::HostEnd(e.instanceId,oldObj);}g_active.clear();g_polledGm=gm;g_polledGmIdx=g_gmIdx;g_primed=false;}
  auto*arr=reinterpret_cast<RawPtrArray*>(reinterpret_cast<uint8_t*>(gm)+g_offSenders);if(arr->Num<0||arr->Num>4096)return;
  const long long now=NowMs();if(!g_primed){g_primed=true;UE_LOGI("event_active: host poll primed n=%d",ReadRefcount(gm));}
  for(int32_t i=0;i<arr->Num;++i){void*obj=arr->Data?arr->Data[i]:nullptr;if(!obj||g_active.count(obj)||!R::IsLive(obj))continue;
   ActiveEntry e;e.objIdx=R::InternalIndexOf(obj);e.className=Narrow(R::ClassNameOf(obj));if(const char*row=RowForClass(e.className))e.rowName=row;
   e.firstSeenMs=now;e.instanceId=g_nextInstanceId++;auto [it,ok]=g_active.emplace(obj,std::move(e));if(!ok)continue;
-  UE_LOGI("random_event_auth: HOST BEGIN instance=%llu class=%s row=%s",static_cast<unsigned long long>(it->second.instanceId),it->second.className.c_str(),it->second.rowName.empty()?"<unmapped>":it->second.rowName.c_str());Broadcast(kBegin,&it->second);}
+  UE_LOGI("random_event_auth: HOST BEGIN instance=%llu class=%s row=%s",static_cast<unsigned long long>(it->second.instanceId),it->second.className.c_str(),it->second.rowName.empty()?"<unmapped>":it->second.rowName.c_str());
+  if(it->second.className=="trigger_agrav_C")coop::agrav_sync::HostBegin(it->second.instanceId,obj);
+  Broadcast(kBegin,&it->second);}
  std::vector<void*>ended;for(const auto&[obj,e]:g_active){bool present=false;if(arr->Data)for(int32_t i=0;i<arr->Num;++i)if(arr->Data[i]==obj){present=true;break;}
   if(present&&R::IsLiveByIndex(obj,e.objIdx))continue;
-  UE_LOGI("random_event_auth: HOST END instance=%llu class=%s",static_cast<unsigned long long>(e.instanceId),e.className.c_str());Broadcast(kEnd,&e);ended.push_back(obj);}
+  UE_LOGI("random_event_auth: HOST END instance=%llu class=%s",static_cast<unsigned long long>(e.instanceId),e.className.c_str());Broadcast(kEnd,&e);
+  if(e.className=="trigger_agrav_C")coop::agrav_sync::HostEnd(e.instanceId,obj);
+  ended.push_back(obj);}
  for(void*o:ended)g_active.erase(o);
  PublishRadio(g_active.size());
 }
@@ -118,16 +123,20 @@ void SendJoinSnapshotForSlot(int slot){auto*s=g_session.load(std::memory_order_a
  uint32_t rev=++g_setRevision;long long now=NowMs();auto p=MakePayload(kSnapshotBegin,rev,nullptr,now);s->SendReliableToSlot(slot,coop::net::ReliableKind::EventAuthority,&p,sizeof(p));
  for(const auto&[obj,e]:g_active){(void)obj;p=MakePayload(kSnapshotItem,rev,&e,now);s->SendReliableToSlot(slot,coop::net::ReliableKind::EventAuthority,&p,sizeof(p));}
  p=MakePayload(kSnapshotEnd,rev,nullptr,now);s->SendReliableToSlot(slot,coop::net::ReliableKind::EventAuthority,&p,sizeof(p));
+ coop::agrav_sync::SendJoinSnapshotForSlot(slot);
  UE_LOGI("random_event_auth: HOST SNAPSHOT slot=%d revision=%u active=%zu",slot,rev,g_active.size());}
 void OnReliable(const coop::net::EventAuthorityPayload&p){if(!GT::IsGameThread()||p.op>kSnapshotEnd)return;
  std::string cls=Bound(p.className,sizeof(p.className)),row=Bound(p.rowName,sizeof(p.rowName));ClientEntry e{cls,row,p.elapsedSec};
  if(p.op==kSnapshotBegin){if(p.setRevision<g_clientRevision)return;g_stagedActive.clear();g_stagedRevision=p.setRevision;g_staging=true;return;}
  if(p.op==kSnapshotItem){if(g_staging&&p.setRevision==g_stagedRevision&&p.instanceId)g_stagedActive[p.instanceId]=std::move(e);return;}
- if(p.op==kSnapshotEnd){if(!g_staging||p.setRevision!=g_stagedRevision||p.setRevision<g_clientRevision)return;g_clientActive.swap(g_stagedActive);g_stagedActive.clear();g_staging=false;g_clientRevision=p.setRevision;PublishRadio(g_clientActive.size());UE_LOGI("random_event_auth: CLIENT SNAPSHOT revision=%u active=%zu",p.setRevision,g_clientActive.size());return;}
+ if(p.op==kSnapshotEnd){if(!g_staging||p.setRevision!=g_stagedRevision||p.setRevision<g_clientRevision)return;
+  for(const auto&[id,old]:g_clientActive)if(!g_stagedActive.count(id)&&old.className=="trigger_agrav_C")coop::agrav_sync::ClientEnd(id);
+  for(const auto&[id,cur]:g_stagedActive)if(!g_clientActive.count(id)&&cur.className=="trigger_agrav_C")coop::agrav_sync::ClientBegin(id,cur.elapsedSec,true);
+  g_clientActive.swap(g_stagedActive);g_stagedActive.clear();g_staging=false;g_clientRevision=p.setRevision;PublishRadio(g_clientActive.size());UE_LOGI("random_event_auth: CLIENT SNAPSHOT revision=%u active=%zu",p.setRevision,g_clientActive.size());return;}
  if(!p.instanceId||p.setRevision<=g_clientRevision)return;
  g_clientRevision=p.setRevision;
- if(p.op==kBegin){g_clientActive[p.instanceId]=std::move(e);UE_LOGI("random_event_auth: CLIENT authoritative BEGIN instance=%llu class=%s row=%s",static_cast<unsigned long long>(p.instanceId),cls.c_str(),row.empty()?"<unmapped>":row.c_str());UE_LOGW("random_event_auth: instance=%llu class=%s host-authoritative event active; output/presentation lane may be incomplete",static_cast<unsigned long long>(p.instanceId),cls.c_str());}
- else{g_clientActive.erase(p.instanceId);UE_LOGI("random_event_auth: CLIENT authoritative END instance=%llu",static_cast<unsigned long long>(p.instanceId));}PublishRadio(g_clientActive.size());}
-void OnReliable(const coop::net::EventSnapshotPayload&){UE_LOGW("event_active: legacy EventSnapshot ignored under b65005 registry");}
+ if(p.op==kBegin){g_clientActive[p.instanceId]=std::move(e);UE_LOGI("random_event_auth: CLIENT authoritative BEGIN instance=%llu class=%s row=%s",static_cast<unsigned long long>(p.instanceId),cls.c_str(),row.empty()?"<unmapped>":row.c_str());if(cls=="trigger_agrav_C")coop::agrav_sync::ClientBegin(p.instanceId,p.elapsedSec,false);else UE_LOGW("random_event_auth: instance=%llu class=%s host-authoritative event active; output/presentation lane may be incomplete",static_cast<unsigned long long>(p.instanceId),cls.c_str());}
+ else{auto it=g_clientActive.find(p.instanceId);if(it!=g_clientActive.end()&&it->second.className=="trigger_agrav_C")coop::agrav_sync::ClientEnd(p.instanceId);g_clientActive.erase(p.instanceId);UE_LOGI("random_event_auth: CLIENT authoritative END instance=%llu",static_cast<unsigned long long>(p.instanceId));}PublishRadio(g_clientActive.size());}
+void OnReliable(const coop::net::EventSnapshotPayload&){UE_LOGW("event_active: legacy EventSnapshot ignored under current active-event registry");}
 void OnDisconnect(){coop::radio_state::SetInterference(0.0f);g_active.clear();g_clientActive.clear();g_stagedActive.clear();g_staging=false;g_clientRevision=g_stagedRevision=g_setRevision=0;g_nextInstanceId=1;g_polledGm=g_gm=nullptr;g_polledGmIdx=g_gmIdx=-1;g_primed=false;g_session.store(nullptr,std::memory_order_release);}
 } // namespace coop::event_active_sync

@@ -55,6 +55,11 @@ void Tick(coop::net::Session* session);
 // the host has already destroyed its copy => no dup). Game thread. Bounded FIFO set.
 void NoteClientKeyedDestroy(const std::wstring& key);
 
+// True only while laptop_C::insertFloppy is retiring this exact actor. The insert watch also
+// cancels that verb when the actor is the host's in-progress PropDropIntent materialization, so a
+// spawn cannot be consumed by overlap re-entry before it becomes authoritative.
+bool IsLaptopInsertRetirement(void* actor);
+
 // HOST handler for a received PropDropIntent: spawn the authoritative Aprop_C by Key at the transform
 // (the host's FinishSpawn watcher broadcasts it). Dup-guarded (skips if the host already has the Key
 // live). Game thread.

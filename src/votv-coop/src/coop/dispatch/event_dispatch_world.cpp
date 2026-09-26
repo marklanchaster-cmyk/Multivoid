@@ -13,6 +13,7 @@
 #include "coop/interactables/serverbox_sync.h"  // v107: host-authoritative signal-server state (Inc-1)
 #include "coop/creatures/roach_sync.h"           // v108: host-authoritative roach-infestation snapshot
 #include "coop/world/event_active_sync.h"
+#include "coop/world/agrav_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/world/event_fire_sync.h"
 #include "coop/interactables/generator_break_sync.h"
@@ -166,6 +167,20 @@ bool HandleWorldEvent(net::Session& session,
         }
         net::EventAuthorityPayload p{}; std::memcpy(&p, msg.payload, sizeof(p));
         coop::event_active_sync::OnReliable(p);
+        break;
+    }
+    case net::ReliableKind::AgravState: {
+        if (msg.payloadLen < sizeof(net::AgravStatePayload)) {
+            UE_LOGW("event_feed: AgravState payload too short");
+            break;
+        }
+        if (session.role() == net::Role::Host || msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: AgravState rejected (role=%s sender=%d)",
+                    session.role() == net::Role::Host ? "host" : "client", msg.senderPeerSlot);
+            break;
+        }
+        net::AgravStatePayload p{}; std::memcpy(&p, msg.payload, sizeof(p));
+        coop::agrav_sync::OnReliable(p);
         break;
     }
     case net::ReliableKind::GeneratorBreakState: {

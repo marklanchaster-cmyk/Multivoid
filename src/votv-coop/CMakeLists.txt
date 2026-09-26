@@ -368,6 +368,7 @@ add_library(votv-coop SHARED
     src/coop/world/event_cue_sync.cpp
     src/coop/world/event_fire_sync.cpp
     src/coop/world/event_active_sync.cpp
+    src/coop/world/agrav_sync.cpp
     src/coop/world/alarm_sync.cpp
     src/coop/interactables/serverbox_sync.cpp
     src/coop/interactables/repair_sync.cpp

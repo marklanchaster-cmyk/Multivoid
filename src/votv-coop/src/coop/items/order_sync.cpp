@@ -23,14 +23,18 @@
 #include "coop/world/balance_sync.h"
 
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/world/economy.h"
 #include "ue_wrap/world/order_economy.h"
 #include "ue_wrap/world/store_catalog.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <random>
 #include <string>
 #include <unordered_map>
@@ -58,6 +62,31 @@ constexpr size_t   kMaxInFlight       = 32;     // client: remembered orders awa
 // ---- client forward state (game thread only) ----
 int32_t  g_forwardedThrough = -1;  // watermark: orders.Num value we've forwarded up to (-1 = unprimed)
 uint32_t g_orderIdCounter   = 0;   // monotonic id per forwarded order (uniqueness within this sender)
+void*    g_orderButtonFn = nullptr;
+void*    g_makeOrderFn = nullptr;
+bool     g_orderButtonWatch = false;
+bool     g_makeOrderWatch = false;
+std::chrono::steady_clock::time_point g_nextButtonResolve{};
+constexpr int kOrderButtonWatchTag = 650061;
+constexpr int kMakeOrderWatchTag = 650062;
+
+struct ButtonCapture {
+    bool active = false;
+    bool reachedMakeOrder = false;
+    void* laptop = nullptr;
+    int32_t baselineCount = -1;
+    OE::OrderData order;
+};
+ButtonCapture g_buttonCapture;
+
+struct ExpectedLocalOrder {
+    std::vector<std::wstring> rows;
+    int32_t baselineCount = -1;
+    uint64_t untilMs = 0;
+};
+std::deque<ExpectedLocalOrder> g_expectedLocalOrders;
+constexpr size_t kExpectedLocalOrderCap = 16;
+constexpr uint64_t kExpectedLocalOrderTtlMs = 5000;
 
 // What we sent, per orderId, so a REFUSAL can put the cart back. Dropped on the first verdict and
 // bounded: it is the client's only per-session accumulator on this path, and an unbounded one would
@@ -113,6 +142,8 @@ float RollEta() {
 void ResetState() {
     g_forwardedThrough = -1;
     g_orderIdCounter   = 0;
+    g_buttonCapture = {};
+    g_expectedLocalOrders.clear();
     g_inFlight.clear();
     for (int i = 0; i < g_bySlot.size(); ++i) {
         g_bySlot[i].assembly.clear();
@@ -136,13 +167,9 @@ std::wstring WidenAscii(const uint8_t* p, int n) {
 }
 
 // ---- CLIENT: serialize + chunk + forward one order ----
-void ForwardOrder(net::Session* s, int32_t idx) {
-    OE::OrderData od;
-    if (!OE::ReadOrder(idx, od)) {
-        UE_LOGW("order_sync: ReadOrder(%d) failed -- skip", idx);
-        return;
-    }
+bool ForwardRows(net::Session* s, const OE::OrderData& od, const char* source) {
     const size_t total = od.rowNames.size();
+    if (total == 0) return false;
     if (total > static_cast<size_t>(net::kMaxOrderItems)) {
         // Do NOT truncate. The client has already been debited locally for ALL of these, so
         // forwarding the first 64 would have the host price and deliver a DIFFERENT basket than the
@@ -151,11 +178,11 @@ void ForwardOrder(net::Session* s, int32_t idx) {
         // for the only case that can, and the player is told rather than left guessing.
         UE_LOGW("order_sync: order idx=%d has %zu items > cap %d -- NOT forwarding (a partial basket "
                 "would be priced and delivered differently from the one that was paid for)",
-                idx, total, net::kMaxOrderItems);
+                -1, total, net::kMaxOrderItems);
         coop::peer_action_feed::AnnounceDirect(
             static_cast<uint8_t>(coop::players::Registry::Get().LocalPeerId()),
             L"could not order: too many items in one order");
-        return;
+        return false;
     }
     const uint32_t orderId = ++g_orderIdCounter;
 
@@ -190,7 +217,7 @@ void ForwardOrder(net::Session* s, int32_t idx) {
             // leaving the client debited with no verdict and no cart restore.
             UE_LOGE("order_sync: item %zu cannot be chunked -- ABORTING order id=%u (already sent "
                     "%d chunk(s); the host will time the partial assembly out)", i, orderId, chunks);
-            return;
+            return false;
         }
         net::OrderRequestHeader h{};
         h.orderId    = orderId;
@@ -203,7 +230,8 @@ void ForwardOrder(net::Session* s, int32_t idx) {
         ++chunks;
     }
 
-    if (!sent.empty()) {
+    const bool sentAny = !sent.empty();
+    if (sentAny) {
         // Evict the OLDEST (lowest orderId -- the counter is monotonic), not the whole map: wiping
         // it would strand the cart-restore data of every other order still awaiting a verdict.
         while (g_inFlight.size() >= kMaxInFlight) {
@@ -214,13 +242,85 @@ void ForwardOrder(net::Session* s, int32_t idx) {
         }
         g_inFlight[orderId] = std::move(sent);
     }
-    UE_LOGI("order_sync: forwarded order idx=%d id=%u items=%zu in %d chunk(s)", idx, orderId, total,
-            chunks);
+    UE_LOGI("order_sync: forwarded order source=%s id=%u items=%zu in %d chunk(s)", source, orderId,
+            total, chunks);
+    return sentAny;
+}
+
+ue_wrap::script_gate::Verdict OnOrderButtonPre(const ue_wrap::script_gate::Call& call) {
+    namespace SG = ue_wrap::script_gate;
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() == net::Role::Host || call.fromOurCode)
+        return SG::Verdict::Run;
+    OE::OrderData od;
+    if (!OE::ReadCart(call.object, od)) {
+        UE_LOGW("order_sync: client order-button edge had no readable cart; native body continues");
+        return SG::Verdict::Run;
+    }
+    // Capture only. The click itself is not proof of acceptance: the shipped graph's affordability
+    // and other exits have not run yet. Its call to makeAnOrder is downstream of those gates.
+    g_buttonCapture.active = true;
+    g_buttonCapture.reachedMakeOrder = false;
+    g_buttonCapture.laptop = call.object;
+    g_buttonCapture.baselineCount = OE::OrderCount();
+    g_buttonCapture.order = std::move(od);
+    return SG::Verdict::Run;
+}
+
+ue_wrap::script_gate::Verdict OnMakeOrderPre(const ue_wrap::script_gate::Call& call) {
+    namespace SG = ue_wrap::script_gate;
+    if (g_buttonCapture.active && !call.fromOurCode && call.object == g_buttonCapture.laptop)
+        g_buttonCapture.reachedMakeOrder = true;
+    return SG::Verdict::Run;
+}
+
+void OnOrderButtonPost(const ue_wrap::script_gate::Call& call) {
+    if (!g_buttonCapture.active || call.object != g_buttonCapture.laptop) return;
+    ButtonCapture captured = std::move(g_buttonCapture);
+    g_buttonCapture = {};
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() == net::Role::Host ||
+        !captured.reachedMakeOrder) return;
+    if (!ForwardRows(s, captured.order, "ui_laptop accepted makeAnOrder edge")) return;
+    while (g_expectedLocalOrders.size() >= kExpectedLocalOrderCap)
+        g_expectedLocalOrders.pop_front();
+    g_expectedLocalOrders.push_back(ExpectedLocalOrder{
+        captured.order.rowNames, captured.baselineCount, NowMs() + kExpectedLocalOrderTtlMs});
+    UE_LOGI("order_sync: client purchase accepted by shipped makeAnOrder edge (items=%zu, "
+            "ordersBefore=%d); intent sent in button POST",
+            captured.order.rowNames.size(), captured.baselineCount);
+}
+
+void ResolveOrderButtonWatch() {
+    namespace R = ue_wrap::reflection;
+    namespace SG = ue_wrap::script_gate;
+    if ((g_orderButtonWatch && g_makeOrderWatch) ||
+        std::chrono::steady_clock::now() < g_nextButtonResolve) return;
+    g_nextButtonResolve = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    void* cls = R::FindClass(L"ui_laptop_C");
+    if (!cls) return;
+    if (!g_orderButtonFn)
+        g_orderButtonFn = R::FindFunction(
+            cls, L"BndEvt__Button_order_K2Node_ComponentBoundEvent_8_OnButtonClickedEvent__DelegateSignature");
+    if (!g_makeOrderFn) g_makeOrderFn = R::FindFunction(cls, L"makeAnOrder");
+    if (!g_orderButtonFn || !g_makeOrderFn) return;
+    SG::SetEnabled(true);
+    if (!g_orderButtonWatch)
+        g_orderButtonWatch = SG::Watch(g_orderButtonFn, kOrderButtonWatchTag,
+                                       &OnOrderButtonPre, &OnOrderButtonPost);
+    if (!g_makeOrderWatch)
+        g_makeOrderWatch = SG::Watch(g_makeOrderFn, kMakeOrderWatchTag, &OnMakeOrderPre, nullptr);
+    if (g_orderButtonWatch && g_makeOrderWatch)
+        UE_LOGI("order_sync: exact ui_laptop button + downstream makeAnOrder watches installed");
 }
 
 void TickClient(net::Session* s) {
+    ResolveOrderButtonWatch();
     static bool s_tickLogged = false;
     if (!s_tickLogged) { s_tickLogged = true; UE_LOGI("order_sync: client Tick active (polling saveSlot.orders)"); }
+    const uint64_t now = NowMs();
+    while (!g_expectedLocalOrders.empty() && g_expectedLocalOrders.front().untilMs < now)
+        g_expectedLocalOrders.pop_front();
     const int32_t count = OE::OrderCount();
     if (count < 0) return;  // store not resolved yet (booting / at the menu)
     if (g_forwardedThrough < 0) {
@@ -228,9 +328,30 @@ void TickClient(net::Session* s) {
         UE_LOGI("order_sync: client watermark primed at orders.Num=%d (pre-existing not forwarded)", count);
         return;
     }
-    if (count < g_forwardedThrough) { g_forwardedThrough = count; return; }  // queue shrank -- re-sync
+    if (count < g_forwardedThrough) {
+        g_forwardedThrough = count;
+        g_expectedLocalOrders.clear();  // numeric indices rebased; no stale expectation may survive
+        return;
+    }
     if (count == g_forwardedThrough) return;
-    for (int32_t idx = g_forwardedThrough; idx < count; ++idx) ForwardOrder(s, idx);
+    for (int32_t idx = g_forwardedThrough; idx < count; ++idx) {
+        OE::OrderData od;
+        if (!OE::ReadOrder(idx, od)) {
+            UE_LOGW("order_sync: ReadOrder(%d) failed -- skip", idx);
+            continue;
+        }
+        auto expected = std::find_if(g_expectedLocalOrders.begin(), g_expectedLocalOrders.end(),
+            [&](const ExpectedLocalOrder& e) {
+                return idx >= e.baselineCount && e.rows == od.rowNames;
+            });
+        if (expected != g_expectedLocalOrders.end()) {
+            UE_LOGI("order_sync: consumed exact expected local duplicate idx=%d items=%zu "
+                    "baseline=%d", idx, od.rowNames.size(), expected->baselineCount);
+            g_expectedLocalOrders.erase(expected);
+            continue;
+        }
+        ForwardRows(s, od, "saveSlot.orders watermark");
+    }
     g_forwardedThrough = count;
     OE::QuietLocalDrone();  // reset the mirror drone's self-takeoff once after forwarding (RE Q2)
 }
@@ -376,6 +497,17 @@ void OnRefused(const void* payload, int len) {
     if (it != g_inFlight.end()) {
         rows = std::move(it->second);
         g_inFlight.erase(it);
+    }
+
+    // The exact button-edge sender runs before the shipped graph. If that graph exits before its
+    // Array_Clear(cart), a host refusal must not add a second copy of a basket that never left the
+    // UI. Restore only multiplicities no longer present in the live cart.
+    OE::OrderData liveCart;
+    if (OE::ReadCart(nullptr, liveCart)) {
+        for (const std::wstring& present : liveCart.rowNames) {
+            auto missing = std::find(rows.begin(), rows.end(), present);
+            if (missing != rows.end()) rows.erase(missing);
+        }
     }
 
     // Say it, then put the cart back. `[V]` The base game's own affordability gate pops BEFORE

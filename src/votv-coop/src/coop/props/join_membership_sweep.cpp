@@ -22,6 +22,7 @@
 #include "coop/element/registry.h"
 #include "coop/net/protocol.h"
 #include "coop/props/pile_spawn_bind.h"
+#include "coop/props/prop_echo_suppress.h"
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/remote_prop.h"
@@ -718,6 +719,10 @@ void OnClientWorldReadyResetSweep() {
                 "from the prior world (the new snapshot bracket will re-arm it)");
     g_sweepPending = false;
     g_sweepFired = false;
+    // A connected client may enter a new world and re-announce without a
+    // session disconnect. Old-world floppy retirement markers and exact
+    // convergence expectations must not follow it into the new world.
+    coop::prop_echo_suppress::ResetFloppyConvergence();
 }
 
 void ResetClaimTracking() {

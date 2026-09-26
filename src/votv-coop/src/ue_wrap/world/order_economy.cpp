@@ -168,6 +168,37 @@ bool ReadOrder(int32_t index, OrderData& out) {
     return !out.rowNames.empty();
 }
 
+bool ReadCart(void* expectedLaptop, OrderData& out) {
+    out.rowNames.clear();
+    if (!expectedLaptop) {
+        void* gm=ResolveGamemode();
+        if(gm&&ResolveGmOffsets(gm)&&g_offLaptop>=0)expectedLaptop=ReadPtr(gm,g_offLaptop);
+    }
+    if (!expectedLaptop || !R::IsLive(expectedLaptop) || !ue_wrap::store_catalog::Ready())
+        return false;
+    const int32_t nameOff = ue_wrap::store_catalog::NameOffset();
+    void* cls = R::ClassOf(expectedLaptop);
+    const int32_t cartOff = cls ? R::FindPropertyOffset(cls, L"cart") : -1;
+    if (nameOff < 0 || cartOff < 0) return false;
+
+    void* data = ReadAt<void*>(expectedLaptop, cartOff);
+    int32_t num = ReadAt<int32_t>(expectedLaptop, cartOff + 8);
+    if (!data || num <= 0 || num > kReadItemCap) return false;
+    out.rowNames.reserve(static_cast<size_t>(num));
+    for (int32_t i = 0; i < num; ++i) {
+        void* item = reinterpret_cast<uint8_t*>(data) + static_cast<size_t>(i) * kItemStride;
+        std::wstring name = R::ToString(ReadAt<R::FName>(item, nameOff));
+        if (name.empty() || name == L"None") {
+            UE_LOGW("order_economy: ReadCart item %d carries no row name -- refusing partial intent",
+                    i);
+            out.rowNames.clear();
+            return false;
+        }
+        out.rowNames.push_back(std::move(name));
+    }
+    return !out.rowNames.empty();
+}
+
 bool CanCommit() {
     void* gm = ResolveGamemode();
     if (!gm || !ResolveGmOffsets(gm)) return false;

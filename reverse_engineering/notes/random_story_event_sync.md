@@ -111,15 +111,60 @@ existing host-authoritative `RepairOutcome -> fullFix` path.
 | Output | Evidence | Classification/current result |
 |---|---|---|
 | random generator then `generator.break()` | trigger CFG offsets 300-403 | RESULT_SYNC; implemented by post-break snapshot |
-| shuffled `comps`, gravity off/on, random velocities | 777-835, 915-1393, 1549-1876 | RESULT_SYNC/ACTOR_MIRROR gap; resulting motion coverage is not proven complete |
-| cloak/material timeline and camera light | 537-739, 2551-3159 | PER_PLAYER/TRANSIENT_CUE; host-local |
-| `arirHover_Cue` on/off | 740-775, 1880-1916 | TRANSIENT_CUE; host-local |
+| shuffled `comps`, gravity off/on, random velocities | 777-835, 915-1393, 1549-1876 | RESULT_SYNC via `AgravState`; host target/RNG only |
+| cloak/material timeline and camera light | 537-739, 2551-3159 | SAFE_CLIENT_REPLAY (`cloak` only) + PER_PLAYER/TRANSIENT_CUE reconciliation |
+| `arirHover_Cue` on/off | 740-775, 1880-1916 | TRANSIENT_CUE reconciliation from authoritative BEGIN/END |
 | `photoTaken` -> `addAriralRep(15)` | 2070-2134, 2165-2258 | RESULT_SYNC persistent reputation gap |
 | `lib.setEvent(true/false)` | 15-52, 1952-1988 | authoritative membership bookkeeping |
 
-`agrav` deliberately remains NO-replay and is not yet fully presented on
-clients. Its transformer result converges; physics, presentation, and the
-conditional reputation side effect remain explicit gaps.
+`agrav` deliberately remains NO-replay. Runtime logs identified it as the Day
+16 01:00 scheduled row and confirmed the former client behavior explicitly:
+`event_fire: 'agrav' NOT replayed -- physics divergence (by-design host-local)`.
+That explained both the connected-client and join-in-progress failures:
+EventAuthority described the controller but owned none of its output.
+
+The exact start path is `daynightCycle_C.ReceiveTick -> saveSlot_C.settime ->
+trigger_eventer_C.runEvent("agrav", ...) -> trigger_agrav_C.runTrigger`. The
+controller immediately registers itself through `lib_C::setEvent(true, false,
+self)`. It does not spawn a separate craft actor: the visible craft is the
+controller's authored `StaticMesh`, driven by dynamic materials and its `b`
+timeline (`cloak`). `PointLight` is attached to the local camera;
+`PointLight1` intensity is timeline-driven; `arirHover_Cue` is the loop. `gaher`
+collects nearby `prop_C` root components, then `buf` is shuffled and drained
+while gravity and velocities change. Cleanup restores gravity, stops the cue,
+destroys the host `PointLight` component, reverses cloak, unregisters through
+`setEvent(false, ...)`, and removes the photo delegate. No sky mutation or
+separate UFO/craft spawn occurs in this Blueprint.
+
+Protocol 65006 adds the narrow `AgravState` result lane. On the host,
+EventAuthority's exact sender pointer/instance ID arms native post-observation
+of `PrimitiveComponent::SetEnableGravity` and
+`SetPhysicsAngularVelocityInDegrees`; only calls sourced by that active
+`trigger_agrav_C` are captured. The payload names the concrete host-selected
+prop by key plus current eid, carries gravity phase and concrete linear/angular
+velocity, and never asks a client to gather or shuffle targets. The client
+replays only `cloak(forward)`, hover audio, the camera-attached point light, and
+the received prop physics. It never invokes `runTrigger`. The presentation
+controller is resolved through the placed `trigger_eventer_C.event_agrav`
+object reference. `ReceiveBeginPlay` has already initialized the authored
+`StaticMesh` dynamic materials; `PointLight`, `PointLight1`, and
+`arirHover_Cue` are authored components rather than objects created by
+`runTrigger`. If distinct eventers reference distinct agrav controllers,
+presentation is declined because the wire instance does not identify one.
+
+Join snapshots remain decomposed: EventAuthority first reconstructs the active
+instance/presentation at its current elapsed age, then `AgravState` sends only
+the host's currently gravity-disabled target set. Unresolved prop identities
+park and retry every 250 ms until their normal prop snapshot lands or the exact
+event instance ends. END restores all targets still tracked for that instance
+and hides presentation. Exact monotonic instance IDs plus per-target sequence
+tracking prevent a late pending target from resurrecting an ended or newer
+state. Result state is instance-scoped; presentation is deliberately limited
+to the one shipped `trigger_eventer.event_agrav` controller and does not claim
+simultaneous same-class presentation isolation.
+
+The conditional `photoTaken -> addAriralRep(15)` remains an explicit persistent
+result gap; no client-side event replay is used to manufacture it.
 
 ## Event output roadmap
 
@@ -134,7 +179,7 @@ Current allowlist: `treehouse_0..5`, `break_RomeoSierra`, `break_Victor`,
 
 ### RESULT_SYNC
 
-- `agrav`: generator result implemented; physics and reputation remain.
+- `agrav`: generator and selected-prop physics implemented; reputation remains.
 - prank selection: host chooses the concrete prank; prop variants rely on the
   prop lane, while no-lane variants remain gaps.
 - Server minigame variant, rare `mainGamemode` rolls, loot RNG, and radar/tower
@@ -315,7 +360,7 @@ not silently declared safe; its mixed Tick was not disabled.
 | bush/beehive | `growingPlant_C`, `beehiveBranch_C` | host exact spawn verbs | RESULT_SYNC / ACTOR_MIRROR | none proved | Client no longer invents its own result | persistent actor/state lane | RESULT_SYNC_GAP |
 | timed trigger targets | target-specific | host `triggerTimer.newMinute` | UNKNOWN | target-specific | Selection is host-only | audit each concrete target output | UNKNOWN |
 | falling sky | `skyFallingEvent_C` | host overlap, including collision-enabled remote `mainPlayer_C` puppet | SAFE_CLIENT_REPLAY not proven | none proved | Client cannot start a rogue local event; its host puppet can drive the authoritative overlap | output/presentation still unproved | UNKNOWN |
-| `agrav` | `trigger_agrav_C` | host scheduled event | RESULT_SYNC / PER_PLAYER / CUE | `GeneratorBreakState` for transformer only | Broken transformer converges | physics, rep, hover/cloak/light | RESULT_SYNC_GAP |
+| `agrav` | `trigger_agrav_C` | host scheduled event | RESULT_SYNC / PER_PLAYER / CUE | `GeneratorBreakState` + `AgravState` + authored-controller presentation reconciliation | Transformer and exact floating props converge; the shipped singleton craft/cloak/hover/camera-light path is reconstructed live and on join | conditional photo reputation; simultaneous presentation controllers unsupported | PARTIAL: MAJOR EXPERIENCE SYNCED FOR SHIPPED SINGLETON |
 
 The newly gated selectors intentionally received no generic whole-event replay.
 Where Table B says gap, the present behavior is **HOST A / CLIENT nothing or
@@ -333,4 +378,5 @@ the concrete sender pointer; the entry also records and validates its
 therefore remain distinct, repeated instances receive new monotonic IDs, and a
 class without a `list_events` mapping remains valid with an empty row.
 
-No wire layout or `ReliableKind` changed in this pass; protocol remains 65005.
+`AgravState` adds reliable kind 134 and an 80-byte host-only payload. Protocol
+is 65006; EventAuthority and AgravState both use the ordered Normal lane.

@@ -13,7 +13,6 @@
 #include "coop/props/prop_element_tracker.h"  // IndexActorKey
 #include "coop/props/prop_wire_parity.h"      // RestoreCollisionIfNeeded / SpParitySimulate
 #include "coop/props/remote_prop.h"           // RegisterPropMirror / DriveSimulate / DriveSet*Velocity
-#include "ue_wrap/devices/laptop.h"           // IsDiscClass (floppy mirror convergence expectation)
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
@@ -356,18 +355,12 @@ void* Materialize(const coop::net::PropSpawnPayload& payload, int senderSlot,
     // resolves to this actor; PropDestroy with the same eid drains the
     // mirror + destroys the actor.
     coop::remote_prop::RegisterPropMirror(payload.elementId, spawned, keyW, classW, senderSlot);
-    // sv.request ejects reuse the inserted disc's save key. On a receiving
-    // client the stale local drive/eject cleanup can then tear down this new
-    // host mirror immediately after OnSpawn returns (runtime order: bind E,
-    // then K2_DestroyActor(E), with no DriveSlotState apply in between). Arm
-    // only fresh HOST-authored floppy mirrors, by exact actor+eid, for one
-    // short-lived teardown. A normal later player-authored destroy is outside
-    // this expectation and follows the regular transaction path.
-    if (senderSlot == 0 && ue_wrap::laptop::EnsureResolved() &&
-        ue_wrap::laptop::IsDiscClass(actorClass) &&
-        coop::prop_echo_suppress::ConsumeRecentlyWireDestroyedKey(keyW)) {
-        coop::prop_echo_suppress::ExpectHostMirrorConvergenceDestroy(
-            spawned, payload.elementId);
+    // Central insert/eject reincarnation arm. Only a host-authored fresh
+    // mirror may converge this client, and the helper consumes the long-lived
+    // portable-key marker only when this exact actor has a valid wire eid.
+    if (senderSlot == 0) {
+        coop::prop_echo_suppress::TryArmFloppyReincarnation(
+            spawned, payload.elementId, keyW);
     }
     // Index the mirror's key so a PropPose drive can resolve it O(1). Essential
     // for NON-Aprop_C mirrors (garbageClump/chipPile): the cold FindByKeyString

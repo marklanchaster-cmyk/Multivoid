@@ -8,6 +8,7 @@
 #include "coop/player/hand_item.h"          // LocalHandActor (place detect: exclude the hand display)
 #include "coop/props/prop_echo_suppress.h"  // PeekIncomingSpawn (exclude host-echo adopt spawns)
 #include "coop/props/prop_element_tracker.h"// GetPropElementIdForActor, ResolveLiveActorByKey   
+#include "coop/props/prop_lifecycle.h"      // ExpressSpawnedProp (close host eid=0 materialization gap)
 #include "coop/props/container_contents_sync.h"  // v126 (#4): TakeObjInFlight -- mark a container-extraction birth
 #include "coop/session/world_load_episode.h"  // InEpisode (quiet during the join loadObjects churn)
 #include "ue_wrap/core/call.h"                   // ParamFrame + Call (setKey on the host re-spawn)
@@ -19,6 +20,7 @@
 #include "ue_wrap/actors/prop.h"                   // IsDescendantOfProp, GetInteractableKeyString,
                                             // GetPropNameString, WriteSpParityIdentity
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/sdk_profile.h"            // profile::name::{GameplayStaticsClass,FinishSpawningActorFn,PropSetKeyFn}
 #include "ue_wrap/desk/tape_caddy.h"            // v114 (L7): IsReelClass whitelist + the Progress birth scalar
 #include "ue_wrap/desk/phys_mods.h"             // v118 (L8): IsModuleClass whitelist
@@ -29,6 +31,7 @@
 #include "ue_wrap/core/ufunction_hook.h"         // InstallPostHook (chains after host_spawn_watcher's)
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <string>
@@ -50,6 +53,17 @@ inline coop::net::Session* LoadSession() { return g_session.load(std::memory_ord
 // ---- CLIENT place-detection state (game-thread only) ----------------------
 void* g_finishSpawnFn = nullptr;  // GameplayStatics.FinishSpawningActor (resolved once)
 bool  g_installed     = false;    // InstallPostHook done (chain once, not per tick)
+
+void* g_insertFloppyFn = nullptr;
+int32_t g_insertFloppyParamOff = -1;
+bool g_insertFloppyWatch = false;
+std::chrono::steady_clock::time_point g_nextInsertWatchTry{};
+constexpr int kInsertFloppyWatchTag = 650063;
+thread_local void* g_insertRetirementActor = nullptr;
+void* g_hostMaterializingActor = nullptr;
+int32_t g_hostMaterializingActorIdx = -1;
+std::chrono::steady_clock::time_point g_hostMaterializingUntil{};
+constexpr auto kHostMaterializingProtectTtl = std::chrono::milliseconds(500);
 
 struct PendingPlace {
     void*   actor = nullptr;
@@ -98,6 +112,45 @@ std::wstring WireToWide(const uint8_t len, const char* data, size_t cap) {
     w.reserve(n);
     for (size_t i = 0; i < n; ++i) w.push_back(static_cast<wchar_t>(static_cast<unsigned char>(data[i])));
     return w;
+}
+
+ue_wrap::script_gate::Verdict OnInsertFloppyPre(const ue_wrap::script_gate::Call& call) {
+    namespace SG = ue_wrap::script_gate;
+    if (!call.locals || g_insertFloppyParamOff < 0) return SG::Verdict::Run;
+    void* floppy = *reinterpret_cast<void**>(call.locals + g_insertFloppyParamOff);
+    const auto now = std::chrono::steady_clock::now();
+    if (floppy && floppy == g_hostMaterializingActor && now <= g_hostMaterializingUntil &&
+        R::IsLiveByIndex(floppy, g_hostMaterializingActorIdx)) {
+        g_hostMaterializingActor = nullptr;
+        g_hostMaterializingActorIdx = -1;
+        UE_LOGI("[PROP-DROP] HOST cancelled laptop.insertFloppy for protected materialization "
+                "actor=%p before its K2_DestroyActor", floppy);
+        return SG::Verdict::Cancel;
+    }
+    g_insertRetirementActor = floppy;
+    return SG::Verdict::Run;
+}
+
+void OnInsertFloppyPost(const ue_wrap::script_gate::Call&) {
+    g_insertRetirementActor = nullptr;
+}
+
+void ResolveInsertFloppyWatch() {
+    namespace SG = ue_wrap::script_gate;
+    if (g_insertFloppyWatch || std::chrono::steady_clock::now() < g_nextInsertWatchTry) return;
+    g_nextInsertWatchTry = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    void* cls = R::FindClass(L"laptop_C");
+    if (!cls) return;
+    if (!g_insertFloppyFn) g_insertFloppyFn = R::FindFunction(cls, L"insertFloppy");
+    if (!g_insertFloppyFn) return;
+    if (g_insertFloppyParamOff < 0)
+        g_insertFloppyParamOff = R::FindParamOffset(g_insertFloppyFn, L"floppy");
+    if (g_insertFloppyParamOff < 0) return;
+    SG::SetEnabled(true);
+    g_insertFloppyWatch = SG::Watch(g_insertFloppyFn, kInsertFloppyWatchTag,
+                                    &OnInsertFloppyPre, &OnInsertFloppyPost);
+    if (g_insertFloppyWatch)
+        UE_LOGI("prop_drop_intent: exact laptop_C::insertFloppy lifecycle/protection watch installed");
 }
 
 // The CLIENT FinishSpawn post-hook: enqueue a fresh, untracked, non-echo keyed Aprop_C spawn in a
@@ -211,7 +264,15 @@ void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::
             (p.physFlags & pf::kSleep) != 0);
     }
     // NO MarkIncomingSpawn -- the host FinishSpawn watcher MUST see this and broadcast it.
+    // Exact actor+InternalIndex, one-shot, 500 ms: covers an overlap delivered synchronously by
+    // FinishSpawningActor or on the deferred next frame. The protection cancels insertFloppy at
+    // its PRE seam; it never attempts to hide a K2_DestroyActor after the actor is already dead.
+    g_hostMaterializingActor = actor;
+    g_hostMaterializingActorIdx = R::InternalIndexOf(actor);
+    g_hostMaterializingUntil = std::chrono::steady_clock::now() + kHostMaterializingProtectTtl;
     if (!E::FinishDeferredSpawn(actor, loc, rot)) {
+        g_hostMaterializingActor = nullptr;
+        g_hostMaterializingActorIdx = -1;
         UE_LOGW("[PROP-DROP] HOST FinishDeferredSpawn('%ls') failed", cls.c_str());
         return nullptr;
     }
@@ -228,6 +289,14 @@ void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::
             UE_LOGW("[PROP-DROP] HOST savedScalar=%.2f apply failed on '%ls'", p.savedScalar, cls.c_str());
         }
     }
+    // Only the pending same-key floppy reincarnation needs its eid before the
+    // normal next-tick watcher: stale drive cleanup can otherwise destroy it
+    // in that gap and produce the observed eid=0 path. Other PropDropIntent
+    // materializations retain their existing schedule.
+    if (R::IsLive(actor) &&
+        coop::prop_echo_suppress::IsFloppyReincarnationAwaiting(actor, key)) {
+        coop::prop_lifecycle::ExpressSpawnedProp(actor);
+    }
     return actor;
 }
 
@@ -235,6 +304,7 @@ void* HostSpawnPlacedProp(const coop::net::PropDropIntentPayload& p, const std::
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    ResolveInsertFloppyWatch();
     if (g_installed) return;
 
     // Throttle the GUObjectArray walks while the UFunction is unresolved (loads on gameplay entry).
@@ -378,6 +448,10 @@ void NoteClientKeyedDestroy(const std::wstring& key) {
     }
 }
 
+bool IsLaptopInsertRetirement(void* actor) {
+    return actor && actor == g_insertRetirementActor;
+}
+
 void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropIntentPayload& p,
                       uint8_t senderSlot) {
     UE_ASSERT_GAME_THREAD("prop_drop_intent::OnPropDropIntent");
@@ -396,9 +470,11 @@ void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropInte
     }
     void* actor = HostSpawnPlacedProp(p, cls, key);
     if (actor) {
+        const coop::element::ElementId eid = PT::GetPropElementIdForActor(actor);
         UE_LOGI("[PROP-DROP] HOST spawned client-placed prop key='%ls' cls='%ls' slot=%u at (%.1f,%.1f,%.1f) "
-                "-- FinishSpawn watcher broadcasts it this tick",
-                key.c_str(), cls.c_str(), senderSlot, p.locX, p.locY, p.locZ);
+                "-- authoritative eid=%u",
+                key.c_str(), cls.c_str(), senderSlot, p.locX, p.locY, p.locZ,
+                (eid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(eid));
     }
 }
 
@@ -433,6 +509,9 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
 void Reset() {
     UE_ASSERT_GAME_THREAD("prop_drop_intent::Reset");
     g_pending.clear();
+    g_insertRetirementActor = nullptr;
+    g_hostMaterializingActor = nullptr;
+    g_hostMaterializingActorIdx = -1;
     g_parkedKeys.clear();
     g_parkFifo.clear();
 }

@@ -133,6 +133,7 @@
 #include "coop/creatures/roach_sync.h"     // v108 host-authoritative roach-infestation mirror
 #include "coop/creatures/owner_entity_sync.h"  // v108 OWNER-ENTITY lane (eyer: per-peer owned, cross-peer mirrored)
 #include "coop/world/event_active_sync.h"  // join-during-event Phase 0: native activeEvents registry probe (docs/COOP_EVENT_JOIN.md)
+#include "coop/world/agrav_sync.h"
 #include "coop/world/weather_sync.h"
 
 #include "ue_wrap/core/log.h"
@@ -163,6 +164,7 @@ void Install(coop::net::Session& session) {
     coop::event_cue_sync::Install(&session); // v79 HOST-AUTH cosmetic emitter-cue mirror (B1: starfall etc. -- host detects PSC, client replays)
     coop::event_fire_sync::Install(&session); // v95 HOST-AUTH scheduled-event replay (passEvents growth poll -> EventFire; client suppress + policy replay)
     coop::event_active_sync::Install(&session); // join-during-event Phase 0 (probe): host 1 Hz activeEvents_senders membership diff -> BEGIN/END edge log
+    coop::agrav_sync::Install(&session);
     coop::alarm_sync::Install(&session);     // v101 base radar alarm shared-world toggle (1 Hz active poll both roles; docs/events/alarm.md)
     coop::serverbox_sync::Install(&session);    // v107 signal-server sim state: host polls+broadcasts, client drive-reals + kills its ticker_serverBreaker
     coop::repair_sync::Install(&session);       // custom 65003: server/tower/generator completed repairs
@@ -447,6 +449,7 @@ DisconnectStats DisconnectAll() {
     coop::event_cue_sync::OnDisconnect();    // v79 clear the cosmetic-cue poll snapshot
     coop::event_fire_sync::OnDisconnect();   // v95 restore the client scheduler (allEvents.Num) + drop poll baseline/queues
     coop::event_active_sync::OnDisconnect(); // join-during-event Phase 0: drop tracked membership + cached gamemode
+    coop::agrav_sync::OnDisconnect();
     coop::alarm_sync::OnDisconnect();        // v101 drop the cached trigger + poll baseline
     coop::serverbox_sync::OnDisconnect();       // v107 drop cached gamemode/offsets + baseline + breaker-kill latch
     coop::repair_sync::OnDisconnect();          // custom 65003 repair baselines
@@ -538,6 +541,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:event_cue"}; coop::event_cue_sync::Tick(); }      // v79 cosmetic event cues (B1): host ~1 Hz new-PSC poll -> EventCue broadcast (host-only, no-op on client)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:event_fire"}; coop::event_fire_sync::Tick(); }     // v95 scheduled events: host 1 Hz passEvents growth poll -> EventFire / client allEvents suppress + replay drain
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:event_active"}; coop::event_active_sync::Tick(); }  // join-during-event Phase 0: host 1 Hz activeEvents_senders diff -> BEGIN/END edge log (host-only, no-op on client)
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:agrav"}; coop::agrav_sync::Tick(); }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:generator_break"}; coop::generator_break_sync::Tick(); }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:alarm"}; coop::alarm_sync::Tick(); }               // v101 base radar alarm: 1 Hz active-bit poll BOTH roles (host broadcasts transitions; client forwards local ones)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:server"}; coop::serverbox_sync::Tick();

@@ -333,6 +333,12 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
         const coop::element::ElementId eid = PT::GetPropElementIdForActor(self);
         p.elementId = (eid == coop::element::kInvalidId) ? 0u : eid;
     }
+    // Same central reincarnation arm used by received mirrors. This covers
+    // native host ejection and any host-side materialization funneled through
+    // ExpressSpawnedProp. A zero/invalid eid deliberately leaves the marker
+    // pending rather than creating a key-only or eid=0 suppression.
+    coop::prop_echo_suppress::TryArmFloppyReincarnation(
+        self, p.elementId, keyStr);
     // 2026-05-27 reliable-channel rewrite: Send always succeeds (FIFO queue
     // internal to the channel). The previous EnqueuePropSpawnForRetry fallback
     // path retired as RULE 2 baggage.
@@ -707,6 +713,7 @@ DisconnectStats OnDisconnect() {
     DisconnectStats s;
     s.initProcessedDropped = PT::ClearProcessedInit();
     g_takeObjInFlight.store(false, std::memory_order_relaxed);
+    coop::prop_echo_suppress::ResetFloppyConvergence();
     return s;
 }
 

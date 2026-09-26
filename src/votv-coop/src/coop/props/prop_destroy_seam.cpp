@@ -166,13 +166,20 @@ void DestroySeamBody(void* self) {
     // and conversion ownership remain on their existing class-specific paths
     // (the expectation is armed only for a host-authored floppy actor+eid).
     const bool inCoinGunVerb = coop::coingun_sync::IsInCoinGunVerb();
-    if (!inCoinGunVerb && s->role() == coop::net::Role::Client &&
+    if (s->role() == coop::net::Role::Client && !inCoinGunVerb &&
         coop::prop_echo_suppress::ConsumeHostMirrorConvergenceDestroy(
             self, static_cast<uint32_t>(destroyEid))) {
-        UE_LOGI("grab_hook[destroy-seam]: CLIENT suppressed host-floppy mirror convergence "
-                "destroy actor=%p eid=%u -- display/local cleanup is not client authority",
+        UE_LOGI("grab_hook[destroy-seam]: suppressed host-floppy mirror convergence "
+                "destroy actor=%p eid=%u role=CLIENT -- immediate stale drive cleanup is not "
+                "a new world-state transaction",
                 self, static_cast<unsigned>(destroyEid));
         return;
+    }
+    // Only the shipped laptop_C::insertFloppy(floppy) verb proves this destruction retires an old
+    // incarnation that is expected to return later. Arbitrary floppy sale/delete/consume paths do
+    // not create a session-long marker.
+    if (!keyless && coop::prop_drop_intent::IsLaptopInsertRetirement(self)) {
+        coop::prop_echo_suppress::NoteFloppyRetiredForReincarnation(self, keyStr);
     }
     coop::net::WireKey wk{};
     wk.len = 0;
