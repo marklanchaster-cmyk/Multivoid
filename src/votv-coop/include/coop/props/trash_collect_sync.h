@@ -30,8 +30,11 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
-namespace coop::net { class Session; }
+#include "ue_wrap/core/types.h"
+
+namespace coop::net { class Session; struct WireKey; }
 
 namespace coop::trash_collect_sync {
 
@@ -44,15 +47,29 @@ namespace coop::trash_collect_sync {
 // Game thread.
 void Install(coop::net::Session* session);
 
-// Game thread. If `heldActor` is a live, UNKEYED (Key=None) Aprop_C, force-mint
-// a stable Key on it and broadcast a PropSpawn under that Key (so peers spawn a
-// mirror the held-pose stream can then drive into the collector's hands).
-// Returns true iff it minted + broadcast. No-op (returns false) for: null/dead
-// actors, non-Aprop_C (transient chip/clump -- crash safety), the host-authoritative
-// garbageClump (docs/piles/08: trash_channel owns it via the grabbed pile's eid -- never authored
-// here), and already-keyed actors (a normal world-prop grab -- the peer already has it).
-// Idempotent: once minted the Key is non-None, so a repeat call returns false.
+// Game thread. Expresses a newly-held keyed prop. The host allocates/broadcasts
+// directly. A client sends only an eid=0 adoption request naming the concrete
+// pre-grab actor; pose/release stay gated until the host's ordinary PropSpawn
+// response binds that actor to a host eid. Shared trash keeps its separate
+// host-authoritative morph lane. Returns true iff it emitted either expression.
 bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* session);
+
+// Generic Aprop grab identity negotiation. The input PRE seam records the
+// concrete actor's position before the PhysicsHandle moves it. The held edge
+// consumes that locator into a client adoption request. When the host's normal
+// PropSpawn handback arrives, the receiver claims the pending actor directly
+// (so a host-canonical Key may differ from the client's random gameplay Key).
+void CaptureAdoptionCandidate(void* actor);
+void* ConsumePendingAdoptionAck(uint64_t adoptionId, const std::wstring& cls);
+void ConsumePendingAdoptionRefusal(uint64_t adoptionId);
+void CompletePendingAdoptionAck(uint64_t adoptionId, void* actor,
+                                uint32_t hostEid, const coop::net::WireKey& canonicalKey);
+bool DeferPendingAdoptionRelease(void* actor,
+                                 float linX, float linY, float linZ,
+                                 float angX, float angY, float angZ);
+void TickPendingAdoptionReleases(coop::net::Session* session);
+bool HostAuthorizeAdoptionTarget(void* actor, uint8_t senderSlot);
+bool HostSendAdoptionRefusal(uint8_t requesterSlot, uint64_t adoptionId);
 
 // (The proximity RE-PILE death-watch -- WatchClumpForRepile / Tick -- is RETIRED 2026-06-21, RULE 2. It
 // converted on the clump's DEATH by a nearest-untracked pile search; the DETERMINISTIC UFunction::Func thunk

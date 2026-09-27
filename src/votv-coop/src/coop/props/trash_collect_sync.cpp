@@ -15,6 +15,9 @@
 #include "coop/creatures/kerfur_entity.h"  // K-5: IsKerfurActor (the held-kerfur class-gate); IsKerfurPropClass (off-prop)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
+#include "coop/element/portable_identity.h"
+#include "coop/element/registry.h"
+#include "coop/element/intent_authority.h"
 #include "coop/element/quiescence_drain.h"   // ArmGhostSweep (v106b: E-press on an unbound native arms the wholesale ghost reconcile)
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_sound.h"           // client-own-grab pickup cue (native grab suppressed -> synthesize locally)
@@ -34,10 +37,12 @@
 #include "ue_wrap/core/sdk_profile.h"     // MainPlayerClass + MainPlayerUseInputEventFn
 #include "ue_wrap/core/types.h"
 #include "ue_wrap/core/ufunction_hook.h"  // the deterministic re-pile: BeginDeferred Func-patch (docs/piles/08)
+#include "ue_wrap/core/cached_obj_ref.h"
 
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <deque>
 #include <string>
 
 namespace coop::trash_collect_sync {
@@ -67,6 +72,42 @@ std::atomic<coop::net::Session*> g_session{nullptr};
 // re-pile spawn) now just dies untracked -> the normal prop reaper PropDestroys it.)
 
 bool g_repileThunkInstalled = false;          // process-lifetime Func-patch latch
+
+struct AdoptionCapture {
+    ue_wrap::CachedObjRef captured;
+    ue_wrap::FVector capturedLocation{};
+};
+AdoptionCapture g_adoptionCapture;
+
+struct PendingAdoption {
+    uint64_t id = 0;
+    ue_wrap::CachedObjRef actor;
+    std::wstring requestedClass;
+    bool ackClaimed = false;
+    bool released = false;
+    uint32_t hostEid = 0;
+    coop::net::WireKey canonicalKey{};
+    ue_wrap::FVector linearVelocity{};
+    ue_wrap::FVector angularVelocity{};
+    uint8_t finalPoseTicks = 0;
+    std::chrono::steady_clock::time_point deadline{};
+};
+std::deque<PendingAdoption> g_pendingAdoptions;
+constexpr size_t kMaxPendingAdoptions = 8;
+constexpr auto kAdoptionTtl = std::chrono::seconds(30);
+uint64_t g_nextAdoptionId = 1;
+
+uint64_t NextAdoptionId_() {
+    for (;;) {
+        const uint64_t candidate = g_nextAdoptionId++;
+        if (g_nextAdoptionId == 0) g_nextAdoptionId = 1;
+        if (candidate == 0) continue;
+        bool inUse = false;
+        for (const auto& pending : g_pendingAdoptions)
+            if (pending.id == candidate) { inUse = true; break; }
+        if (!inUse) return candidate;
+    }
+}
 
 // THE DETERMINISTIC RE-PILE (docs/piles/08 "thunk") -- the convert, validated GREEN 2026-06-21 (host log:
 // many CLEAN [REPILE], the thunk's *Result ptr-for-ptr == the death-watch's FindNearest pile every isolated
@@ -197,6 +238,167 @@ void OnBeginDeferredSpawnObserve(void* /*context*/, void* srcObj, void* newActor
 
 }  // namespace
 
+void CaptureAdoptionCandidate(void* actor) {
+    g_adoptionCapture.captured.Reset();
+    if (!actor || !R::IsLive(actor) || !ue_wrap::prop::IsKeyedInteractable(actor)) return;
+    g_adoptionCapture.captured.Set(actor);
+    g_adoptionCapture.capturedLocation = ue_wrap::engine::GetActorLocation(actor);
+}
+
+void* ConsumePendingAdoptionAck(uint64_t adoptionId, const std::wstring& cls) {
+    if (adoptionId == 0) return nullptr;
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = g_pendingAdoptions.begin(); it != g_pendingAdoptions.end(); ++it) {
+        if (it->id != adoptionId) continue;
+        if (now >= it->deadline) {
+            UE_LOGI("prop_identity: CLIENT ignored expired adoption ACK id=%llu",
+                    static_cast<unsigned long long>(adoptionId));
+            g_pendingAdoptions.erase(it);
+            return nullptr;
+        }
+        if (it->ackClaimed) return nullptr;  // duplicate ACK
+        void* actor = it->actor.Get();
+        if (!actor || cls != it->requestedClass) {
+            UE_LOGW("prop_identity: CLIENT adoption ACK id=%llu failed pending actor/class validation "
+                    "-- retiring transaction", static_cast<unsigned long long>(adoptionId));
+            g_pendingAdoptions.erase(it);
+            return nullptr;
+        }
+        it->ackClaimed = true;
+        return actor;
+    }
+    return nullptr;  // stale ACK: its transaction was retired/evicted
+}
+
+void ConsumePendingAdoptionRefusal(uint64_t adoptionId) {
+    if (adoptionId == 0) return;
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = g_pendingAdoptions.begin(); it != g_pendingAdoptions.end(); ++it) {
+        if (it->id != adoptionId) continue;
+        if (now >= it->deadline) {
+            UE_LOGI("prop_identity: CLIENT ignored expired adoption refusal id=%llu",
+                    static_cast<unsigned long long>(adoptionId));
+            g_pendingAdoptions.erase(it);
+            return;
+        }
+        if (it->ackClaimed) {
+            // A terminal success already won this transaction. A contradictory
+            // late/duplicate refusal is stale and must not cancel its deferred release.
+            UE_LOGI("prop_identity: CLIENT ignored stale adoption refusal id=%llu after ACK",
+                    static_cast<unsigned long long>(adoptionId));
+            return;
+        }
+        UE_LOGW("prop_identity: CLIENT adoption refused id=%llu -- transaction retired",
+                static_cast<unsigned long long>(adoptionId));
+        g_pendingAdoptions.erase(it);
+        return;
+    }
+    // Missing means an already-retired/evicted transaction: duplicate and stale
+    // refusals are deliberately side-effect free.
+}
+
+void CompletePendingAdoptionAck(uint64_t adoptionId, void* actor,
+                                uint32_t hostEid, const coop::net::WireKey& canonicalKey) {
+    for (auto it = g_pendingAdoptions.begin(); it != g_pendingAdoptions.end(); ++it) {
+        if (it->id != adoptionId || !it->ackClaimed || it->actor.Get() != actor) continue;
+        if (!it->released) {
+            g_pendingAdoptions.erase(it);
+            return;
+        }
+        it->hostEid = hostEid;
+        it->canonicalKey = canonicalKey;
+        it->finalPoseTicks = 2;
+        return;
+    }
+}
+
+bool DeferPendingAdoptionRelease(void* actor,
+                                 float linX, float linY, float linZ,
+                                 float angX, float angY, float angZ) {
+    if (!actor) return false;
+    for (auto& pending : g_pendingAdoptions) {
+        if (pending.actor.Raw() != actor) continue;
+        pending.released = true;
+        pending.linearVelocity = {linX, linY, linZ};
+        pending.angularVelocity = {angX, angY, angZ};
+        return true;
+    }
+    return false;
+}
+
+void TickPendingAdoptionReleases(coop::net::Session* session) {
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = g_pendingAdoptions.begin(); it != g_pendingAdoptions.end();) {
+        if (now >= it->deadline || !it->actor.Alive()) {
+            UE_LOGW("prop_identity: CLIENT retiring adoption id=%llu (%s)",
+                    static_cast<unsigned long long>(it->id),
+                    now >= it->deadline ? "ACK timeout" : "actor died");
+            it = g_pendingAdoptions.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (!session || session->role() != coop::net::Role::Client) return;
+    for (auto it = g_pendingAdoptions.begin(); it != g_pendingAdoptions.end(); ++it) {
+        if (!it->released || !it->ackClaimed || it->hostEid == 0) continue;
+        void* actor = it->actor.Get();
+        if (!actor) { g_pendingAdoptions.erase(it); return; }
+        if (it->finalPoseTicks != 0) {
+            coop::net::PropPoseSnapshot pp{};
+            pp.key = it->canonicalKey;
+            pp.elementId = it->hostEid;
+            const auto loc = ue_wrap::engine::GetActorLocation(actor);
+            const auto rot = ue_wrap::engine::GetActorRotation(actor);
+            pp.x = loc.X; pp.y = loc.Y; pp.z = loc.Z;
+            pp.pitch = ue_wrap::NormalizeAxis(rot.Pitch);
+            pp.yaw = ue_wrap::NormalizeAxis(rot.Yaw);
+            pp.roll = ue_wrap::NormalizeAxis(rot.Roll);
+            session->SetLocalPropPose(true, pp);
+            --it->finalPoseTicks;
+            return;  // one pose stream: oldest ready release owns this tick
+        }
+        session->SetLocalPropPose(false, {});
+        session->SendPropRelease(it->canonicalKey,
+                                 it->linearVelocity.X, it->linearVelocity.Y, it->linearVelocity.Z,
+                                 it->angularVelocity.X, it->angularVelocity.Y, it->angularVelocity.Z,
+                                 it->hostEid, /*ctx=*/0);
+        UE_LOGI("prop_identity: CLIENT completed deferred release adoptionId=%llu eid=%u",
+                static_cast<unsigned long long>(it->id), it->hostEid);
+        g_pendingAdoptions.erase(it);
+        return;
+    }
+}
+
+bool HostAuthorizeAdoptionTarget(void* actor, uint8_t senderSlot) {
+    auto* session = g_session.load(std::memory_order_acquire);
+    if (!session || session->role() != coop::net::Role::Host || !actor || senderSlot == 0)
+        return false;
+    // Generic Aprop pickup uses mainPlayer.armLength=200. IntentTarget expands
+    // this by the target bounds and the shared pose-staleness allowance, and
+    // fails closed when the host has no live puppet for the sender.
+    constexpr float kPropGrabReachUU = 200.0f;
+    const auto token = coop::element::IntentTarget::ForClientIntent(
+        *session, senderSlot, kPropGrabReachUU);
+    const coop::element::IntentSubject subject = token.Authorize(actor);
+    if (subject) return true;
+    UE_LOGW("prop_identity: HOST adoption target REFUSED slot=%u reason=%s "
+            "dist=%.0f allowed=%.0f", senderSlot,
+            coop::element::OutcomeName(subject.outcome), subject.distUU, subject.reachUU);
+    return false;
+}
+
+bool HostSendAdoptionRefusal(uint8_t requesterSlot, uint64_t adoptionId) {
+    auto* session = g_session.load(std::memory_order_acquire);
+    if (!session || session->role() != coop::net::Role::Host ||
+        requesterSlot == 0 || requesterSlot >= coop::net::kMaxPeers || adoptionId == 0)
+        return false;
+    coop::net::PropAdoptionRefusalPayload refusal{};
+    refusal.adoptionId = adoptionId;
+    return session->SendReliableToSlot(requesterSlot,
+                                       coop::net::ReliableKind::PropAdoptionRefused,
+                                       &refusal, sizeof(refusal));
+}
+
 bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     if (!heldActor || !s || !s->connected()) return false;
     if (!R::IsLive(heldActor)) return false;
@@ -223,6 +425,30 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     // mirror -- it spawns physics-free and is driven KINEMATICALLY (the inverse
     // of the reverted-2a UAF). [[project-bug-trash-chippile-uaf-crash]]
     if (!ue_wrap::prop::IsKeyedInteractable(heldActor)) return false;
+
+    // A client never allocates a prop identity. A host-range mirror binding is
+    // already the completed handshake, so the held pose can use it immediately.
+    // Any local/peer-range row is provisional baggage from an older lifecycle and
+    // must be replaced by the host's handback below.
+    if (s->role() == coop::net::Role::Client) {
+        for (auto it = g_pendingAdoptions.begin(); it != g_pendingAdoptions.end(); ++it) {
+            if (it->actor.Raw() != heldActor) continue;
+            it->released = false;
+            it->finalPoseTicks = 0;
+            // ACK already bound this actor; this re-grab supersedes the queued
+            // release transaction completely.
+            if (it->ackClaimed && it->hostEid != 0)
+                g_pendingAdoptions.erase(it);
+            break;
+        }
+        const coop::element::ElementId bound =
+            coop::element::Registry::Get().EidForActor(heldActor);
+        if (bound != coop::element::kInvalidId &&
+            coop::element::Registry::IsAllowedHostAllocatedEid(bound)) {
+            if (auto* e = coop::element::Registry::Get().Get(bound); e && e->IsMirror())
+                return false;
+        }
+    }
     // PART 2 (2026-06-18) CLIENT host-authority gate for SHARED TRASH (chipPile / garbageClump /
     // trashBitsPile -- the non-Aprop_C "world litter"). These are HOST-OWNED shared entities. When a
     // CLIENT grabs a host pile, its BP locally morphs it to a clump (EX_CallMath, un-hookable) and this
@@ -308,7 +534,8 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     // themselves is tracked separately -- see the sweep's keyless histogram.)
     std::wstring keyStr = ue_wrap::prop::GetInteractableKeyString(heldActor);
     if (!keyStr.empty() && keyStr != L"None" &&
-        PT::GetPropElementIdForActor(heldActor) != coop::element::kInvalidId) {
+        PT::GetPropElementIdForActor(heldActor) != coop::element::kInvalidId &&
+        s->role() != coop::net::Role::Client) {
         // [ROCK-DROP DIAG 2026-07-08, RULE-2-exempt] "pose stream suffices" is a promise
         // that ONLY holds while the prop is ACTIVELY held+streamed. A caller expressing a
         // no-longer-streamed prop (a just-released/E-grab-then-idle prop) gets a false
@@ -322,6 +549,77 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     }
 
     const std::wstring cls = R::ClassNameOf(heldActor);
+
+    // CLIENT IDENTITY REQUEST. This reuses PropSpawn's complete class/physics
+    // description and the already-proven host handback, but elementId=0 plus
+    // kAdoptionRequest changes its meaning from "allocate my entity" to "name
+    // this existing world actor". No client Element is minted, and no gameplay
+    // Key is force-created. The pre-grab position and cooked-level locator let
+    // the host resolve the concrete counterpart even when UE minted different
+    // per-process Keys. Pose/release remain silent until the host PropSpawn ACK
+    // binds a host-range eid.
+    if (s->role() == coop::net::Role::Client) {
+        // A rapid re-grab of the same actor reuses its still-live transaction;
+        // reliable delivery already owns retransmission and a second token would
+        // create two valid ACKs for one actor.
+        for (auto& pending : g_pendingAdoptions) {
+            if (pending.actor.Raw() == heldActor) {
+                pending.released = false;
+                return true;
+            }
+        }
+        coop::net::PropSpawnPayload req{};
+        for (size_t i = 0; i < cls.size() && i < 63; ++i)
+            req.className.data[req.className.len++] = static_cast<char>(cls[i]);
+        if (keyStr != L"None") {
+            for (size_t i = 0; i < keyStr.size() && i < 31; ++i)
+                req.key.data[req.key.len++] = static_cast<char>(keyStr[i]);
+        }
+        const std::wstring levelKey = coop::element::PortableLevelActorWireKey(heldActor);
+        for (size_t i = 0; i < levelKey.size() && i < 31; ++i)
+            req.propName.data[req.propName.len++] = static_cast<char>(levelKey[i]);
+        ue_wrap::FVector origin = ue_wrap::engine::GetActorLocation(heldActor);
+        if (g_adoptionCapture.captured.Get() == heldActor)
+            origin = g_adoptionCapture.capturedLocation;
+        req.hasMatchPos = 1;
+        req.matchX = origin.X; req.matchY = origin.Y; req.matchZ = origin.Z;
+        const auto loc = ue_wrap::engine::GetActorLocation(heldActor);
+        const auto rot = ue_wrap::engine::GetActorRotation(heldActor);
+        const auto scl = ue_wrap::engine::GetActorScale3D(heldActor);
+        req.locX = loc.X; req.locY = loc.Y; req.locZ = loc.Z;
+        req.rotPitch = ue_wrap::NormalizeAxis(rot.Pitch);
+        req.rotYaw = ue_wrap::NormalizeAxis(rot.Yaw);
+        req.rotRoll = ue_wrap::NormalizeAxis(rot.Roll);
+        req.scaleX = scl.X; req.scaleY = scl.Y; req.scaleZ = scl.Z;
+        req.physFlags = coop::net::propspawn_flags::kAdoptionRequest;
+        req.elementId = 0;
+        req.adoptionId = NextAdoptionId_();
+        if (g_pendingAdoptions.size() >= kMaxPendingAdoptions) {
+            UE_LOGW("prop_identity: CLIENT pending adoption cap=%zu -- retiring oldest id=%llu",
+                    kMaxPendingAdoptions,
+                    static_cast<unsigned long long>(g_pendingAdoptions.front().id));
+            g_pendingAdoptions.pop_front();
+        }
+        PendingAdoption pending{};
+        pending.id = req.adoptionId;
+        pending.actor.Set(heldActor);
+        pending.requestedClass = cls;
+        pending.deadline = std::chrono::steady_clock::now() + kAdoptionTtl;
+        g_pendingAdoptions.push_back(pending);
+        if (!s->SendPropSpawn(req)) {
+            g_pendingAdoptions.pop_back();
+            UE_LOGW("prop_identity: CLIENT adoption REQUEST id=%llu could not enter reliable lane",
+                    static_cast<unsigned long long>(req.adoptionId));
+            return false;
+        }
+        UE_LOGI("prop_identity: CLIENT adoption REQUEST id=%llu actor=%p cls='%ls' keyHint='%ls' "
+                "levelKey='%ls' match=(%.1f,%.1f,%.1f); pose held until host identity ACK",
+                static_cast<unsigned long long>(req.adoptionId), heldActor,
+                cls.c_str(), keyStr.c_str(), levelKey.c_str(),
+                origin.X, origin.Y, origin.Z);
+        return true;
+    }
+
     // Aprop_C trash items get a force-minted Key (their UCS holds it). The non-Aprop_C
     // trash CLUMP (prop_garbageClump_C) is NON-KEYABLE -- setKey doesn't stick (the
     // source re-reads None, autotest 33e7f25) -- so it rides the SAME prop pipeline but
@@ -437,6 +735,8 @@ void Install(coop::net::Session* session) {
 
 void OnDisconnect() {
     g_session.store(nullptr, std::memory_order_release);
+    g_adoptionCapture.captured.Reset();
+    g_pendingAdoptions.clear();
     coop::trash_use_intercept::OnDisconnect();  // clears its cached session + gesture-pairing latch
 }
 

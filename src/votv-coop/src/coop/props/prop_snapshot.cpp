@@ -603,7 +603,10 @@ void DrainChunk() {
 // `s` host-validated + `actor` liveness-confirmed by the caller. RULE 2: ONE builder, shared by the
 // generic incremental express and the kerfur-off deliver-missing owner (no parallel copy). `kindTag`
 // is a log-only prefix ("" generic / "kerfur-off ").
-static void BroadcastIncrementalPropSpawn_(coop::net::Session* s, void* actor, const char* kindTag) {
+static bool BroadcastIncrementalPropSpawn_(coop::net::Session* s, void* actor, const char* kindTag,
+                                           const ue_wrap::FVector* adoptionMatch = nullptr,
+                                           uint64_t adoptionId = 0,
+                                           int requesterSlot = -1) {
     // eid was minted by the seed walk that yielded this actor (phase 2 of SeedWalk_, before it
     // returned), so this resolves.
     const coop::element::ElementId eid = PT::GetPropElementIdForActor(actor);
@@ -611,11 +614,36 @@ static void BroadcastIncrementalPropSpawn_(coop::net::Session* s, void* actor, c
     // internalIdx -1: liveness just confirmed by the caller (IsLive); the builder's idx guard is only
     // for the drain's cached-index path. matchSlot -1: mid-game incremental express (NOT a join), no
     // save-time stamp (a runtime-spawned form reaching a peer has no save-loaded native twin).
-    if (!BuildPropSpawnPayload_(actor, eid, -1, p, -1)) return;  // not expressible -- skip silently
-    s->SendPropSpawn(p);
+    if (!BuildPropSpawnPayload_(actor, eid, -1, p, -1)) return false;
+    if (adoptionMatch) {
+        p.hasMatchPos = 1;
+        p.matchX = adoptionMatch->X;
+        p.matchY = adoptionMatch->Y;
+        p.matchZ = adoptionMatch->Z;
+    }
+    if (adoptionId != 0 && requesterSlot > 0 && requesterSlot < coop::net::kMaxPeers) {
+        // The correlated packet is requester-only. Every other client receives
+        // the same authoritative identity as an ordinary PropSpawn, so an ACK
+        // can never be mistaken for another client's transaction and a stale
+        // ACK cannot fall through to ordinary materialization on its requester.
+        p.adoptionId = adoptionId;
+        if (!s->SendReliableToSlot(requesterSlot, coop::net::ReliableKind::PropSpawn,
+                                   &p, sizeof(p)))
+            return false;
+        p.adoptionId = 0;
+        for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
+            if (slot == requesterSlot) continue;
+            s->SendReliableToSlot(slot, coop::net::ReliableKind::PropSpawn,
+                                  &p, sizeof(p));
+        }
+    } else {
+        p.adoptionId = 0;
+        s->SendPropSpawn(p);
+    }
     UE_LOGI("snapshot: incremental PropSpawn for runtime-adopted %sprop %p (eid=%u, key='%.*s') "
             "-- bracket-free additive add (MTA CEntityAddPacket; no sweep re-arm)",
             kindTag, actor, p.elementId, static_cast<int>(p.key.len), p.key.data);
+    return true;
 }
 
 bool ExpressWouldBroadcast() {
@@ -640,6 +668,16 @@ void ExpressIncrementalSpawn(void* actor) {
     // ExpressIncrementalKerfurOffProp -- routed from the same re-seed loop via DeliverLateRegisteredProps.
     if (coop::kerfur_entity::IsKerfurActor(actor)) return;
     BroadcastIncrementalPropSpawn_(s, actor, /*kindTag=*/"");
+}
+
+bool ExpressIncrementalAdoption(void* actor, const ue_wrap::FVector& requestMatch,
+                                uint64_t adoptionId, int requesterSlot) {
+    auto* s = g_session_ptr.load(std::memory_order_acquire);
+    if (!s || s->role() != coop::net::Role::Host || !actor || !R::IsLive(actor)) return false;
+    if (coop::kerfur_entity::IsKerfurActor(actor)) return false;
+    if (adoptionId == 0 || requesterSlot <= 0) return false;
+    return BroadcastIncrementalPropSpawn_(s, actor, /*kindTag=*/"adoption-ack ", &requestMatch,
+                                          adoptionId, requesterSlot);
 }
 
 void ExpressIncrementalKerfurOffProp(void* actor) {

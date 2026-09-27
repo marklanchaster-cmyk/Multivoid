@@ -26,6 +26,8 @@
 #include <cstddef>
 #include <vector>
 
+#include "ue_wrap/core/types.h"
+
 namespace coop::net { class Session; }
 
 namespace coop::prop_snapshot {
@@ -63,6 +65,12 @@ void DrainChunk();
 // Mirrors MTA: one CEntityAddPacket per runtime entity, never a world re-send
 // (Server/.../CStaticFunctionDefinitions.cpp:8349).
 void ExpressIncrementalSpawn(void* actor);
+
+// Identity-adoption ACK: the same authoritative incremental PropSpawn, with
+// matchX/Y/Z echoing the request's pre-grab locator so the requesting client can
+// bind the exact pending actor even when its gameplay Key differs. Host-only.
+bool ExpressIncrementalAdoption(void* actor, const ue_wrap::FVector& requestMatch,
+                                uint64_t adoptionId, int requesterSlot);
 
 // Does the express path above actually BROADCAST right now? It returns immediately on a client,
 // so a caller that narrates "broadcasting one PropSpawn each" owes this question first -- `[V]`

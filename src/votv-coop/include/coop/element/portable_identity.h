@@ -61,6 +61,13 @@ std::wstring PortableIdentity(void* actor);
 // never written into the game at all.
 std::wstring PortableWireKey(void* actor);
 
+// A narrower locator for a top-level actor baked into the cooked level. Unlike
+// PortableWireKey this deliberately ignores a runtime-minted gameplay Key: those
+// Keys can differ between two processes, while an RF_WasLoaded actor's UObject
+// name is part of the level package and is identical on both. Returns
+// "mvn_" + 16 hex, or "" for runtime/save-spawned and child actors.
+std::wstring PortableLevelActorWireKey(void* actor);
+
 // The hash, exposed for a caller that already holds the readable form.
 uint64_t IdentityHash(const std::wstring& readable);
 

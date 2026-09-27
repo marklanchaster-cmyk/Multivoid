@@ -90,6 +90,17 @@ void GrabObserver_PropInventory_TakeObj_POST(void* self, void* function, void* p
         return;
     }
 
+    // The live EX_LocalVirtualFunction route is authored by
+    // prop_drop_intent's FinishSpawningActor drain (its vm-dispatch latch marks
+    // this as a container extraction). If this legacy PE observer ever fires on
+    // a client too, it must not mint a peer eid and send a second PropSpawn: the
+    // host is the only prop identity allocator.
+    if (s->role() == coop::net::Role::Client) {
+        UE_LOGI("grab_hook[takeObj POST]: CLIENT extract actor=%p deferred to host-authoritative "
+                "PropDropIntent; no local eid/PropSpawn minted", spawnedActor);
+        return;
+    }
+
     coop::net::PropSpawnPayload p{};
     const std::wstring cls = R::ClassNameOf(spawnedActor);
     p.className.len = 0;

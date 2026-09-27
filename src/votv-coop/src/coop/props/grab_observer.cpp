@@ -7,6 +7,7 @@
 // pipeline: research/findings/physics-grab/votv-physics-interaction-deep-re-2026-05-23.md.
 
 #include "coop/props/grab_observer.h"
+#include "coop/props/trash_collect_sync.h"
 
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
@@ -163,6 +164,14 @@ void GrabObserver_PrimComp_SetAngularVelocity_PRE(void* self, void* /*function*/
 // --- Secondary: BP-Timeline + input (`self` IS mainPlayer_C). These prove
 // the upstream dispatch path and let us read mainPlayer_C grab-state fields.
 
+void GrabObserver_InpActEvt_use_PRE(void* self, void* /*function*/, void* /*params*/) {
+    // Capture the aimed concrete actor before the native grab moves it into the
+    // PhysicsHandle. Client identity adoption uses this position as a conservative
+    // fallback when the gameplay Key was minted independently on each machine.
+    void* aimed = self ? ue_wrap::engine::ReadMainPlayerLookAtActor(self) : nullptr;
+    coop::trash_collect_sync::CaptureAdoptionCandidate(aimed);
+}
+
 void GrabObserver_InpActEvt_use(void* self, void* /*function*/, void* /*params*/) {
     // Fires on E-press. The BP graph downstream of this event decides
     // pickup-vs-drop from grabbing_actor and plays the Timeline accordingly.
@@ -280,6 +289,8 @@ void Install() {
         P::name::SetPhysicsAngularVelocityInDegreesFn, GrabObserver_PrimComp_SetAngularVelocity_PRE, /*pre=*/true);
 
     // Secondary: BP-Timeline + input on mainPlayer_C.
+    reg(playerCls, P::name::MainPlayerClass,
+        P::name::MainPlayerUseInputEventFn,  GrabObserver_InpActEvt_use_PRE,  /*pre=*/true);
     reg(playerCls, P::name::MainPlayerClass,
         P::name::MainPlayerUseInputEventFn,  GrabObserver_InpActEvt_use,      /*pre=*/false);
     reg(playerCls, P::name::MainPlayerClass,

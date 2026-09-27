@@ -209,10 +209,10 @@ inline Lane LaneForKind(ReliableKind k) {
 // host forwards from one client to the others. PEER-ORIGINATED gameplay only:
 //   - ItemActivate: a client's equipment toggle (flashlight) must show on
 //     its puppet for every peer.
-//   - PropSpawn / PropDestroy / PropRelease: a client's inventory drop /
-//     destroy / throw must replicate to every peer (the Aprop_C lineage is
-//     host-authoritative for spawns the HOST detects, but a client's own
-//     takeObj-path drop originates client-side and needs cross-peer fan-out).
+//   - PropDestroy / PropRelease: a client's destroy / throw must replicate to
+//     every peer. PropSpawn is deliberately NOT relayable: a client PropSpawn
+//     is an adoption request terminating at the host; the host's ordinary
+//     PropSpawn handback is the sole allocation/broadcast.
 //   - WindowCleanState / GrimeState and the explicitly peer-authored lanes below
 //     still use raw host relay. b65004 deliberately removes Door/Light/Container/
 //     Garage/Appliance/Locker and DriveSlot/DrivePayload from this list: those
@@ -231,7 +231,6 @@ inline Lane LaneForKind(ReliableKind k) {
 inline bool IsClientRelayableReliableKind(ReliableKind k) {
     switch (k) {
     case ReliableKind::ItemActivate:
-    case ReliableKind::PropSpawn:
     case ReliableKind::PropDestroy:
     case ReliableKind::PropConvert:       // v52: a client's clump ball->pile convert must reach the other clients
     case ReliableKind::PropRelease:

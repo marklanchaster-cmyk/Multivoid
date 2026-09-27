@@ -127,6 +127,16 @@ std::wstring PortableWireKey(void* actor) {
     return std::wstring(buf);
 }
 
+std::wstring PortableLevelActorWireKey(void* actor) {
+    if (!actor || ue_wrap::engine::IsChildActor(actor) || !WasLoaded(actor))
+        return std::wstring();
+    const std::wstring readable = L"n:" + R::ToString(R::NameOf(actor));
+    wchar_t buf[24];
+    swprintf(buf, 24, L"mvn_%016llx",
+             static_cast<unsigned long long>(IdentityHash(readable)));
+    return std::wstring(buf);
+}
+
 bool RunSelfTest() {
     int checks = 0, failed = 0;
     auto CHECK = [&](bool cond, const char* what) {

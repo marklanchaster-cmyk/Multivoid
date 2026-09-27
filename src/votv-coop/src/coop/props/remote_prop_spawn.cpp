@@ -16,6 +16,7 @@
 
 #include "coop/element/element.h"
 #include "coop/element/registry.h"
+#include "coop/element/portable_identity.h"
 #include "coop/config/config.h"  // IsIniKeyTrue -- hands-on probe flags live in multivoid.ini [dev], not bats/env
 #include "coop/creatures/kerfur_entity.h"  // GetKerfurMirrorEidForActor -- exempt host-driven kerfur mirrors in the grab-guard predicate (the SWEEP excludes mirrors structurally via pr.mirror since R3)
 #include "coop/creatures/kerfur_prop_adoption.h"  // K-6: defer a kerfur-prop fuzzy-miss to the polled adoption
@@ -32,6 +33,8 @@
 #include "coop/dev/force_overdestroy_test.h"  // dev-only: floor-disable toggle for the controlled proof
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/prop_snapshot.h"      // (H) v122: ExpressIncrementalSpawn -- the handback re-express
+#include "coop/props/prop_synth_key.h"
+#include "coop/props/trash_collect_sync.h"
 #include "coop/props/prop_fresh_spawn.h"   // extraction 2026-07-12: the deferred-spawn materializer
 #include "coop/props/prop_lifecycle.h"
 #include "coop/props/prop_wire_parity.h"   // extraction 2026-07-12: shared SP-parity physics/collision helpers
@@ -95,7 +98,9 @@ std::wstring ClassNameToWString(const coop::net::WireClassName& cn) {
 // adopt path proceeds).
 static bool HostAuthorityHandback_(void* actor, const std::wstring& keyW,
                                    const std::wstring& classW, int senderSlot,
-                                   const char* how) {
+                                   const char* how,
+                                   const ue_wrap::FVector* adoptionMatch = nullptr,
+                                   uint64_t adoptionId = 0) {
     if (senderSlot == 0 || !actor) return false;               // the host's own word never conflicts with itself
     if (!coop::prop_element_tracker::SessionIsHost()) return false;
     const coop::element::ElementId prior = coop::element::Registry::Get().EidForActor(actor);
@@ -105,7 +110,9 @@ static bool HostAuthorityHandback_(void* actor, const std::wstring& keyW,
     }
     // Live non-mirror local OR untracked world actor: host-authoritative.
     if (prior == coop::element::kInvalidId) {
-        const std::wstring ownKey = ue_wrap::prop::GetInteractableKeyString(actor);
+        std::wstring ownKey = ue_wrap::prop::GetInteractableKeyString(actor);
+        ownKey = coop::prop_synth_key::EnsureKeyForBroadcast(
+            actor, ownKey, /*mintForAprop=*/ue_wrap::prop::IsDescendantOfProp(actor));
         coop::prop_element_tracker::MarkPropElement(
             actor, (ownKey == L"None") ? std::wstring() : ownKey, R::ClassNameOf(actor),
             coop::prop_element_tracker::EnrollSource::kExpressSeam);
@@ -122,10 +129,103 @@ static bool HostAuthorityHandback_(void* actor, const std::wstring& keyW,
     if (coop::kerfur_entity::IsKerfurActor(actor)) {
         UE_LOGW("remote_prop::OnSpawn: handback target is a KERFUR -- enroll only; KerfurConvert owns "
                 "kerfur delivery (no generic re-express)");
-        return true;
+        return adoptionMatch ? false : true;
     }
+    if (adoptionMatch) return coop::prop_snapshot::ExpressIncrementalAdoption(
+        actor, *adoptionMatch, adoptionId, senderSlot);
     coop::prop_snapshot::ExpressIncrementalSpawn(actor);
     return true;
+}
+
+static void* ResolveHostAdoptionRequest_(const coop::net::PropSpawnPayload& payload,
+                                         const std::wstring& classW,
+                                         const std::wstring& keyHint,
+                                         const std::wstring& levelKey) {
+    // A cooked level actor may have independently-minted gameplay Keys on the
+    // two machines. Its RF_WasLoaded UObject name is structural and exact, so
+    // it takes precedence over the explicitly non-authoritative key hint.
+    if (!levelKey.empty()) {
+        void* match = nullptr;
+        for (int32_t i = 0, n = R::NumObjects(); i < n; ++i) {
+            void* actor = R::ObjectAt(i);
+            if (!actor || !R::IsLive(actor) ||
+                !ue_wrap::prop::IsKeyedInteractable(actor) ||
+                R::ClassNameOf(actor) != classW ||
+                coop::element::PortableLevelActorWireKey(actor) != levelKey)
+                continue;
+            if (match && match != actor) {
+                UE_LOGW("prop_identity: HOST request levelKey='%ls' cls='%ls' is ambiguous -- refusing",
+                        levelKey.c_str(), classW.c_str());
+                return nullptr;
+            }
+            match = actor;
+        }
+        if (match) return match;
+    }
+
+    // Save/runtime actors do not have a cooked-level locator. Their restored
+    // gameplay Key is the next strongest name; the position below remains the
+    // fail-closed fallback when that Key was independently minted.
+    if (!keyHint.empty() && keyHint != L"None") {
+        if (void* actor = coop::prop_element_tracker::ResolveLiveActorByKey(keyHint)) {
+            if (R::IsLive(actor) && ue_wrap::prop::IsKeyedInteractable(actor) &&
+                R::ClassNameOf(actor) == classW)
+                return actor;
+            UE_LOGW("prop_identity: HOST request keyHint='%ls' resolved to wrong/non-keyed class "
+                    "(requested='%ls', actual='%ls') -- ignoring hint",
+                    keyHint.c_str(), classW.c_str(),
+                    actor && R::IsLive(actor) ? R::ClassNameOf(actor).c_str() : L"<dead>");
+        }
+    }
+
+    // Last resort for runtime/save actors whose Key is unavailable: the position
+    // captured before the client's grab. Accept only a unique same-class candidate;
+    // proximity may locate a candidate but may never choose between two objects.
+    if (!payload.hasMatchPos) return nullptr;
+    constexpr float kRadiusCm = 35.f;
+    void* match = nullptr;
+    for (int32_t i = 0, n = R::NumObjects(); i < n; ++i) {
+        void* actor = R::ObjectAt(i);
+        if (!actor || !R::IsLive(actor) ||
+            !ue_wrap::prop::IsKeyedInteractable(actor) || R::ClassNameOf(actor) != classW)
+            continue;
+        const auto loc = E::GetActorLocation(actor);
+        const float dx = loc.X - payload.matchX;
+        const float dy = loc.Y - payload.matchY;
+        const float dz = loc.Z - payload.matchZ;
+        if (dx * dx + dy * dy + dz * dz > kRadiusCm * kRadiusCm) continue;
+        if (match && match != actor) {
+            UE_LOGW("prop_identity: HOST request cls='%ls' match=(%.1f,%.1f,%.1f) has multiple "
+                    "candidates within %.0fcm -- refusing rather than guessing",
+                    classW.c_str(), payload.matchX, payload.matchY, payload.matchZ, kRadiusCm);
+            return nullptr;
+        }
+        match = actor;
+    }
+    return match;
+}
+
+static void AdoptPendingClientActor_(void* actor, const coop::net::PropSpawnPayload& payload,
+                                     const std::wstring& keyW, const std::wstring& classW) {
+    if (!actor) return;
+    if (!keyW.empty() && keyW != L"None") {
+        if (void* fn = coop::prop_fresh_spawn::PropSetKeyFn()) {
+            const R::FName key = ue_wrap::fname_utils::StringToFName(keyW);
+            if (key.ComparisonIndex != 0) {
+                ue_wrap::ParamFrame frame(fn);
+                if (frame.SetRaw(L"Key", &key, sizeof(key))) ue_wrap::Call(actor, frame);
+            }
+        }
+        coop::prop_element_tracker::IndexActorKey(actor, keyW);
+    }
+    coop::join_membership_sweep::RecordClaimIfTracking(actor);
+    coop::remote_prop::RegisterPropMirror(payload.elementId, actor, keyW, classW,
+                                          /*senderSlot=*/0);
+    coop::trash_collect_sync::CompletePendingAdoptionAck(
+        payload.adoptionId, actor, payload.elementId, payload.key);
+    UE_LOGI("prop_identity: CLIENT adoption ACK actor=%p -> host eid=%u canonicalKey='%ls' "
+            "(normal pose/release traffic now enabled)",
+            actor, payload.elementId, keyW.c_str());
 }
 
 void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
@@ -145,6 +245,37 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
             payload.locX, payload.locY, payload.locZ,
             payload.rotPitch, payload.rotYaw, payload.rotRoll,
             static_cast<int>(payload.physFlags));
+    const bool adoptionRequest =
+        (payload.physFlags & coop::net::propspawn_flags::kAdoptionRequest) != 0;
+
+    if (adoptionRequest) {
+        if (!coop::prop_element_tracker::SessionIsHost() || senderSlot <= 0 ||
+            payload.elementId != 0 || payload.adoptionId == 0) {
+            UE_LOGW("prop_identity: malformed adoption request slot=%d eid=%u id=%llu -- dropping",
+                    senderSlot, payload.elementId,
+                    static_cast<unsigned long long>(payload.adoptionId));
+            return;
+        }
+        void* actor = ResolveHostAdoptionRequest_(payload, classW, keyW, propNameW);
+        const ue_wrap::FVector requestMatch{payload.matchX, payload.matchY, payload.matchZ};
+        const bool accepted = actor && coop::trash_collect_sync::HostAuthorizeAdoptionTarget(
+            actor, static_cast<uint8_t>(senderSlot));
+        const bool acknowledged = accepted && HostAuthorityHandback_(
+            actor, keyW, classW, senderSlot, "adoption-request", &requestMatch,
+            payload.adoptionId);
+        if (!acknowledged) {
+            UE_LOGW("prop_identity: HOST could not prove adoption target slot=%d cls='%ls' keyHint='%ls' "
+                    "levelKey='%ls' id=%llu -- refusing (never materialize from a request)",
+                    senderSlot, classW.c_str(), keyW.c_str(), propNameW.c_str(),
+                    static_cast<unsigned long long>(payload.adoptionId));
+            if (!coop::trash_collect_sync::HostSendAdoptionRefusal(
+                    static_cast<uint8_t>(senderSlot), payload.adoptionId)) {
+                UE_LOGW("prop_identity: HOST could not queue adoption refusal slot=%d id=%llu",
+                        senderSlot, static_cast<unsigned long long>(payload.adoptionId));
+            }
+        }
+        return;
+    }
     // A non-keyable trash CLUMP rides this same pipeline identified by our EID, not a
     // Key (setKey doesn't stick on it). For the clump, key is None but elementId != 0;
     // it's deduped + registered + resolved by eid. Aprop_C keeps the keyed path.
@@ -157,6 +288,20 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
         UE_LOGW("remote_prop::OnSpawn: unkeyed + no eid (cls='%ls' key='%ls') -- dropping",
                 classW.c_str(), keyW.c_str());
         return;
+    }
+
+    // Host handback for a client request. Claim the exact pending local actor
+    // before ordinary key/fuzzy de-dupe: its gameplay Key may be intentionally
+    // different, and it may already be in the player's moving hand.
+    if (senderSlot == 0 && payload.adoptionId != 0) {
+        if (void* pending = coop::trash_collect_sync::ConsumePendingAdoptionAck(
+                payload.adoptionId, classW)) {
+            AdoptPendingClientActor_(pending, payload, keyW, classW);
+        } else {
+            UE_LOGI("prop_identity: CLIENT ignored stale/duplicate adoption ACK id=%llu eid=%u",
+                    static_cast<unsigned long long>(payload.adoptionId), payload.elementId);
+        }
+        return;  // correlated ACKs never fall through to ordinary spawn handling
     }
     // PROXY PATH (phase 1): trash (chipPile/clump + variants) is mirrored by a host-authoritative
     // AStaticMeshActor WE own (coop/trash_proxy) -- NO blueprint (no self-morph / GC / stale-index ->

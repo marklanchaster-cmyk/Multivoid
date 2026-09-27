@@ -24,6 +24,7 @@
 #include "coop/props/prop_element_tracker.h"
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/props/trash_pile_sync.h"
+#include "coop/props/trash_collect_sync.h"
 
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
@@ -39,6 +40,27 @@ bool HandleEntityEvent(net::Session& session,
                        const net::Session::ReliableMessage& msg,
                        void* localPlayer) {
     switch (msg.kind) {
+    case net::ReliableKind::PropAdoptionRefused: {
+        if (msg.payloadLen != sizeof(net::PropAdoptionRefusalPayload)) {
+            UE_LOGW("event_feed: PropAdoptionRefused payload size %zu != %zu -- dropping",
+                    static_cast<size_t>(msg.payloadLen),
+                    sizeof(net::PropAdoptionRefusalPayload));
+            break;
+        }
+        if (session.role() != net::Role::Client || msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: PropAdoptionRefused from non-host senderPeerSlot=%d -- dropping",
+                    msg.senderPeerSlot);
+            break;
+        }
+        net::PropAdoptionRefusalPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        if (p.adoptionId == 0) {
+            UE_LOGW("event_feed: PropAdoptionRefused with zero adoptionId -- dropping");
+            break;
+        }
+        coop::trash_collect_sync::ConsumePendingAdoptionRefusal(p.adoptionId);
+        break;
+    }
     case net::ReliableKind::PropStickState: {
         // v68: a peer stuck a wall-attachable (camera) to a surface. Symmetric
         // prop state (host relays client sticks). prop_stick_sync stops any
@@ -208,16 +230,21 @@ bool HandleEntityEvent(net::Session& session,
         // only allocate in its own peer range.
         if (msg.senderPeerSlot >= 0) {
             const bool senderIsHost = (msg.senderPeerSlot == 0);
+            const bool adoptionRequest =
+                (p.physFlags & coop::net::propspawn_flags::kAdoptionRequest) != 0;
             const bool ok = senderIsHost
-                ? (coop::element::Registry::IsAllowedHostAllocatedEid(p.elementId) ||
-                   coop::element::Registry::IsAllowedPeerAllocatedEid(p.elementId))
-                : coop::element::Registry::IsAllowedPeerAllocatedEid(p.elementId);
+                ? (!adoptionRequest &&
+                   (coop::element::Registry::IsAllowedHostAllocatedEid(p.elementId) ||
+                    coop::element::Registry::IsAllowedPeerAllocatedEid(p.elementId)))
+                : (session.role() == net::Role::Host && adoptionRequest &&
+                   p.elementId == 0 && p.adoptionId != 0);
             if (!ok) {
                 UE_LOGW("event_feed: PropSpawn elementId=0x%08x out of allowed "
-                        "%s range (senderPeerSlot=%d) -- dropping",
+                        "%s lifecycle (senderPeerSlot=%d request=%d adoptionId=%llu) -- dropping",
                         p.elementId,
-                        senderIsHost ? "host(any)" : "peer",
-                        msg.senderPeerSlot);
+                        senderIsHost ? "host-spawn" : "client-adoption-request",
+                        msg.senderPeerSlot, adoptionRequest ? 1 : 0,
+                        static_cast<unsigned long long>(p.adoptionId));
                 break;
             }
         }

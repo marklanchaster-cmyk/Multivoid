@@ -8,6 +8,7 @@
 
 #include "coop/dev/perf_probe.h"
 #include "coop/element/element.h"
+#include "coop/element/registry.h"
 #include "coop/config/config.h"
 #include "coop/creatures/kerfur_entity.h"  // K-5: GetKerfurMirrorEidForActor (held-kerfur-prop eid fallback)
 #include "coop/net/protocol.h"
@@ -208,6 +209,10 @@ void NotifyPropEidRebound(void* actor) {
             (g_lastHeldEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(g_lastHeldEid),
             (neweid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(neweid));
     g_lastHeldEid = neweid;
+    const std::wstring keyW = ue_wrap::prop::GetInteractableKeyString(actor);
+    g_lastHeldKey = {};
+    for (size_t i = 0; i < keyW.size() && i < 31; ++i)
+        g_lastHeldKey.data[g_lastHeldKey.len++] = static_cast<char>(keyW[i]);
 }
 
 void* LastHeldActor() {
@@ -401,6 +406,14 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
             if (!churnRegrab)
                 g_lastHeldEid = (adoptedEid != coop::element::kInvalidId) ? adoptedEid
                                                                           : ResolveHeldPropEid(heldActor);
+            // A connected client may carry only the host's authoritative prop
+            // identity. Peer-range locals are provisional/stale rows, never a
+            // license to emit pose traffic; the adoption request above replaces
+            // them with a host-range mirror before streaming starts.
+            if (session.role() == coop::net::Role::Client &&
+                !coop::element::Registry::IsAllowedHostAllocatedEid(g_lastHeldEid)) {
+                g_lastHeldEid = coop::element::kInvalidId;
+            }
             const unsigned eidLog =
                 (g_lastHeldEid == coop::element::kInvalidId) ? 0u : static_cast<unsigned>(g_lastHeldEid);
             UE_LOGI("net: NEW held actor %p cls='%ls' key='%ls' eid=%u -> %s",
@@ -449,7 +462,11 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // identity; the stream resumes the instant the item is expressed. (Join-window flood fix
         // 2026-06-17. g_lastHeldProp is still tracked below so the release edge + re-acquire work; a
         // PropRelease for a never-expressed held prop is harmless -- the peer has no mirror to release.)
-        if (pp.key.len > 0 || pp.elementId != 0) {
+        const bool identityReady = session.role() == coop::net::Role::Host
+            ? (pp.key.len > 0 || pp.elementId != 0)
+            : (pp.elementId != 0 &&
+               coop::element::Registry::IsAllowedHostAllocatedEid(pp.elementId));
+        if (identityReady) {
             session.SetLocalPropPose(true, pp);
             // Throttled emit log: first 3 + every 60th, matches receiver
             // throttle so the two logs can be diff'd line-for-line.
@@ -461,12 +478,15 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                         static_cast<int>(pp.key.len), pp.elementId, static_cast<unsigned>(pp.ctx));
             }
         } else {
+            session.SetLocalPropPose(false, {});
             // DIAGNOSTIC (2026-06-22): the held clump has NO identity (eid=0 AND key.len=0) -> the pose is NOT
             // streamed. If this fires between E-events while a clump is held, the carry freeze is g_lastHeldEid
             // going invalid (the eid was cleared), NOT a dead main branch. Throttled ~8/s.
             static uint64_t sPK = 0;
             if ((sPK++ % 15) == 0)
-                UE_LOGI("[POSE-SKIP] eid=0 key.len=0 -- held clump has NO identity to stream (g_lastHeldEid invalid -> carry frozen between E)");
+                UE_LOGI("[POSE-SKIP] held prop identity unresolved (key.len=%u eid=%u) -- no pose emitted "
+                        "until host adoption ACK",
+                        static_cast<unsigned>(pp.key.len), pp.elementId);
         }
         // heldActor is live in this branch (the IsLive(heldActor) guard above) -> Set's
         // fresh-same-task contract holds; the ref captures index + serial itself.
@@ -559,7 +579,6 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         // impulse-derived velocity, summed into ONE velocity. prop::GetPhysicsVelocity
         // returns 0 for the non-Aprop_C clump (GetStaticMesh is null on it) -- fall
         // back to the GENERIC root-component velocity so the clump throws too.
-        session.SetLocalPropPose(false, {});  // stop the held-pose stream (BOTH paths below)
         // SOUND/RELEASE FIX (take-29 #2b): a TRASH entity's throw is owned end-to-end by the host-authoritative
         // channel -- the flight-stream above carries the arc, and the re-pile thunk's ToPile convert is the
         // authoritative landing (it re-skins + snaps + ClearAnyDriveFor on the client). By the time this FIRE
@@ -574,6 +593,7 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         const bool isTrashEid = (g_lastHeldEid != coop::element::kInvalidId &&
                                  coop::trash_channel::CtxForEid(g_lastHeldEid) != 0);
         if (isTrashEid) {
+            session.SetLocalPropPose(false, {});
             UE_LOGI("[PILE] HOST trash release eid=%u -- PropRelease SUPPRESSED (host-auth flight-stream + "
                     "ToPile convert own the throw end; client drives no clump physics, ToPile clears the drive)",
                     relEid);
@@ -596,9 +616,31 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
                     vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
                     std::sqrt(linMagSq),
                     vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z);
-            session.SendPropRelease(g_lastHeldKey,
-                                    vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
-                                    vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z, relEid, /*relCtx=*/0u);
+            const bool releaseIdentityReady = session.role() == coop::net::Role::Host ||
+                (relEid != 0 && coop::element::Registry::IsAllowedHostAllocatedEid(relEid));
+            if (!releaseIdentityReady) {
+                session.SetLocalPropPose(false, {});
+                if (g_lastHeldProp.Alive() &&
+                    coop::trash_collect_sync::DeferPendingAdoptionRelease(
+                        g_lastHeldProp.Raw(),
+                        vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
+                        vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z)) {
+                    UE_LOGI("prop_identity: CLIENT release parked on pending adoption; "
+                            "final pose/release will follow its correlated ACK");
+                } else if (g_lastHeldProp.Alive()) {
+                    UE_LOGW("prop_identity: CLIENT unresolved release has no pending adoption "
+                            "transaction -- discarding without wire traffic");
+                } else {
+                    UE_LOGW("prop_identity: CLIENT unresolved prop died before identity ACK -- "
+                            "discarding deferred release without wire traffic");
+                }
+            } else {
+                session.SetLocalPropPose(false, {});
+                session.SendPropRelease(g_lastHeldKey,
+                                        vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
+                                        vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z,
+                                        relEid, /*relCtx=*/0u);
+            }
             if (session.role() == coop::net::Role::Host && g_lastHeldProp.Alive()) {
                 UE_LOGI("remote_prop[worldauth]: HOST-LOCAL RELEASE actor=%p -> queue final rest convergence",
                         g_lastHeldProp.Raw());
@@ -610,6 +652,12 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
         g_lastHeldEid = coop::element::kInvalidId;  // v81: invalidate the cached held eid on release
         }  // end real-release branch (CLOSE-B flicker gate above)
     }
+
+    // A released adoption owns the single prop-pose slot for at most two
+    // samples, then emits its reliable release. Keeping this after the live
+    // held branch lets rapid A-release/B-grab retain both transactions while
+    // A's final convergence briefly takes precedence.
+    coop::trash_collect_sync::TickPendingAdoptionReleases(&session);
 
     // v22 ragdoll PHYSICS stream. While the local player's native ragdoll
     // exists (C-key/faint/KO), read its pelvis world transform + linear+angular
