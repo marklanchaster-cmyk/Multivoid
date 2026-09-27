@@ -194,6 +194,9 @@ inline Lane LaneForKind(ReliableKind k) {
     // GeneratorBreakState and RepairOutcome must share this FIFO so an unfrozen
     // client cannot apply an older break after the later repair commit.
     case ReliableKind::EventAuthority: return Lane::Normal;
+    case ReliableKind::EventOutputState: return Lane::Normal;
+    case ReliableKind::EventOutputIntent: return Lane::Normal;
+    case ReliableKind::EventOutputResult: return Lane::Normal;
     case ReliableKind::AgravState: return Lane::Normal;
     case ReliableKind::GeneratorBreakState: return Lane::Normal;
     case ReliableKind::RepairOutcome: return Lane::Normal;

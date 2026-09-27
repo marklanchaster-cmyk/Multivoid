@@ -9,7 +9,8 @@ void Tick();
 // Direct event-controller births whose meaningful lifetime begins before they
 // enter activeEvents_senders use this exact controller identity. A later poll
 // of the registry sees the same pointer and therefore cannot mint a duplicate.
-uint64_t HostBeginExternal(void* controller, const char* className, const char* rowName);
+uint64_t HostBeginExternal(void* controller, const char* className, const char* rowName,
+                           bool* created = nullptr);
 // Refreshes class-specific state on the same instance/reliable revision stream.
 // Emits only when the quantized flags changed.
 void HostRefreshExternal(void* controller);

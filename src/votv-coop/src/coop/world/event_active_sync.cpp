@@ -1,5 +1,6 @@
 // Host-authoritative mirror of mainGamemode_C.activeEvents_senders.
 #include "coop/world/event_active_sync.h"
+#include "coop/world/event_output_sync.h"
 #include "coop/world/agrav_sync.h"
 #include "coop/world/black_fog_sync.h"
 #include "coop/net/protocol.h"
@@ -30,7 +31,7 @@ bool g_pollResolved=false; uint32_t g_pollResolveAttempts=0; uint32_t g_edgeReso
 void* g_gm=nullptr; int32_t g_gmIdx=-1; void* g_polledGm=nullptr; int32_t g_polledGmIdx=-1;
 bool g_primed=false; long long g_lastPollMs=0; constexpr long long kPollIntervalMs=250;
 struct RawPtrArray { void** Data; int32_t Num; int32_t Max; };
-struct ActiveEntry { void* controller=nullptr; int32_t objIdx=-1; std::string className,rowName; long long firstSeenMs=0; uint64_t instanceId=0; bool external=false,nativeActive=false; uint8_t lastFlags=0; bool flagsSent=false; };
+struct ActiveEntry { void* controller=nullptr; int32_t objIdx=-1; std::string className,rowName; long long firstSeenMs=0; uint64_t instanceId=0,eventOutputId=0; bool external=false,nativeActive=false; uint8_t lastFlags=0; bool flagsSent=false; };
 std::unordered_map<void*,ActiveEntry> g_active; uint64_t g_nextInstanceId=1; uint32_t g_setRevision=0;
 struct ClientEntry { std::string className,rowName; uint16_t elapsedSec=0; uint8_t flags=0; };
 std::unordered_map<uint64_t,ClientEntry> g_clientActive,g_stagedActive;
@@ -87,7 +88,7 @@ void* Gamemode(){
 int ReadRefcount(void*gm){return *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(gm)+g_offActiveEvents);}
 void PublishRadio(size_t n){coop::radio_state::SetInterference(n==0?0.0f:n==1?0.65f:n==2?0.82f:1.0f);}
 size_t HostRadioCount(){size_t n=0;for(const auto&[obj,e]:g_active){(void)obj;if(e.nativeActive)++n;}return n;}
-bool ClientCountsForRadio(const ClientEntry&e){return e.className!="blackFog_C"||coop::black_fog_sync::NativeActive(e.flags);}
+bool ClientCountsForRadio(const ClientEntry&e){if(e.className=="killerwisp_C")return false;return e.className!="blackFog_C"||coop::black_fog_sync::NativeActive(e.flags);}
 size_t ClientRadioCount(){size_t n=0;for(const auto&[id,e]:g_clientActive){(void)id;if(ClientCountsForRadio(e))++n;}return n;}
 coop::net::EventAuthorityPayload MakePayload(uint8_t op,uint32_t rev,const ActiveEntry*e,long long now){
  coop::net::EventAuthorityPayload p{};p.op=op;p.setRevision=rev;if(e){p.instanceId=e->instanceId;long long sec=(now-e->firstSeenMs)/1000;
@@ -99,12 +100,12 @@ void Broadcast(uint8_t op,const ActiveEntry*e){auto*s=g_session.load(std::memory
  auto p=MakePayload(op,++g_setRevision,e,NowMs());s->SendReliable(coop::net::ReliableKind::EventAuthority,&p,sizeof(p));}
 void RefreshFlags(ActiveEntry&e){if(e.className!="blackFog_C")return;const uint8_t flags=coop::black_fog_sync::HostFlags(e.controller,e.nativeActive);
  if(e.flagsSent&&flags==e.lastFlags)return;
- Broadcast(kUpdate,&e);e.lastFlags=flags;e.flagsSent=true;}
+ Broadcast(kUpdate,&e);if(e.eventOutputId)coop::event_output_sync::HostUpdateEnvironment(e.instanceId,e.eventOutputId,flags);e.lastFlags=flags;e.flagsSent=true;}
 
 void HostPollTick(){
  if(g_offActiveEvents<0||g_offSenders<0)return;
  void*gm=Gamemode();if(!gm)return;
- if(gm!=g_polledGm||!R::IsLiveByIndex(g_polledGm,g_polledGmIdx)){for(const auto&[oldObj,e]:g_active){Broadcast(kEnd,&e);if(e.className=="trigger_agrav_C")coop::agrav_sync::HostEnd(e.instanceId,oldObj);}g_active.clear();g_polledGm=gm;g_polledGmIdx=g_gmIdx;g_primed=false;}
+ if(gm!=g_polledGm||!R::IsLiveByIndex(g_polledGm,g_polledGmIdx)){for(const auto&[oldObj,e]:g_active){coop::event_output_sync::HostEndInstance(e.instanceId);Broadcast(kEnd,&e);if(e.className=="trigger_agrav_C")coop::agrav_sync::HostEnd(e.instanceId,oldObj);}g_active.clear();g_polledGm=gm;g_polledGmIdx=g_gmIdx;g_primed=false;}
  auto*arr=reinterpret_cast<RawPtrArray*>(reinterpret_cast<uint8_t*>(gm)+g_offSenders);if(arr->Num<0||arr->Num>4096)return;
  const long long now=NowMs();if(!g_primed){g_primed=true;UE_LOGI("event_active: host poll primed n=%d",ReadRefcount(gm));}
  for(auto&[obj,e]:g_active){bool present=false;if(arr->Data)for(int32_t i=0;i<arr->Num;++i)if(arr->Data[i]==obj){present=true;break;}if(e.nativeActive!=present){e.nativeActive=present;RefreshFlags(e);}}
@@ -113,10 +114,10 @@ void HostPollTick(){
   e.firstSeenMs=now;e.instanceId=g_nextInstanceId++;e.nativeActive=true;auto [it,ok]=g_active.emplace(obj,std::move(e));if(!ok)continue;
   UE_LOGI("random_event_auth: HOST BEGIN instance=%llu class=%s row=%s",static_cast<unsigned long long>(it->second.instanceId),it->second.className.c_str(),it->second.rowName.empty()?"<unmapped>":it->second.rowName.c_str());
   if(it->second.className=="trigger_agrav_C")coop::agrav_sync::HostBegin(it->second.instanceId,obj);
-  Broadcast(kBegin,&it->second);it->second.lastFlags=MakePayload(kBegin,0,&it->second,now).flags;it->second.flagsSent=true;}
+  Broadcast(kBegin,&it->second);it->second.lastFlags=MakePayload(kBegin,0,&it->second,now).flags;it->second.flagsSent=true;if(it->second.className=="blackFog_C")it->second.eventOutputId=coop::event_output_sync::HostBeginEnvironment(it->second.instanceId,"blackFog_C",it->second.lastFlags);}
  std::vector<void*>ended;for(const auto&[obj,e]:g_active){bool present=false;if(arr->Data)for(int32_t i=0;i<arr->Num;++i)if(arr->Data[i]==obj){present=true;break;}
   if((present||e.external)&&R::IsLiveByIndex(obj,e.objIdx))continue;
-  UE_LOGI("random_event_auth: HOST END instance=%llu class=%s",static_cast<unsigned long long>(e.instanceId),e.className.c_str());Broadcast(kEnd,&e);
+  UE_LOGI("random_event_auth: HOST END instance=%llu class=%s",static_cast<unsigned long long>(e.instanceId),e.className.c_str());coop::event_output_sync::HostEndInstance(e.instanceId);Broadcast(kEnd,&e);
   if(e.className=="trigger_agrav_C")coop::agrav_sync::HostEnd(e.instanceId,obj);
   ended.push_back(obj);}
  for(void*o:ended)g_active.erase(o);
@@ -125,44 +126,66 @@ void HostPollTick(){
 } // namespace
 
 void Install(coop::net::Session*s){g_session.store(s,std::memory_order_release);}
-uint64_t HostBeginExternal(void* controller,const char* className,const char* rowName){
- auto*s=g_session.load(std::memory_order_acquire);if(!GT::IsGameThread()||!s||!s->connected()||s->role()!=coop::net::Role::Host||!controller||!R::IsLive(controller))return 0;
+uint64_t HostBeginExternal(void* controller,const char* className,const char* rowName,bool*created){
+ if(created)*created=false;
+ auto*s=g_session.load(std::memory_order_acquire);if(!GT::IsGameThread()||!s||s->role()!=coop::net::Role::Host||!controller||!R::IsLive(controller))return 0;
  auto found=g_active.find(controller);if(found!=g_active.end()){found->second.external=true;return found->second.instanceId;}
  ActiveEntry e;e.controller=controller;e.objIdx=R::InternalIndexOf(controller);e.className=className?className:Narrow(R::ClassNameOf(controller));if(rowName)e.rowName=rowName;e.firstSeenMs=NowMs();e.instanceId=g_nextInstanceId++;e.external=true;
  auto[it,ok]=g_active.emplace(controller,std::move(e));if(!ok)return it->second.instanceId;
+ if(created)*created=true;
  UE_LOGI("random_event_auth: HOST EARLY BEGIN instance=%llu class=%s controller=%p",static_cast<unsigned long long>(it->second.instanceId),it->second.className.c_str(),controller);
- Broadcast(kBegin,&it->second);it->second.lastFlags=MakePayload(kBegin,0,&it->second,NowMs()).flags;it->second.flagsSent=true;return it->second.instanceId;
+ Broadcast(kBegin,&it->second);it->second.lastFlags=MakePayload(kBegin,0,&it->second,NowMs()).flags;it->second.flagsSent=true;if(it->second.className=="blackFog_C")it->second.eventOutputId=coop::event_output_sync::HostBeginEnvironment(it->second.instanceId,"blackFog_C",it->second.lastFlags);return it->second.instanceId;
 }
-void HostRefreshExternal(void* controller){auto*s=g_session.load(std::memory_order_acquire);if(!GT::IsGameThread()||!s||!s->connected()||s->role()!=coop::net::Role::Host||!controller)return;
+void HostRefreshExternal(void* controller){auto*s=g_session.load(std::memory_order_acquire);if(!GT::IsGameThread()||!s||s->role()!=coop::net::Role::Host||!controller)return;
  auto it=g_active.find(controller);if(it!=g_active.end()&&it->second.external)RefreshFlags(it->second);}
 void HostEndExternal(void* controller){
  auto*s=g_session.load(std::memory_order_acquire);if(!GT::IsGameThread()||!s||s->role()!=coop::net::Role::Host||!controller)return;
  auto it=g_active.find(controller);if(it==g_active.end()||!it->second.external)return;
  UE_LOGI("random_event_auth: HOST EARLY END instance=%llu class=%s controller=%p",static_cast<unsigned long long>(it->second.instanceId),it->second.className.c_str(),controller);
- Broadcast(kEnd,&it->second);g_active.erase(it);PublishRadio(HostRadioCount());
+ coop::event_output_sync::HostEndInstance(it->second.instanceId);Broadcast(kEnd,&it->second);g_active.erase(it);PublishRadio(HostRadioCount());
 }
-void Tick(){if(!GT::IsGameThread())return;auto*s=g_session.load(std::memory_order_acquire);if(!s||!s->connected()||s->role()!=coop::net::Role::Host)return;
- long long now=NowMs();if(now-g_lastPollMs<kPollIntervalMs)return;g_lastPollMs=now;ResolvePass();HostPollTick();}
+static void SweepDeadExternals(){
+ bool removed=false;
+ for(auto it=g_active.begin();it!=g_active.end();){
+  auto&e=it->second;
+  if(!e.external||R::IsLiveByIndex(it->first,e.objIdx)){++it;continue;}
+  UE_LOGI("random_event_auth: HOST SWEEP END instance=%llu class=%s controller=%p",
+          static_cast<unsigned long long>(e.instanceId),e.className.c_str(),it->first);
+  coop::event_output_sync::HostEndInstance(e.instanceId);Broadcast(kEnd,&e);
+  it=g_active.erase(it);removed=true;
+ }
+ if(removed)PublishRadio(HostRadioCount());
+}
+void Tick(){if(!GT::IsGameThread())return;auto*s=g_session.load(std::memory_order_acquire);if(!s||s->role()!=coop::net::Role::Host)return;
+ long long now=NowMs();if(now-g_lastPollMs<kPollIntervalMs)return;g_lastPollMs=now;
+ // Synthetic controllers own a local lifetime even while the host is alone.
+ // This sweep deliberately has no dependency on connection state, reflected
+ // active-event fields, or a resolvable main gamemode.
+ SweepDeadExternals();
+ if(!s->connected())return;
+ ResolvePass();HostPollTick();}
 void SendJoinSnapshotForSlot(int slot){auto*s=g_session.load(std::memory_order_acquire);if(!s||!s->connected()||s->role()!=coop::net::Role::Host)return;
+ SweepDeadExternals(); // Never serialize a dead synthetic controller into JIP.
  ResolvePass();HostPollTick(); // Snapshot the live registry, not a potentially 250 ms-old poll.
  uint32_t rev=++g_setRevision;long long now=NowMs();auto p=MakePayload(kSnapshotBegin,rev,nullptr,now);s->SendReliableToSlot(slot,coop::net::ReliableKind::EventAuthority,&p,sizeof(p));
  for(const auto&[obj,e]:g_active){(void)obj;p=MakePayload(kSnapshotItem,rev,&e,now);s->SendReliableToSlot(slot,coop::net::ReliableKind::EventAuthority,&p,sizeof(p));}
  p=MakePayload(kSnapshotEnd,rev,nullptr,now);s->SendReliableToSlot(slot,coop::net::ReliableKind::EventAuthority,&p,sizeof(p));
  coop::agrav_sync::SendJoinSnapshotForSlot(slot);
+ coop::event_output_sync::SendJoinSnapshotForSlot(slot);
  UE_LOGI("random_event_auth: HOST SNAPSHOT slot=%d revision=%u active=%zu",slot,rev,g_active.size());}
 void OnReliable(const coop::net::EventAuthorityPayload&p){if(!GT::IsGameThread()||p.op>kUpdate)return;
  std::string cls=Bound(p.className,sizeof(p.className)),row=Bound(p.rowName,sizeof(p.rowName));ClientEntry e{cls,row,p.elapsedSec,p.flags};
  if(p.op==kSnapshotBegin){if(p.setRevision<g_clientRevision)return;g_stagedActive.clear();g_stagedRevision=p.setRevision;g_staging=true;return;}
  if(p.op==kSnapshotItem){if(g_staging&&p.setRevision==g_stagedRevision&&p.instanceId)g_stagedActive[p.instanceId]=std::move(e);return;}
  if(p.op==kSnapshotEnd){if(!g_staging||p.setRevision!=g_stagedRevision||p.setRevision<g_clientRevision)return;
-  for(const auto&[id,old]:g_clientActive)if(!g_stagedActive.count(id)){if(old.className=="trigger_agrav_C")coop::agrav_sync::ClientEnd(id);else if(old.className=="blackFog_C")coop::black_fog_sync::ClientEnd(id);}
-  for(const auto&[id,cur]:g_stagedActive){if(cur.className=="blackFog_C")coop::black_fog_sync::ClientBegin(id,cur.elapsedSec,cur.flags,true);else if(!g_clientActive.count(id)&&cur.className=="trigger_agrav_C")coop::agrav_sync::ClientBegin(id,cur.elapsedSec,true);}
+  for(const auto&[id,old]:g_clientActive)if(!g_stagedActive.count(id)){if(old.className=="trigger_agrav_C")coop::agrav_sync::ClientEnd(id);coop::event_output_sync::ClientEndInstance(id);}
+  for(const auto&[id,cur]:g_stagedActive)if(!g_clientActive.count(id)&&cur.className=="trigger_agrav_C")coop::agrav_sync::ClientBegin(id,cur.elapsedSec,true);
   g_clientActive.swap(g_stagedActive);g_stagedActive.clear();g_staging=false;g_clientRevision=p.setRevision;PublishRadio(ClientRadioCount());UE_LOGI("random_event_auth: CLIENT SNAPSHOT revision=%u active=%zu",p.setRevision,g_clientActive.size());return;}
  if(!p.instanceId||p.setRevision<=g_clientRevision)return;
  g_clientRevision=p.setRevision;
- if(p.op==kBegin){g_clientActive[p.instanceId]=std::move(e);UE_LOGI("random_event_auth: CLIENT authoritative BEGIN instance=%llu class=%s row=%s",static_cast<unsigned long long>(p.instanceId),cls.c_str(),row.empty()?"<unmapped>":row.c_str());if(cls=="trigger_agrav_C")coop::agrav_sync::ClientBegin(p.instanceId,p.elapsedSec,false);else if(cls=="blackFog_C")coop::black_fog_sync::ClientBegin(p.instanceId,p.elapsedSec,p.flags,false);else UE_LOGW("random_event_auth: instance=%llu class=%s host-authoritative event active; output/presentation lane may be incomplete",static_cast<unsigned long long>(p.instanceId),cls.c_str());}
- else if(p.op==kUpdate){auto it=g_clientActive.find(p.instanceId);if(it!=g_clientActive.end()&&it->second.className==cls){it->second.elapsedSec=p.elapsedSec;it->second.flags=p.flags;if(cls=="blackFog_C")coop::black_fog_sync::ClientPhase(p.instanceId,p.flags);}}
- else{auto it=g_clientActive.find(p.instanceId);if(it!=g_clientActive.end()){if(it->second.className=="trigger_agrav_C")coop::agrav_sync::ClientEnd(p.instanceId);else if(it->second.className=="blackFog_C")coop::black_fog_sync::ClientEnd(p.instanceId);}g_clientActive.erase(p.instanceId);UE_LOGI("random_event_auth: CLIENT authoritative END instance=%llu",static_cast<unsigned long long>(p.instanceId));}PublishRadio(ClientRadioCount());}
+ if(p.op==kBegin){g_clientActive[p.instanceId]=std::move(e);UE_LOGI("random_event_auth: CLIENT authoritative BEGIN instance=%llu class=%s row=%s",static_cast<unsigned long long>(p.instanceId),cls.c_str(),row.empty()?"<unmapped>":row.c_str());if(cls=="trigger_agrav_C")coop::agrav_sync::ClientBegin(p.instanceId,p.elapsedSec,false);else if(cls!="blackFog_C"&&cls!="killerwisp_C")UE_LOGW("random_event_auth: instance=%llu class=%s host-authoritative event active; output/presentation lane may be incomplete",static_cast<unsigned long long>(p.instanceId),cls.c_str());}
+ else if(p.op==kUpdate){auto it=g_clientActive.find(p.instanceId);if(it!=g_clientActive.end()&&it->second.className==cls){it->second.elapsedSec=p.elapsedSec;it->second.flags=p.flags;}}
+ else{auto it=g_clientActive.find(p.instanceId);if(it!=g_clientActive.end()&&it->second.className=="trigger_agrav_C")coop::agrav_sync::ClientEnd(p.instanceId);coop::event_output_sync::ClientEndInstance(p.instanceId);g_clientActive.erase(p.instanceId);UE_LOGI("random_event_auth: CLIENT authoritative END instance=%llu",static_cast<unsigned long long>(p.instanceId));}PublishRadio(ClientRadioCount());}
 void OnReliable(const coop::net::EventSnapshotPayload&){UE_LOGW("event_active: legacy EventSnapshot ignored under current active-event registry");}
 void OnDisconnect(){coop::radio_state::SetInterference(0.0f);g_active.clear();g_clientActive.clear();g_stagedActive.clear();g_staging=false;g_clientRevision=g_stagedRevision=g_setRevision=0;g_nextInstanceId=1;g_polledGm=g_gm=nullptr;g_polledGmIdx=g_gmIdx=-1;g_primed=false;g_session.store(nullptr,std::memory_order_release);}
 } // namespace coop::event_active_sync

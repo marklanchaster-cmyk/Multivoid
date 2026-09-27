@@ -673,6 +673,8 @@ void Session::HandleMessage(int peerSlot, const void* data, int len) {
             ReliableMessage& m = reliableInbox_.back();
             m.kind = static_cast<ReliableKind>(rh.kind);
             m.senderPeerSlot = routeSlot;
+            m.senderPeerGeneration = cfg_.role == Role::Host
+                ? peerGenerationForSlot(routeSlot) : 0;
             m.payloadLen = static_cast<uint16_t>(payloadLen);
             std::memcpy(m.payload,
                         static_cast<const uint8_t*>(data) + sizeof(PacketHeader) + sizeof(ReliableHeader),

@@ -20,6 +20,8 @@
 #include "coop/creatures/kerfur_entity.h"  // K-3: reserve the stable KerfurId when a kerfur NPC is registered
 #include "coop/creatures/npc_sync.h"
 #include "coop/world/world_actor_sync.h"  // HostEnrollExSpawn -- the WA branch of the EX-catch drain
+#include "coop/world/event_active_sync.h"
+#include "coop/world/event_output_sync.h"
 #include "ue_wrap/engine/engine.h"   // GetActorLocation / GetActorRotation
 #include "ue_wrap/actors/kerfur.h"   // HasSaveKey -- the ConnectEdge savePersisted gate
 #include "ue_wrap/core/log.h"
@@ -291,18 +293,32 @@ void DrainPendingExSpawns() {
         // npc-specific lifecycle gate (moved out of the catch 2026-07-04): without a working
         // destroy observer an Npc Element would leak -- skip the enroll, not the WA branch above.
         if (coop::npc_sync::IsHostNpcSyncDisabled()) continue;
+        const std::wstring clsName = R::ToString(R::NameOf(cls));
         // Dedup vs the interceptor+POST path: a PE-dispatched spawn that ALSO matched a source
         // class was already allocated by the PRE + bound by the POST (both ran before this drain).
-        if (coop::npc_sync::GetNpcIdForActor(obj) != coop::element::kInvalidId) continue;
-        const std::wstring clsName = R::ToString(R::NameOf(cls));
-        // savePersisted=0: an event-swarm spawn happens after any join; no peer has a local twin.
-        const coop::element::ElementId eid =
-            EnrollUntrackedNpcActor(obj, clsName, /*savePersisted=*/false, "ex-spawn");
+        // Keep that backing eid, because the generic event-output association is independent and
+        // must still be created for the exact source-gated actor.
+        coop::element::ElementId eid = coop::npc_sync::GetNpcIdForActor(obj);
+        const bool newlyEnrolled = eid == coop::element::kInvalidId;
+        if (newlyEnrolled) {
+            // savePersisted=0: an event-swarm spawn happens after any join; no peer has a local twin.
+            eid = EnrollUntrackedNpcActor(obj, clsName, /*savePersisted=*/false, "ex-spawn");
+        }
         if (eid != coop::element::kInvalidId) {
             const auto loc = ue_wrap::engine::GetActorLocation(obj);
-            UE_LOGI("npc-sync[ex-spawn]: enrolled '%ls' eid=%u at (%.0f, %.0f, %.0f) "
-                    "(EX_CallMath BeginDeferred, source-gated catch)",
-                    clsName.c_str(), eid, loc.X, loc.Y, loc.Z);
+            if (newlyEnrolled)
+                UE_LOGI("npc-sync[ex-spawn]: enrolled '%ls' eid=%u at (%.0f, %.0f, %.0f) "
+                        "(EX_CallMath BeginDeferred, source-gated catch)",
+                        clsName.c_str(), eid, loc.X, loc.Y, loc.Z);
+            if (clsName == P::name::NpcClass_KillerWisp) {
+                bool instanceCreated = false;
+                const uint64_t instance = coop::event_active_sync::HostBeginExternal(
+                    obj, "killerwisp_C", "killerwisp", &instanceCreated);
+                if (instance && !coop::event_output_sync::HostBeginActor(
+                        instance, obj, static_cast<uint32_t>(eid), "killerwisp_C", true) &&
+                    instanceCreated)
+                    coop::event_active_sync::HostEndExternal(obj);
+            }
         }
     }
 }

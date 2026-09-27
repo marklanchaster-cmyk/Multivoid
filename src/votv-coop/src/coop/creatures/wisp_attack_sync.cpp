@@ -516,6 +516,25 @@ void Tick() {
         it = liveWispEids.count(it->first) ? std::next(it) : g_lastNativeGrab.erase(it);
 }
 
+bool HandleClientTouchIntent(void* wispActor, uint8_t senderSlot) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() != coop::net::Role::Host || !wispActor ||
+        !R::IsLive(wispActor) || !ue_wrap::wisp::IsKillerWisp(wispActor)) return false;
+    const uint32_t eid = static_cast<uint32_t>(coop::npc_sync::GetNpcIdForActor(wispActor));
+    if (eid == 0 || eid == static_cast<uint32_t>(coop::element::kInvalidId)) return false;
+    if (g_relayed.count(eid) != 0) return true;
+    coop::RemotePlayer* rp = coop::players::Registry::Get().Puppet(senderSlot);
+    void* victim = (rp && rp->valid()) ? rp->GetActor() : nullptr;
+    if (!victim || !R::IsLive(victim) ||
+        ue_wrap::wisp::DistanceTo(wispActor, victim) > kContactRadius ||
+        !ue_wrap::wisp::CanReach(wispActor, victim)) return false;
+    RelayGrab(s, wispActor, eid, victim);
+    g_relayed.insert(eid);
+    UE_LOGI("wisp_attack: event-output contact intent accepted wispEid=%u slot=%u",
+            eid, static_cast<unsigned>(senderSlot));
+    return true;
+}
+
 void OnDisconnect() {
     g_cancelHostDamage.store(false, std::memory_order_release);
     g_haveHostHp = false;

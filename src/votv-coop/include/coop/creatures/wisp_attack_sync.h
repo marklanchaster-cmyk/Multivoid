@@ -27,6 +27,8 @@
 
 #pragma once
 
+#include <cstdint>
+
 namespace coop::net { class Session; }
 
 namespace coop::wisp_attack_sync {
@@ -40,6 +42,12 @@ void Install(coop::net::Session* session);
 // no wisp is grabbing a client. Walks the tracked Npc set (small), NOT GUObjectArray. Game
 // thread.
 void Tick();
+
+// Generic event-output interaction bridge. Re-validates the host-known client
+// puppet against the native killer-wisp contact/visibility semantics, then
+// enters the existing host-owned grab/tear consequence path. Idempotent once
+// that wisp has committed a fatality.
+bool HandleClientTouchIntent(void* wispActor, uint8_t senderSlot);
 
 // Clear per-session state (handled-wisp edges, pending destroys, the damage-cancel latch).
 void OnDisconnect();

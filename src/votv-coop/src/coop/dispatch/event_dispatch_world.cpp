@@ -13,6 +13,7 @@
 #include "coop/interactables/serverbox_sync.h"  // v107: host-authoritative signal-server state (Inc-1)
 #include "coop/creatures/roach_sync.h"           // v108: host-authoritative roach-infestation snapshot
 #include "coop/world/event_active_sync.h"
+#include "coop/world/event_output_sync.h"
 #include "coop/world/agrav_sync.h"
 #include "coop/world/event_cue_sync.h"
 #include "coop/world/event_fire_sync.h"
@@ -167,6 +168,44 @@ bool HandleWorldEvent(net::Session& session,
         }
         net::EventAuthorityPayload p{}; std::memcpy(&p, msg.payload, sizeof(p));
         coop::event_active_sync::OnReliable(p);
+        break;
+    }
+    case net::ReliableKind::EventOutputState: {
+        if (msg.payloadLen != sizeof(net::EventOutputStatePayload) ||
+            session.role() == net::Role::Host || msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: EventOutputState rejected (len=%zu role=%s sender=%d)",
+                    static_cast<size_t>(msg.payloadLen),
+                    session.role() == net::Role::Host ? "host" : "client", msg.senderPeerSlot);
+            break;
+        }
+        net::EventOutputStatePayload p{}; std::memcpy(&p, msg.payload, sizeof(p));
+        coop::event_output_sync::OnReliable(p);
+        break;
+    }
+    case net::ReliableKind::EventOutputIntent: {
+        if (msg.payloadLen != sizeof(net::EventOutputIntentPayload) ||
+            session.role() != net::Role::Host || msg.senderPeerSlot <= 0 ||
+            msg.senderPeerSlot >= net::kMaxPeers) {
+            UE_LOGW("event_feed: EventOutputIntent rejected (len=%zu role=%s sender=%d)",
+                    static_cast<size_t>(msg.payloadLen),
+                    session.role() == net::Role::Host ? "host" : "client", msg.senderPeerSlot);
+            break;
+        }
+        net::EventOutputIntentPayload p{}; std::memcpy(&p, msg.payload, sizeof(p));
+        coop::event_output_sync::OnIntent(p, static_cast<uint8_t>(msg.senderPeerSlot),
+                                          msg.senderPeerGeneration);
+        break;
+    }
+    case net::ReliableKind::EventOutputResult: {
+        if (msg.payloadLen != sizeof(net::EventOutputResultPayload) ||
+            session.role() == net::Role::Host || msg.senderPeerSlot != 0) {
+            UE_LOGW("event_feed: EventOutputResult rejected (len=%zu role=%s sender=%d)",
+                    static_cast<size_t>(msg.payloadLen),
+                    session.role() == net::Role::Host ? "host" : "client", msg.senderPeerSlot);
+            break;
+        }
+        net::EventOutputResultPayload p{}; std::memcpy(&p, msg.payload, sizeof(p));
+        coop::event_output_sync::OnResult(p);
         break;
     }
     case net::ReliableKind::AgravState: {

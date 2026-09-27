@@ -133,6 +133,7 @@
 #include "coop/creatures/roach_sync.h"     // v108 host-authoritative roach-infestation mirror
 #include "coop/creatures/owner_entity_sync.h"  // v108 OWNER-ENTITY lane (eyer: per-peer owned, cross-peer mirrored)
 #include "coop/world/event_active_sync.h"  // join-during-event Phase 0: native activeEvents registry probe (docs/COOP_EVENT_JOIN.md)
+#include "coop/world/event_output_sync.h"
 #include "coop/world/black_fog_sync.h"
 #include "coop/world/agrav_sync.h"
 #include "coop/world/weather_sync.h"
@@ -165,6 +166,7 @@ void Install(coop::net::Session& session) {
     coop::event_cue_sync::Install(&session); // v79 HOST-AUTH cosmetic emitter-cue mirror (B1: starfall etc. -- host detects PSC, client replays)
     coop::event_fire_sync::Install(&session); // v95 HOST-AUTH scheduled-event replay (passEvents growth poll -> EventFire; client suppress + policy replay)
     coop::event_active_sync::Install(&session); // join-during-event Phase 0 (probe): host 1 Hz activeEvents_senders membership diff -> BEGIN/END edge log
+    coop::event_output_sync::Install(&session);
     coop::black_fog_sync::Install(&session);   // complete blackFog lifetime/presentation; EventAuthority owns identity
     coop::agrav_sync::Install(&session);
     coop::alarm_sync::Install(&session);     // v101 base radar alarm shared-world toggle (1 Hz active poll both roles; docs/events/alarm.md)
@@ -393,6 +395,7 @@ void DisconnectSlot(coop::net::Session& session, int slot) {
     coop::trash_channel::OnGrabHolderLeft(slot);    // v84 Increment 2: free any pile the leaver held via a client grab
     coop::puppet_carry_drive::OnPeerLeft(slot);     // v84 Increment 2: drop the leaver's puppet-held clump drive
     coop::wisp_grab_hold::OnPeerLeft(static_cast<uint8_t>(slot));  // v2 wisp choreography: drop the leaver's grab-window puppet hold
+    coop::event_output_sync::OnPeerLeft(static_cast<uint8_t>(slot));  // drop occupant-scoped result cache + intent limiter
     coop::remote_prop::OnDisconnectForSlot(slot);
     coop::item_activate::OnDisconnectForSlot(slot);
     coop::device_occupancy::OnDisconnectForSlot(slot);  // v63: release a leaver's device claims
@@ -451,6 +454,7 @@ DisconnectStats DisconnectAll() {
     coop::event_cue_sync::OnDisconnect();    // v79 clear the cosmetic-cue poll snapshot
     coop::event_fire_sync::OnDisconnect();   // v95 restore the client scheduler (allEvents.Num) + drop poll baseline/queues
     coop::black_fog_sync::OnDisconnect();    // remove commanded local PP/audio controller + restore ambience
+    coop::event_output_sync::OnDisconnect();
     coop::event_active_sync::OnDisconnect(); // join-during-event Phase 0: drop tracked membership + cached gamemode
     coop::agrav_sync::OnDisconnect();
     coop::alarm_sync::OnDisconnect();        // v101 drop the cached trigger + poll baseline
@@ -545,6 +549,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:event_fire"}; coop::event_fire_sync::Tick(); }     // v95 scheduled events: host 1 Hz passEvents growth poll -> EventFire / client allEvents suppress + replay drain
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:black_fog"}; coop::black_fog_sync::Tick(); }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:event_active"}; coop::event_active_sync::Tick(); }  // authoritative event identity/lifetime + registry reconciliation
+    { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:event_output"}; coop::event_output_sync::Tick(); }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:agrav"}; coop::agrav_sync::Tick(); }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:generator_break"}; coop::generator_break_sync::Tick(); }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:alarm"}; coop::alarm_sync::Tick(); }               // v101 base radar alarm: 1 Hz active-bit poll BOTH roles (host broadcasts transitions; client forwards local ones)

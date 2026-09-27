@@ -156,6 +156,11 @@ public:
     struct ReliableMessage {
         ReliableKind kind;
         int senderPeerSlot = -1;
+        // Host-side occupancy generation captured when the net thread queued
+        // this message. Game-thread consumers of destructive/client-authored
+        // intents can reject a message whose slot has since been recycled.
+        // Zero on clients, whose only authoritative sender is host slot 0.
+        uint32_t senderPeerGeneration = 0;
         uint16_t payloadLen = 0;
         uint8_t payload[kMaxReliablePayload];
     };

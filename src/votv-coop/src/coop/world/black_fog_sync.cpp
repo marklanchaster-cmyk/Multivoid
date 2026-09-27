@@ -251,9 +251,11 @@ void Install(coop::net::Session* session) {
 void Tick() {
     if (!GT::IsGameThread()) return;
     auto* s = g_session.load(std::memory_order_acquire);
-    if (!s || !s->connected()) return;
+    if (!s) return;
+    // Authority/tracking is connection-independent: a fog event may begin
+    // while the host is alone and must already exist for a later JIP snapshot.
     if (s->role() == coop::net::Role::Host) TickHost();
-    else TickClient();
+    else if (s->connected()) TickClient();
 }
 
 uint8_t HostFlags(void* controller, bool nativeActive) {
