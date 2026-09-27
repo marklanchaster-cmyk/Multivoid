@@ -20,11 +20,13 @@
 
 namespace coop::npc_sync {
 
-// -- Shared install-resolved state (written once by Install; read on hot paths) --------------
+// -- Shared install-resolved state (published by Install; read on hot paths) ----------------
 
 // NPC UClass* allowlist (resolved from P::name::kNpcAllowlist at install). Read by the
 // subclass-aware allowlist walk (IsClassOrDerivedFromAnyAllowlisted) on every interceptor fire.
-extern void* g_npcAllowlist[ue_wrap::profile::name::kNpcAllowlistSize];
+// Install may fill a lazy class slot after the interceptor is live. ProcessEvent callbacks can
+// run on parallel-animation workers, so publication/readback must be atomic.
+extern std::atomic<void*> g_npcAllowlist[ue_wrap::profile::name::kNpcAllowlistSize];
 
 // BeginDeferredSpawnFromClass param offsets (resolved once at Install). Read per interceptor /
 // POST fire on the ProcessEvent-dispatching thread (may be a parallel-anim worker).

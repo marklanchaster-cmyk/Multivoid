@@ -55,11 +55,10 @@ coop::net::Session* GetSession();
 // Session is created once at boot and lives for the process lifetime).
 void Install(coop::net::Session* session);
 
-// True once Install()'s attempt has completed (it stops retrying). On the
-// HAPPY path this means the subclass-aware allowlist (IsAllowlistedClass) is
-// FULLY resolved -- a partial resolve early-returns WITHOUT latching, so a
-// latched-true install that resolved the allowlist resolved ALL of it -- and
-// the host lifecycle path may still be disabled (g_npcSyncDisabledThisProcess)
+// True once Install()'s core spawn-seam/lifecycle attempt has completed. The
+// subclass-aware allowlist may contain unloaded lazy-event slots; resolved slots
+// are usable immediately and missing slots are retried on a coarse deadline.
+// The host lifecycle path may still be disabled (g_npcSyncDisabledThisProcess)
 // without affecting that. On a BROKEN build (BeginDeferred UFunction / its
 // params unresolvable) Install latches true with a NULL allowlist to stop
 // retrying; IsInstalled() is then true with NOTHING resolved. That is safe for
@@ -135,9 +134,9 @@ void ReleaseNpcElementSilent(coop::element::ElementId eid);
 
 // Trust-boundary check used by both host (interceptor) and client
 // (receiver) sides: returns true iff `cls` is a UClass* that derives from
-// any of the 12 allowlisted NPC bases (subclass-aware walk via
-// UStruct.SuperStruct chain). Returns false if the allowlist isn't fully
-// resolved yet (Install gates installation until all 12 bind).
+// any resolved allowlisted NPC base (subclass-aware walk via
+// UStruct.SuperStruct chain). Unloaded lazy classes remain unmatched until a
+// later coarse retry resolves and atomically publishes their UClass pointer.
 bool IsAllowlistedClass(void* cls);
 
 // Clear all per-session state: tracked-NPC map, sessionId counter, bypass

@@ -142,7 +142,13 @@ thread_local PendingNpcSpawn t_pendingNpc{coop::element::kInvalidId, nullptr};
 // offset stays in the wrapper layer (Principle 7); the helper walks the
 // chain ONCE checking all allowlisted bases per hop.
 bool IsClassOrDerivedFromAnyAllowlisted(void* cls) {
-    return R::IsDescendantOfAny(cls, g_npcAllowlist, P::name::kNpcAllowlistSize);
+    // Install can resolve a previously-unloaded event class after the interceptor is live.
+    // Snapshot the atomically-published pointers before walking the class hierarchy; null slots
+    // are intentionally harmless and mean only that this one lazy class is not suppressible yet.
+    void* bases[P::name::kNpcAllowlistSize]{};
+    for (size_t i = 0; i < P::name::kNpcAllowlistSize; ++i)
+        bases[i] = g_npcAllowlist[i].load(std::memory_order_acquire);
+    return R::IsDescendantOfAny(cls, bases, P::name::kNpcAllowlistSize);
 }
 
 }  // namespace [state; the callbacks below are named -- registered cross-TU by npc_sync_install.cpp]

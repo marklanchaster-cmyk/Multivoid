@@ -26,6 +26,7 @@
 #include "ue_wrap/core/sdk_profile.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 
 namespace coop::npc_sync {
@@ -47,7 +48,7 @@ std::atomic<bool> g_installed{false};
 // -- plus the additions killerwisp_C/ventCrawler_C), resolved at install
 // from the kNpcAllowlist names in sdk_profile.h. Sized by kNpcAllowlistSize
 // so a future addition to the allowlist constant binds the array length too.
-void* g_npcAllowlist[ue_wrap::profile::name::kNpcAllowlistSize] = {};
+std::atomic<void*> g_npcAllowlist[ue_wrap::profile::name::kNpcAllowlistSize] = {};
 
 void* g_npcSpawnFn = nullptr;
 int32_t g_npcSpawnActorClassParamOff = -1;
@@ -77,40 +78,107 @@ std::atomic<bool> g_spawnPostObserverInstalled{false};
 // leaks Npc Elements (allocated by PRE, never bound or destroyed).
 std::atomic<bool> g_npcSyncDisabledThisProcess{false};
 
+namespace {
+
+using AllowlistClock = std::chrono::steady_clock;
+
+// A lazy/event class may legitimately be absent from GUObjectArray until its asset is loaded.
+// FindClass does not cache misses (correctly), but each miss walks the whole object array. Keep
+// late resolution possible without putting that full walk on the old 60-pump-tick cadence.
+constexpr auto kMissingClassRetryInterval = std::chrono::seconds(60);
+AllowlistClock::time_point g_nextMissingClassRetry{};
+
+struct AllowlistResolution {
+    size_t resolved = 0;
+    size_t missing = 0;
+    size_t newlyResolved = 0;
+    long long elapsedMs = 0;
+};
+
+AllowlistResolution ResolveMissingAllowlistClasses(bool initialAttempt) {
+    const auto started = AllowlistClock::now();
+    AllowlistResolution result{};
+
+    for (size_t i = 0; i < P::name::kNpcAllowlistSize; ++i) {
+        if (g_npcAllowlist[i].load(std::memory_order_acquire)) {
+            ++result.resolved;
+            continue;
+        }
+
+        void* const cls = R::FindClass(P::name::kNpcAllowlist[i]);
+        if (cls) {
+            g_npcAllowlist[i].store(cls, std::memory_order_release);
+            ++result.resolved;
+            ++result.newlyResolved;
+            if (!initialAttempt) {
+                UE_LOGI("npc-suppress: late-loaded allowlist class '%ls' resolved @ %p",
+                        P::name::kNpcAllowlist[i], cls);
+            }
+        } else {
+            ++result.missing;
+            UE_LOGW("npc-suppress: allowlist class '%ls' is not loaded%s",
+                    P::name::kNpcAllowlist[i],
+                    initialAttempt ? " -- suppression remains active for resolved classes"
+                                   : " -- will retry on the coarse deadline");
+        }
+    }
+
+    result.elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           AllowlistClock::now() - started).count();
+    if (result.missing != 0)
+        g_nextMissingClassRetry = AllowlistClock::now() + kMissingClassRetryInterval;
+    else
+        g_nextMissingClassRetry = AllowlistClock::time_point::max();
+    return result;
+}
+
+void MaybeResolveLateAllowlistClasses() {
+    if (g_nextMissingClassRetry == AllowlistClock::time_point{} ||
+        AllowlistClock::now() < g_nextMissingClassRetry) {
+        return;
+    }
+
+    const AllowlistResolution result = ResolveMissingAllowlistClasses(false);
+    UE_LOGI("npc-suppress: lazy allowlist retry complete: resolved=%zu/%zu newly=%zu "
+            "missing=%zu lookup=%lld ms%s",
+            result.resolved, P::name::kNpcAllowlistSize, result.newlyResolved,
+            result.missing, result.elapsedMs,
+            result.missing ? "; next retry no sooner than 60 s" : "; allowlist complete");
+}
+
+}  // namespace
+
 bool IsInstalled() {
-    // True once Install's attempt completed (it stops retrying). HAPPY path:
-    // g_installed latches true only AFTER all kNpcAllowlistSize classes resolve
-    // (a partial resolve early-returns WITHOUT latching), so a latched install
-    // that resolved the allowlist resolved ALL of it -- IsAllowlistedClass is
-    // then fully usable. BROKEN-build paths (BeginDeferred UFunction / params
-    // unresolvable) latch true with a NULL allowlist to stop retrying; the
-    // reconcile sweep then safely no-ops (IsAllowlistedClass returns false for
-    // unresolved slots). Deliberately ignores g_npcSyncDisabledThisProcess
-    // (interceptor-disabled but allowlist still resolved): callers must not
-    // block unrelated prop/door replay on the NPC interceptor being live. See
-    // the header for the full invariant.
+    // True once the core spawn seam + lifecycle install attempt completed. Lazy allowlist
+    // classes may still be null and resolve later; already-resolved entries are fully usable.
+    // Deliberately ignores g_npcSyncDisabledThisProcess (interceptor-disabled but class matching
+    // still usable): callers must not block unrelated prop/door replay on this lifecycle seam.
     return g_installed.load(std::memory_order_acquire);
 }
 
 void Install(coop::net::Session* session) {
     SetSession(session);  // cache (caller guarantees outlives us)
-    if (g_installed.load(std::memory_order_acquire)) return;
-    // THROTTLE GUARD (perf audit 2026-05-28, expanded): every Find* call below
-    // walks GUObjectArray with wstring allocs per entry. Bound retries to
-    // ~once per 0.5s during the unresolved window.
-    static int s_installRetryCountdown = 0;
-    if (s_installRetryCountdown > 0) {
-        --s_installRetryCountdown;
+    if (g_installed.load(std::memory_order_acquire)) {
+        // Constant-time deadline check on ordinary pump ticks. A due retry runs on the game
+        // thread and touches only unresolved slots; successful pointers remain cached.
+        if (g_npcSpawnFn) MaybeResolveLateAllowlistClasses();
         return;
     }
-    // CACHE intermediate resolutions: once gsCls + fn + offsets are
-    // resolved, skip them on subsequent retries
-    // (partial NPC-class resolution would otherwise re-walk all five every
-    // 0.5s tick until the 12 NPC classes finish loading).
+    // Preserve the startup guard for the core GameplayStatics dependency. This is normally
+    // present once worldUp is true, but if it is not, its FindClass miss is also a full object
+    // walk and must not run every frame. Unlike lazy allowlist refresh, this pre-install retry
+    // remains tick-based because no interceptor can become usable until the core seam exists.
+    static int s_coreInstallRetryCountdown = 0;
+    if (s_coreInstallRetryCountdown > 0) {
+        --s_coreInstallRetryCountdown;
+        return;
+    }
+    // Cache the core reflection seam once resolved so a partial startup attempt never repeats
+    // those lookups. Lazy allowlist entries have their independent steady-clock deadline below.
     if (!g_npcSpawnFn) {
         void* gsCls = R::FindClass(P::name::GameplayStaticsClass);
         if (!gsCls) {
-            s_installRetryCountdown = 60;
+            s_coreInstallRetryCountdown = 60;
             return;
         }
         void* fn = R::FindFunction(gsCls, P::name::BeginDeferredSpawnFn);
@@ -184,30 +252,18 @@ void Install(coop::net::Session* session) {
     const int32_t retOff = g_npcSpawnReturnParamOff;
     const int32_t xformOff = g_npcSpawnXformParamOff;
 
-    // Resolve the 12 NPC classes. Partial-resolution OK: missing classes
-    // just won't be suppressed. Most VOTV NPC BP classes are loaded with
-    // /Game/Content/blueprints/npc/... -- present on gameplay-level entry.
-    // Already-resolved entries skip FindClass via the `if (!g_npcAllowlist[i])`
-    // cache; the unresolved-class FindClass walks are bounded by the outer
-    // throttle gate (s_installRetryCountdown at the top of Install).
-    size_t resolved = 0;
-    for (size_t i = 0; i < P::name::kNpcAllowlistSize; ++i) {
-        if (!g_npcAllowlist[i]) {
-            g_npcAllowlist[i] = R::FindClass(P::name::kNpcAllowlist[i]);
-        }
-        if (g_npcAllowlist[i]) ++resolved;
-    }
-    if (resolved < P::name::kNpcAllowlistSize) {
-        // Don't install yet -- want all 12 cached before going live (otherwise
-        // some NPCs would be suppressed and others wouldn't, depending on
-        // resolve timing). Throttle the next attempt.
-        s_installRetryCountdown = 60;
-        UE_LOGI("npc-suppress: NPC class load partial (%zu/%zu) -- throttled retry in ~0.5s",
-                resolved, P::name::kNpcAllowlistSize);
-        return;
-    }
+    // Resolve every class currently loaded, but do not make one lazy event class an
+    // all-or-nothing install gate. Missing slots are named now and retried on a coarse
+    // steady-clock deadline; the resolved subset becomes suppressible immediately.
+    const AllowlistResolution allowlist = ResolveMissingAllowlistClasses(true);
+    UE_LOGI("npc-suppress: initial allowlist resolution complete: resolved=%zu/%zu missing=%zu "
+            "lookup=%lld ms%s",
+            allowlist.resolved, P::name::kNpcAllowlistSize, allowlist.missing,
+            allowlist.elapsedMs,
+            allowlist.missing ? "; retry no sooner than 60 s" : "");
 
-    // All 12 NPC classes resolved. Cache the function pointer + offsets.
+    // Cache the function pointer + offsets. The loaded allowlist subset is enough to make
+    // the interceptor useful; lazy null slots do not weaken matching for resolved classes.
     // Lifecycle observers go in FIRST -- if either RegisterX fails (observer
     // table full), we set g_npcSyncDisabledThisProcess and SKIP the
     // RegisterInterceptor call below, so we don't burn a permanent interceptor
@@ -291,14 +347,15 @@ void Install(coop::net::Session* session) {
     UE_LOGI("npc-suppress: installed interceptor on %ls.%ls @ %p (ActorClass@%d, ReturnValue@%d, SpawnTransform@%d, %zu/%zu NPC classes resolved + lifecycle observers live)",
             P::name::GameplayStaticsClass, P::name::BeginDeferredSpawnFn,
             fn, classOff, retOff, xformOff,
-            P::name::kNpcAllowlistSize, P::name::kNpcAllowlistSize);
+            allowlist.resolved, P::name::kNpcAllowlistSize);
     // 2026-07-03 wisp lane: the EX_CallMath spawn catch (Func-thunk, source-gated) -- installed
     // under the SAME lifecycle gate as the interceptor (an Element it enrolls gets the identical
     // K2_DestroyActor close). Idempotent across Install retries.
     coop::npc_world_enum::InstallExSpawnCatch(fn);
     for (size_t i = 0; i < P::name::kNpcAllowlistSize; ++i) {
         UE_LOGI("npc-suppress: allowlist[%zu] '%ls' = %p",
-                i, P::name::kNpcAllowlist[i], g_npcAllowlist[i]);
+                i, P::name::kNpcAllowlist[i],
+                g_npcAllowlist[i].load(std::memory_order_acquire));
     }
 }
 
