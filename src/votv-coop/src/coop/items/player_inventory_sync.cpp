@@ -32,6 +32,7 @@
 #include <fstream>
 #include <iterator>
 #include <deque>
+#include <mutex>
 #include <set>
 #include <string>
 #include <system_error>
@@ -73,6 +74,11 @@ struct HostEntry {
     std::deque<PendingPickup> pendingPickups;
 };
 std::array<HostEntry, coop::net::kMaxPeers> g_hostBySlot;
+// Normal host mutations are game-thread-only. Shutdown's window-thread durability barrier is the
+// one cross-thread reader/writer, so serialize it with the ledger. Recursive only because existing
+// lifecycle functions compose FlushSlot with broader ledger operations; there is no normal-thread
+// contention. DllMain never touches this state.
+std::recursive_mutex g_hostMutex;
 
 // ---- CLIENT: send-dedup state ----
 uint64_t          g_lastSentHash = 0;
@@ -239,7 +245,8 @@ bool ParseBlobFile(const fs::path& file, std::vector<uint8_t>& outBlob);
 // Persist `blob` to `file` ROBUSTLY: magic + FNV integrity + a readable nick/lastSeen, written
 // atomically (tmp + rename) and keeping a .bak of the last-good file so a corrupt edit can be
 // recovered (the user-tinkering case). Returns false on I/O failure (logged).
-bool WriteBlobFile(const fs::path& file, const std::vector<uint8_t>& blob, const std::string& nick) {
+bool WriteBlobFile(const fs::path& file, const std::vector<uint8_t>& blob,
+                   const std::string& nick, bool mirrorNewToBackup = false) {
     if (file.empty()) return false;
     if (blob.size() > coop::blob_chunks::MaxBlobBytes()) {
         UE_LOGW("player_inventory: profile blob %zu exceeds transport/persistence cap %zu -- refusing",
@@ -256,7 +263,7 @@ bool WriteBlobFile(const fs::path& file, const std::vector<uint8_t>& blob, const
     // Keep only a VERIFIED generation as <file>.bak; never replace a good
     // backup with a corrupt/truncated primary.
     std::vector<uint8_t> verifiedOld;
-    if (fs::exists(file, ec) && ParseBlobFile(file, verifiedOld))
+    if (!mirrorNewToBackup && fs::exists(file, ec) && ParseBlobFile(file, verifiedOld))
         fs::copy_file(file, fs::path(file).concat(L".bak"), fs::copy_options::overwrite_existing, ec);
     const uint64_t fnv = coop::blob_chunks::Fnv64(blob);
     const long long epoch = std::chrono::duration_cast<std::chrono::seconds>(
@@ -272,43 +279,54 @@ bool WriteBlobFile(const fs::path& file, const std::vector<uint8_t>& blob, const
     json += ",\"blob\":\"";
     json += Hex(blob);
     json += "\"}\n";
-    const fs::path tmp = fs::path(file).concat(L".part");
-    FILE* raw = nullptr;
+    const auto writeAtomically = [&](const fs::path& target) {
+        const fs::path tmp = fs::path(target).concat(L".part");
+        FILE* raw = nullptr;
 #ifdef _WIN32
-    raw = _wfopen(tmp.c_str(), L"wb");
+        raw = _wfopen(tmp.c_str(), L"wb");
 #else
-    raw = std::fopen(tmp.c_str(), "wb");
+        raw = std::fopen(tmp.c_str(), "wb");
 #endif
-    if (!raw || std::fwrite(json.data(), 1, json.size(), raw) != json.size() ||
-        std::fflush(raw) != 0) {
-        if (raw) std::fclose(raw);
-        UE_LOGE("player_inventory: write failed ('%ls')", tmp.c_str());
-        return false;
-    }
+        if (!raw || std::fwrite(json.data(), 1, json.size(), raw) != json.size() ||
+            std::fflush(raw) != 0) {
+            if (raw) std::fclose(raw);
+            UE_LOGE("player_inventory: write failed ('%ls')", tmp.c_str());
+            return false;
+        }
 #ifdef _WIN32
-    const bool durable = _commit(_fileno(raw)) == 0;
+        const bool durable = _commit(_fileno(raw)) == 0;
 #else
-    const bool durable = ::fsync(fileno(raw)) == 0;
+        const bool durable = ::fsync(fileno(raw)) == 0;
 #endif
-    const bool closed = std::fclose(raw) == 0;
-    if (!durable || !closed) {
-        UE_LOGE("player_inventory: flush/close failed ('%ls')", tmp.c_str());
-        return false;
-    }
+        const bool closed = std::fclose(raw) == 0;
+        if (!durable || !closed) {
+            UE_LOGE("player_inventory: flush/close failed ('%ls')", tmp.c_str());
+            return false;
+        }
 #ifdef _WIN32
-    if (!::MoveFileExW(tmp.c_str(), file.c_str(),
-                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        UE_LOGE("player_inventory: atomic replace('%ls') failed: winerr=%lu",
-                file.c_str(), static_cast<unsigned long>(::GetLastError()));
-        return false;
-    }
+        if (!::MoveFileExW(tmp.c_str(), target.c_str(),
+                           MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+            UE_LOGE("player_inventory: atomic replace('%ls') failed: winerr=%lu",
+                    target.c_str(), static_cast<unsigned long>(::GetLastError()));
+            return false;
+        }
 #else
-    fs::rename(tmp, file, ec);
-    if (ec) {
-        UE_LOGE("player_inventory: atomic rename('%ls') failed: %s", file.c_str(), ec.message().c_str());
+        fs::rename(tmp, target, ec);
+        if (ec) {
+            UE_LOGE("player_inventory: atomic rename('%ls') failed: %s",
+                    target.c_str(), ec.message().c_str());
+            return false;
+        }
+#endif
+        return true;
+    };
+    if (!writeAtomically(file)) return false;
+    if (mirrorNewToBackup &&
+        !writeAtomically(fs::path(file).concat(L".bak"))) {
+        UE_LOGE("player_inventory: exclusion checkpoint primary committed but backup mirror failed "
+                "('%ls') -- refusing ownership transfer", file.c_str());
         return false;
     }
-#endif
     return true;
 }
 
@@ -427,7 +445,7 @@ bool ReadBlobFile(const std::string& guid, std::vector<uint8_t>& outBlob) {
 
 // Flush one host slot's pending blob to its <guid>.json (ignores the rate-limit -- used on
 // disconnect/shutdown). Clears dirty.
-void FlushSlot(int slot) {
+void FlushSlotUnlocked(int slot) {
     if (slot < 0 || slot >= coop::net::kMaxPeers) return;
     HostEntry& e = g_hostBySlot[slot];
     if (!e.dirty || e.guid.empty()) return;
@@ -476,10 +494,11 @@ void HostPersistTick(coop::net::Session* s) {
     const Clock::time_point now = Clock::now();
     if (now - g_lastSweep < std::chrono::seconds(1)) return;
     g_lastSweep = now;
+    std::lock_guard<std::recursive_mutex> lk(g_hostMutex);
     g_assembler.Sweep(now, kAsmTtl);
     for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         HostEntry& e = g_hostBySlot[slot];
-        if (e.dirty && now - e.lastWrite >= kWriteRate) FlushSlot(slot);
+        if (e.dirty && now - e.lastWrite >= kWriteRate) FlushSlotUnlocked(slot);
         // Connect-edge apply push: once a slot is connected AND its GUID has arrived (carried in the
         // Join), send it its persisted per-player inventory ONCE, latching on a successful enqueue.
         // SendInventoryToSlot returns false on a channel-busy refusal (or a not-yet-arrived GUID), so
@@ -629,6 +648,7 @@ void OnReliable(const coop::net::BlobChunkPayload& p, uint8_t senderPeerSlot) {
     if (s->role() != coop::net::Role::Host) return;
     if (senderPeerSlot < 1 || senderPeerSlot >= coop::net::kMaxPeers) return;  // a CLIENT slot
     if (!s->IsSlotReady(senderPeerSlot)) return;
+    std::lock_guard<std::recursive_mutex> lk(g_hostMutex);
     std::vector<uint8_t> blob;
     if (!g_assembler.OnChunk(p, senderPeerSlot, blob)) return;  // not complete yet
     const std::string& guid = coop::player_handshake::GuidForSlot(senderPeerSlot);
@@ -666,9 +686,9 @@ void OnReliable(const coop::net::BlobChunkPayload& p, uint8_t senderPeerSlot) {
     if (ownershipChanged) {
         UE_LOGI("player-state: checkpoint reason=inventory-change slot=%u id=%.8s items=%zu",
                 senderPeerSlot, guid.c_str(), e.state.inventory.size());
-        FlushSlot(senderPeerSlot);
+        FlushSlotUnlocked(senderPeerSlot);
     } else if (Clock::now() - e.lastWrite >= kWriteRate) {
-        FlushSlot(senderPeerSlot);
+        FlushSlotUnlocked(senderPeerSlot);
     }
 }
 
@@ -676,6 +696,7 @@ bool SendInventoryToSlot(int peerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return false;  // host pushes; clients receive
     if (peerSlot < 1 || peerSlot >= coop::net::kMaxPeers) return false;
+    std::lock_guard<std::recursive_mutex> lk(g_hostMutex);
     const std::string& guid = coop::player_handshake::GuidForSlot(peerSlot);
     if (guid.empty()) {
         UE_LOGI("player_inventory: slot %d has no GUID yet -- not sending an apply blob this edge",
@@ -724,7 +745,8 @@ bool HasPendingApply() { return g_hasPendingApply.load(std::memory_order_acquire
 void OnDisconnectForSlot(int peerSlot) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
-    FlushSlot(peerSlot);                 // last authoritative state to disk
+    std::lock_guard<std::recursive_mutex> lk(g_hostMutex);
+    FlushSlotUnlocked(peerSlot);         // last authoritative state to disk
     if (peerSlot >= 0 && peerSlot < coop::net::kMaxPeers) {
         g_assembler.ClearSlot(static_cast<uint8_t>(peerSlot));
         g_hostBySlot[peerSlot] = HostEntry{};
@@ -735,8 +757,9 @@ void OnDisconnectForSlot(int peerSlot) {
 void OnDisconnect() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (s && s->role() == coop::net::Role::Host) {
+        std::lock_guard<std::recursive_mutex> lk(g_hostMutex);
         for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) {
-            FlushSlot(slot);
+            FlushSlotUnlocked(slot);
             g_hostBySlot[slot] = HostEntry{};
             g_applySentToSlot[slot] = false;
         }
@@ -756,7 +779,8 @@ void OnDisconnect() {
 void FlushAllToDisk() {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host) return;
-    for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) FlushSlot(slot);
+    std::lock_guard<std::recursive_mutex> lk(g_hostMutex);
+    for (int slot = 1; slot < coop::net::kMaxPeers; ++slot) FlushSlotUnlocked(slot);
 }
 
 void EnsurePlayerFile(int peerSlot) {
@@ -801,6 +825,7 @@ bool AuthorizeWorldPickup(int peerSlot, void* actor, const std::wstring& key) {
                 coop::element::OutcomeName(auth.outcome));
         return false;
     }
+    std::lock_guard<std::recursive_mutex> lk(g_hostMutex);
     HostEntry& e = g_hostBySlot[peerSlot];
     if (!e.loaded || e.guid != coop::player_handshake::GuidForSlot(peerSlot)) return false;
     while (!e.pendingPickups.empty() && e.pendingPickups.front().deadline < Clock::now())
@@ -825,6 +850,7 @@ bool CommitInventoryDrop(int peerSlot, const std::wstring& key,
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || s->role() != coop::net::Role::Host || peerSlot < 1 ||
         peerSlot >= coop::net::kMaxPeers || !s->IsSlotReady(peerSlot)) return false;
+    std::lock_guard<std::recursive_mutex> lk(g_hostMutex);
     HostEntry& e = g_hostBySlot[peerSlot];
     if (!e.loaded || e.guid != coop::player_handshake::GuidForSlot(peerSlot)) return false;
 
@@ -861,7 +887,8 @@ bool CommitInventoryDrop(int peerSlot, const std::wstring& key,
         if (pendingMatches == 1) {
             // The durable profile already excludes this in-flight item. Flush
             // that exclusion before authorizing the replacement world actor.
-            if (!WriteBlobFile(PlayerFilePath(e.guid), e.blob, e.nick)) {
+            if (!WriteBlobFile(PlayerFilePath(e.guid), e.blob, e.nick,
+                               /*mirrorNewToBackup=*/true)) {
                 UE_LOGE("player-state: in-flight inventory->world checkpoint failed "
                         "slot=%d key='%ls' -- no world spawn", peerSlot, key.c_str());
                 return false;
@@ -880,7 +907,8 @@ bool CommitInventoryDrop(int peerSlot, const std::wstring& key,
         return false;
     }
     std::vector<uint8_t> nextBlob = coop::inventory_wire::Serialize(next);
-    if (!WriteBlobFile(PlayerFilePath(e.guid), nextBlob, e.nick)) {
+    if (!WriteBlobFile(PlayerFilePath(e.guid), nextBlob, e.nick,
+                       /*mirrorNewToBackup=*/true)) {
         UE_LOGE("player-state: inventory->world drop checkpoint failed slot=%d key='%ls' -- no world spawn",
                 peerSlot, key.c_str());
         return false;

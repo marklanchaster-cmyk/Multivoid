@@ -51,8 +51,7 @@ CRITICAL_SECTION g_lock;
 std::once_flag g_lockOnce;
 bool g_opened = false;
 
-// STALENESS BOUND for buffered INFO. Guarded by g_lock (every reader and writer
-// already holds it), so a plain integer is correct here -- no atomic needed.
+// STALENESS BOUND for buffered INFO.
 //
 // MEASURED 2026-08-29, and it cost a whole diagnosis: a real r2modman session ran
 // for four minutes and left a 65-line log ending mid-boot. Nothing was wrong with
@@ -72,18 +71,17 @@ bool g_opened = false;
 // synchronous disk syncs/sec from per-INFO flush (a ~2000-line dedup burst over
 // ~40 s) visibly tanking FPS. This caps the same work at ONE sync/sec regardless
 // of line rate -- 1/50th of the cost that was rejected -- and a quiet log flushes
-// nothing at all, because the check rides an existing write rather than a timer.
-// The per-line cost added is one GetTickCount64(), which reads KUSER_SHARED_DATA
-// with no syscall; its ~15.6 ms granularity is irrelevant against a 1 s interval.
+// nothing at all. The first buffered INFO queues one worker; an atomic latch bounds
+// the worker queue to one entry regardless of line rate.
 //
 // RESIDUAL, stated rather than discovered later: dispatch plus the bounded quiet
 // wait below can put the durable file about two seconds behind during continuous
 // logging. A hard kill inside that window can lose that tail; it cannot lose an
 // unbounded session the way the old CRT-only buffering did.
 constexpr ULONGLONG kFlushIntervalMs = 1000;
-ULONGLONG g_lastFlushMs = 0;
 std::atomic<ULONGLONG> g_lastWriteMs{0};
 std::atomic<bool> g_asyncFlushQueued{false};
+bool g_infoDirty = false;  // guarded by g_lock
 
 // `fflush` was measured at 80-85 ms under Wine/Proton on 2026-09-28. Doing it
 // from Write() made the ordinary 2 s net/position diagnostics freeze one game
@@ -94,6 +92,10 @@ std::atomic<bool> g_asyncFlushQueued{false};
 DWORD WINAPI AsyncFlushWorker(void*) {
     constexpr ULONGLONG kQuietMs = 50;
     constexpr int kMaxWaits = 100;  // bounded: at most ~1 s under continuous logging
+    // Delay first so an isolated INFO is still flushed even when it arrives immediately after
+    // another worker (or a WARN/ERROR) flushed. The old due-time test could clear the queue latch
+    // without flushing that last line, leaving a quiet log buffered indefinitely.
+    ::Sleep(static_cast<DWORD>(kFlushIntervalMs));
     for (int i = 0; i < kMaxWaits; ++i) {
         ::Sleep(10);
         const ULONGLONG now = ::GetTickCount64();
@@ -101,14 +103,15 @@ DWORD WINAPI AsyncFlushWorker(void*) {
     }
 
     ::EnterCriticalSection(&g_lock);
-    const ULONGLONG now = ::GetTickCount64();
-    if (g_file && now >= g_lastFlushMs &&
-        now - g_lastFlushMs >= kFlushIntervalMs) {
+    if (g_file && g_infoDirty) {
         std::fflush(g_file);
-        g_lastFlushMs = ::GetTickCount64();
+        g_infoDirty = false;
     }
-    ::LeaveCriticalSection(&g_lock);
+    // Clear while still holding the same lock Write uses. A writer after this point observes
+    // false and queues the next worker; a writer before it was included in the flush above.
+    // Clearing after unlock leaves a lost-wakeup window and can strand the final quiet INFO.
     g_asyncFlushQueued.store(false, std::memory_order_release);
+    ::LeaveCriticalSection(&g_lock);
     return 0;
 }
 
@@ -191,7 +194,7 @@ void Init() {
     ::EnterCriticalSection(&g_lock);
     std::fprintf(g_file, "==== Multivoid log ====\n");
     std::fflush(g_file);
-    g_lastFlushMs = ::GetTickCount64();
+    g_infoDirty = false;
     ::LeaveCriticalSection(&g_lock);
 }
 
@@ -211,9 +214,7 @@ void Flush() {
     if (!g_file) return;
     ::EnterCriticalSection(&g_lock);
     std::fflush(g_file);
-    // Keep the staleness stamp coherent: an explicit flush IS a flush, so the
-    // next INFO line must not immediately re-sync as if none had happened.
-    g_lastFlushMs = ::GetTickCount64();
+    g_infoDirty = false;
     ::LeaveCriticalSection(&g_lock);
 }
 
@@ -304,10 +305,10 @@ void Write(Level level, const char* fmt, ...) {
     // recurring gameplay path.
     if (level != Level::Info) {
         std::fflush(g_file);
-        g_lastFlushMs = ::GetTickCount64();
+        g_infoDirty = false;
     } else {
-        requestFlush = writeMs >= g_lastFlushMs &&
-                       writeMs - g_lastFlushMs >= kFlushIntervalMs;
+        g_infoDirty = true;
+        requestFlush = true;
     }
     ::LeaveCriticalSection(&g_lock);
 

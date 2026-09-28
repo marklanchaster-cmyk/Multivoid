@@ -9,7 +9,7 @@
 namespace loader::cppmod {
 
 // One log line with every nonzero vtable-slot counter (no-op when the cppmod
-// lane never ran). Safe under the loader lock: log-write + flush only.
+// lane never ran). Not callable from DLL_PROCESS_DETACH: logging takes a lock.
 void FinalDump();
 
 }  // namespace loader::cppmod

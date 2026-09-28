@@ -198,6 +198,25 @@ void Update(net::Session& session, void* localPlayer) {
     // is the single membership declaration; see event_dispatch.h).
     net::Session::ReliableMessage msg;
     while (session.TryGetReliable(msg)) {
+        // A ReliableMessage is stamped on the net thread with the occupancy generation that
+        // owned its authenticated connection slot. Disconnect teardown erases messages still in
+        // the inbox, but it cannot erase the one the game thread has already popped. If that tiny
+        // race overlaps immediate slot reuse, senderPeerSlot alone would retarget the old peer's
+        // inventory chunks / destructive intents at the successor. Validate once, centrally,
+        // before any kind-specific handler can observe the stale message.
+        if (session.role() == net::Role::Host && msg.senderPeerSlot > 0) {
+            const uint32_t liveGeneration =
+                session.peerGenerationForSlot(msg.senderPeerSlot);
+            if (msg.senderPeerGeneration == 0 ||
+                msg.senderPeerGeneration != liveGeneration) {
+                UE_LOGI("event_feed: stale reliable dropped slot=%d msgGen=%u liveGen=%u kind=%u",
+                        msg.senderPeerSlot,
+                        static_cast<unsigned>(msg.senderPeerGeneration),
+                        static_cast<unsigned>(liveGeneration),
+                        static_cast<unsigned>(msg.kind));
+                continue;
+            }
+        }
         switch (msg.kind) {
         case net::ReliableKind::Join: {
             coop::player_handshake::HandleJoinMessage(session, msg);
