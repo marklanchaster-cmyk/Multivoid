@@ -679,7 +679,9 @@ void Tick() {
     g_lastPoll = now;
 
     for (auto& d : g_descs) {
-        ResolveDesc(d);
+        // Class/property discovery belongs to the shared scan hub's 2 s resolver cadence.
+        // Retrying ResolveDesc here made a missing class run FindClass's GUObjectArray lookup on
+        // every 100 ms state poll while a connected world was still streaming in.
         if (!d.cls || d.stateOff < 0) continue;
 
         std::vector<void*> candidates;

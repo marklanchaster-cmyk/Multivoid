@@ -27,10 +27,12 @@ using steady_clock = std::chrono::steady_clock;
 // duty cycle of sliced fulls triples; the per-frame cap below is unchanged by construction.
 constexpr auto    kPassCadence   = std::chrono::seconds(2);
 constexpr int     kBackstopEvery = 10;
-// Slice budget: ~1 ms of GT time per frame, clock checked every kSliceCheck objects. Priced in
-// the design (~17 ns/object dev, ~43 ns/object on the field reporter's machine).
+// Slice budget: ~1 ms of GT time per frame. Count every GUObjectArray slot, including null/invalid
+// ones: the old tail-only counter was skipped by `continue` and checked just once per 4,096 live
+// objects, which let a measured slice overshoot to 8.465 ms. A 256-slot clock cadence keeps the
+// check overhead negligible while tightly bounding the work that can land after the budget.
 constexpr int64_t kSliceBudgetUs = 1000;
-constexpr int32_t kSliceCheck    = 4096;
+constexpr int32_t kSliceCheck    = 256;
 
 struct Row {
     Consumer c;
@@ -128,7 +130,14 @@ bool StartPass() {
             ++activeCount;
         }
     }
-    if (activeCount == 0) return false;
+    if (activeCount == 0) {
+        // No class family is loaded yet. Without advancing the deadline Tick retries every frame,
+        // turning consumer EnsureResolved() misses (often GUObjectArray class lookups) into an
+        // accidental 125 Hz boot/load hot path. Discovery latency is already defined by the 2 s
+        // hub cadence, so keep the empty-resolution case on that same bound.
+        g_nextPassDue = steady_clock::now() + kPassCadence;
+        return false;
+    }
 
     g_passGen    = ue_wrap::world_identity::Generation();
     g_passBegin  = g_passFull ? 0 : g_tailCursor;
@@ -196,6 +205,16 @@ bool RunSlice() {
     const auto t0 = steady_clock::now();
     int32_t sinceCheck = 0;
     while (g_passCursor < end) {
+        // Check before beginning the next chunk. Doing this at the bottom used to mean every
+        // early `continue` below escaped the counter; advancing the cursor before this check
+        // would instead skip an object when the budget expires.
+        if (sinceCheck >= kSliceCheck) {
+            sinceCheck = 0;
+            const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                                steady_clock::now() - t0).count();
+            if (us >= kSliceBudgetUs) return false;  // budget spent -- resume next tick
+        }
+        ++sinceCheck;
         const int32_t i = g_passCursor++;
         void* obj = R::ObjectAt(i);
         if (!obj) continue;
@@ -230,12 +249,6 @@ bool RunSlice() {
             for (size_t ci = 0; ci < g_rows.size(); ++ci) {
                 if (bits & (1ull << ci)) g_rows[ci].c.OnMatch(g_rows[ci].c.ctx, obj);
             }
-        }
-        if (++sinceCheck >= kSliceCheck) {
-            sinceCheck = 0;
-            const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
-                                steady_clock::now() - t0).count();
-            if (us >= kSliceBudgetUs) return false;  // budget spent -- resume next tick
         }
     }
     CompletePass();

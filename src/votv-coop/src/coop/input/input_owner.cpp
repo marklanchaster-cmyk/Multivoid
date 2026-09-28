@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <unordered_map>
 
 #include "coop/player/players_registry.h"
 #include "ue_wrap/core/cached_obj_ref.h"
@@ -395,19 +396,29 @@ void TickGameThread(bool doFullScan) {
         Remember(lastOwner);
     }
 
-    const int32_t n = R::NumObjects();
-    for (int32_t i = 0; i < n && !owns; ++i) {
-        void* o = R::ObjectAt(i);
-        if (!o || o == g_lastOwner.Raw()) continue;  // already asked (identity compare only)
-        void* cls = R::ClassOf(o);
-        if (!DerivesFromUserWidget(cls)) continue;
-        // NameStartsWith, not ToString(...).rfind: the latter built and destroyed a
-        // std::wstring for every user widget on every scan. The zero-allocation
-        // primitive is the one players_registry and reflection already use here.
-        if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
-        if (!R::IsLive(o)) continue;
-        if (!IsLiveWidgetInstance(o)) continue;
-        if (OwnsUserZeroFocus(o)) { owns = true; Remember(o); g_lastOwner.Set(o); }
+    if (!owns) {
+        // Class ancestry is class-pure for the life of this pass. A world contains many instances
+        // of the same class; walking up to 16 SuperStruct links for every UObject made this nominally
+        // linear census O(objects * ancestry depth). Keep the memo pass-local so unloaded/recycled BP
+        // UClass pointers can never survive into the next 1 Hz scan.
+        std::unordered_map<void*, bool> derivesMemo;
+        derivesMemo.reserve(2048);
+        const int32_t n = R::NumObjects();
+        for (int32_t i = 0; i < n && !owns; ++i) {
+            void* o = R::ObjectAt(i);
+            if (!o || o == g_lastOwner.Raw()) continue;  // already asked (identity compare only)
+            void* cls = R::ClassOf(o);
+            auto [classIt, inserted] = derivesMemo.try_emplace(cls, false);
+            if (inserted) classIt->second = DerivesFromUserWidget(cls);
+            if (!classIt->second) continue;
+            // NameStartsWith, not ToString(...).rfind: the latter built and destroyed a
+            // std::wstring for every user widget on every scan. The zero-allocation
+            // primitive is the one players_registry and reflection already use here.
+            if (R::NameStartsWith(R::NameOf(o), L"Default__")) continue;
+            if (!R::IsLive(o)) continue;
+            if (!IsLiveWidgetInstance(o)) continue;
+            if (OwnsUserZeroFocus(o)) { owns = true; Remember(o); g_lastOwner.Set(o); }
+        }
     }
     if (!owns) g_lastOwner.Reset();
     if (!owns) g_ownerName[0] = '-', g_ownerName[1] = '\0';
