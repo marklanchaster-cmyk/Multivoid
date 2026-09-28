@@ -38,6 +38,13 @@ struct PowerState {
 };
 bool ReadPower(PowerState& out);
 
+// Configure the existing laptop_C.screen UWidgetComponent for bounded local
+// presentation work: no offscreen tick, automatic redraw capped to ~30 Hz.
+// The component and property layouts are resolved from live reflection; no
+// widget/component is created. Idempotent for one component instance and
+// reapplied if level lifecycle replaces that component. Game thread only.
+bool ConfigureScreenPerformance();
+
 // Reflected actionOptionIndex(player=null, hit={}, action=b8, lookAt=null) --
 // the native power-button press (empty-frame proof: beginplayTurnOn@815).
 bool CallPowerToggle();

@@ -435,6 +435,7 @@ void Tick() {
     if (!L::EnsureResolved()) return;
     void* inst = L::Instance();
     if (!inst) return;
+    L::ConfigureScreenPerformance();
     if (!g_announced) {
         g_announced = true;
         UE_LOGI("laptop_sync: installed (laptop resolved; power + floppy axes)");

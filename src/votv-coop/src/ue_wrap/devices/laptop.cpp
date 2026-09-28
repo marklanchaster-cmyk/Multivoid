@@ -8,6 +8,7 @@
 #include "ue_wrap/core/field_io.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/sdk_profile.h"
 
 #include <chrono>
 #include <cstring>
@@ -16,6 +17,7 @@ namespace ue_wrap::laptop {
 namespace {
 
 namespace R = reflection;
+namespace P = profile;
 
 // Field IO extracted to ue_wrap/core/field_io at v121 (floppybox needed the
 // same helpers -- RULE 2, one implementation; the free-what-we-replaced
@@ -42,6 +44,7 @@ int32_t g_offPowered = -1, g_offIsOpened = -1, g_offAnim = -1;
 int32_t g_offFloppyType = -1, g_offZip = -1, g_offReadWrites = -1;
 int32_t g_offNametype = -1, g_offObjectData = -1, g_offFloppyData = -1;
 int32_t g_offWidget = -1;
+int32_t g_offScreen = -1;
 int32_t g_offDiscData = -1, g_offDiscReadWrites = -1;
 void*   g_fnAction = nullptr;      // actionOptionIndex
 void*   g_fnUpdButton = nullptr;   // updButton
@@ -58,6 +61,65 @@ uint64_t g_nextResolveTryMs = 0;
 
 void* g_inst = nullptr;
 int32_t g_instIdx = -1;
+
+// Local presentation-only seam for laptop_C.screen (UWidgetComponent). Every
+// field is resolved from live FProperty metadata. In particular the bools use
+// their real FBoolProperty byte+mask, never a whole-byte guess.
+void* g_widgetComponentCls = nullptr;
+int32_t g_offTickWhenOffscreen = -1;
+uint8_t g_maskTickWhenOffscreen = 0;
+int32_t g_offManuallyRedraw = -1;
+uint8_t g_maskManuallyRedraw = 0;
+int32_t g_offRedrawTime = -1;
+int32_t g_offDrawSize = -1;
+void* g_fnRequestRedraw = nullptr;
+bool g_screenPerfResolutionAttempted = false;
+bool g_screenPerfReady = false;
+void* g_configuredScreen = nullptr;
+int32_t g_configuredScreenIdx = -1;
+
+constexpr float kLaptopRedrawSeconds = 1.0f / 30.0f;
+
+void WriteBool(void* object, int32_t byteOffset, uint8_t mask, bool value) {
+    auto* byte = reinterpret_cast<uint8_t*>(object) + byteOffset;
+    *byte = value ? static_cast<uint8_t>(*byte | mask)
+                  : static_cast<uint8_t>(*byte & static_cast<uint8_t>(~mask));
+}
+
+bool ReadBool(const void* object, int32_t byteOffset, uint8_t mask) {
+    return (reinterpret_cast<const uint8_t*>(object)[byteOffset] & mask) != 0;
+}
+
+void ResolveScreenPerformanceSeam(void* laptopCls) {
+    if (g_screenPerfResolutionAttempted || !laptopCls) return;
+    g_screenPerfResolutionAttempted = true;
+
+    g_offScreen = R::FindPropertyOffset(laptopCls, L"screen");
+    g_widgetComponentCls = R::FindClass(P::name::WidgetComponentClass);
+    if (g_widgetComponentCls) {
+        R::FindBoolProperty(g_widgetComponentCls, L"bTickWhenOffscreen",
+                            g_offTickWhenOffscreen, g_maskTickWhenOffscreen);
+        R::FindBoolProperty(g_widgetComponentCls, L"bManuallyRedraw",
+                            g_offManuallyRedraw, g_maskManuallyRedraw);
+        g_offRedrawTime = R::FindPropertyOffset(g_widgetComponentCls, L"RedrawTime");
+        g_offDrawSize = R::FindPropertyOffset(g_widgetComponentCls, L"DrawSize");
+        g_fnRequestRedraw = R::FindFunction(g_widgetComponentCls, P::name::RequestRedrawFn);
+    }
+
+    g_screenPerfReady = g_offScreen >= 0 && g_widgetComponentCls &&
+        g_offTickWhenOffscreen >= 0 && g_maskTickWhenOffscreen != 0 &&
+        g_offManuallyRedraw >= 0 && g_maskManuallyRedraw != 0 &&
+        g_offRedrawTime >= 0 && g_offDrawSize >= 0 && g_fnRequestRedraw;
+    if (!g_screenPerfReady) {
+        UE_LOGW("laptop-perf: WidgetComponent seam unresolved -- no presentation writes "
+                "(screen=0x%X class=%p tickOff=0x%X/%02X manual=0x%X/%02X "
+                "redraw=0x%X draw=0x%X request=%p)",
+                g_offScreen, g_widgetComponentCls,
+                g_offTickWhenOffscreen, g_maskTickWhenOffscreen,
+                g_offManuallyRedraw, g_maskManuallyRedraw,
+                g_offRedrawTime, g_offDrawSize, g_fnRequestRedraw);
+    }
+}
 
 bool CallWidgetUpdFloppy(void* inst) {
     if (!g_fnWidgetUpdFloppy || g_offWidget < 0) return false;
@@ -136,6 +198,8 @@ bool EnsureResolved() {
                 g_offWidgetBufferSlots, g_fnWidgetGenFloppyBuffer, g_offBufRowData,
                 g_fnWidgetRemoveFromParent);
 
+    ResolveScreenPerformanceSeam(cls);
+
     g_cls = cls; g_discBaseCls = discCls;
     g_resolved = true;
     UE_LOGI("laptop: resolved (isOpened=0x%X floppyType=0x%X objectData=0x%X action=%p)",
@@ -164,6 +228,56 @@ bool ReadPower(PowerState& out) {
     out.powered  = p[g_offPowered]  != 0;
     out.isOpened = p[g_offIsOpened] != 0;
     out.anim     = p[g_offAnim]     != 0;
+    return true;
+}
+
+bool ConfigureScreenPerformance() {
+    void* laptop = Instance();
+    if (!laptop) return false;
+    ResolveScreenPerformanceSeam(g_cls);
+    if (!g_screenPerfReady) return false;
+
+    void* screen = *reinterpret_cast<void* const*>(
+        reinterpret_cast<const uint8_t*>(laptop) + g_offScreen);
+    if (!screen || !R::IsLive(screen)) return false;
+    void* const screenCls = R::ClassOf(screen);
+    void* const bases[] = {g_widgetComponentCls};
+    if (!screenCls || !R::IsDescendantOfAny(screenCls, bases, 1)) return false;
+
+    if (screen == g_configuredScreen &&
+        R::IsLiveByIndex(screen, g_configuredScreenIdx)) {
+        return true;
+    }
+
+    // Keep automatic redraw so every native Blueprint/UI mutation remains
+    // responsive. RedrawTime then acts as a minimum interval, capping the
+    // expensive 1920x1080 render-target refresh at approximately 30 Hz.
+    WriteBool(screen, g_offTickWhenOffscreen, g_maskTickWhenOffscreen, false);
+    WriteBool(screen, g_offManuallyRedraw, g_maskManuallyRedraw, false);
+    std::memcpy(reinterpret_cast<uint8_t*>(screen) + g_offRedrawTime,
+                &kLaptopRedrawSeconds, sizeof(kLaptopRedrawSeconds));
+
+    ParamFrame redraw(g_fnRequestRedraw);
+    const bool redrawRequested = redraw.valid() && Call(screen, redraw);
+
+    int32_t draw[2] = {};
+    std::memcpy(draw, reinterpret_cast<const uint8_t*>(screen) + g_offDrawSize,
+                sizeof(draw));
+    float redrawTime = 0.0f;
+    std::memcpy(&redrawTime,
+                reinterpret_cast<const uint8_t*>(screen) + g_offRedrawTime,
+                sizeof(redrawTime));
+    g_configuredScreen = screen;
+    g_configuredScreenIdx = R::InternalIndexOf(screen);
+    UE_LOGI("laptop-perf: configured screen=%p draw=%dx%d tickOffscreen=%u "
+            "manualRedraw=%u redrawTime=%.4f requestRedraw=%u",
+            screen, draw[0], draw[1],
+            static_cast<unsigned>(ReadBool(screen, g_offTickWhenOffscreen,
+                                           g_maskTickWhenOffscreen)),
+            static_cast<unsigned>(ReadBool(screen, g_offManuallyRedraw,
+                                           g_maskManuallyRedraw)),
+            static_cast<double>(redrawTime),
+            static_cast<unsigned>(redrawRequested));
     return true;
 }
 
@@ -378,6 +492,8 @@ bool ReadWidgetBufferMirror(int32_t& outCount, uint64_t& outFnv) {
 void ResetCache() {
     g_inst = nullptr;
     g_instIdx = -1;
+    g_configuredScreen = nullptr;
+    g_configuredScreenIdx = -1;
 }
 
 }  // namespace ue_wrap::laptop
