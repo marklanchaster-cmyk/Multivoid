@@ -6,6 +6,7 @@
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
 #include "coop/player/hand_item.h"          // LocalHandActor (place detect: exclude the hand display)
+#include "coop/items/player_inventory_sync.h"
 #include "coop/props/prop_echo_suppress.h"  // PeekIncomingSpawn (exclude host-echo adopt spawns)
 #include "coop/props/prop_element_tracker.h"// GetPropElementIdForActor, ResolveLiveActorByKey   
 #include "coop/props/prop_lifecycle.h"      // ExpressSpawnedProp (close host eid=0 materialization gap)
@@ -382,6 +383,8 @@ void Tick(coop::net::Session* session) {
         if (!parked && !freshBirth && !e.containerExtract) continue;  // not a place / not a whitelisted birth / not a container extract
         // Author the host-authoritative spawn intent (place OR reel-eject birth).
         coop::net::PropDropIntentPayload p{};
+        p.origin = parked ? coop::net::propdrop_origin::kPersonalInventory
+                          : coop::net::propdrop_origin::kContainerExtract;
         const std::wstring cls = R::ClassNameOf(e.actor);
         FillWireStr(p.className.len, p.className.data, cls);
         FillWireStr(p.key.len, p.key.data, key);
@@ -462,10 +465,25 @@ void OnPropDropIntent(coop::net::Session& session, const coop::net::PropDropInte
         UE_LOGW("[PROP-DROP] HOST drop intent from slot=%u missing key/class -- dropping", senderSlot);
         return;
     }
+    if (p.origin != coop::net::propdrop_origin::kPersonalInventory &&
+        p.origin != coop::net::propdrop_origin::kContainerExtract) {
+        UE_LOGW("[PROP-DROP] HOST drop intent from slot=%u has invalid origin=%u -- dropping",
+                senderSlot, static_cast<unsigned>(p.origin));
+        return;
+    }
     // Dup guard: if the host somehow still has this Key live (the grab-destroy didn't cross), do NOT
     // spawn a second one. The park-set invariant normally guarantees the host has no copy here.
     if (coop::prop_element_tracker::ResolveLiveActorByKey(key, nullptr)) {
         UE_LOGW("[PROP-DROP] HOST already has key='%ls' live -- skip drop-intent re-spawn (no dup)", key.c_str());
+        return;
+    }
+    // The durable ownership commit precedes world materialization. A crash or
+    // disconnect after this point can lose the item, but cannot restore an
+    // inventory copy alongside the canonical world actor.
+    if (p.origin == coop::net::propdrop_origin::kPersonalInventory &&
+        !coop::player_inventory_sync::CommitInventoryDrop(senderSlot, key, cls)) {
+        UE_LOGW("[PROP-DROP] HOST refused slot=%u key='%ls': sender inventory does not own exactly one item",
+                senderSlot, key.c_str());
         return;
     }
     void* actor = HostSpawnPlacedProp(p, cls, key);
@@ -503,7 +521,9 @@ void OnReelEjectIntent(coop::net::Session& session, const coop::net::PropDropInt
     if (isModule && coop::physmods_sync::HostShouldReapModuleBirth(senderSlot, clsObj)) return;
     // v119 (L5): drive births are authored normally -- a denied rack-take ghost is
     // reaped LATER by its adoption payload's content hash (drive_sync, audit MAJOR-1).
-    OnPropDropIntent(session, p, senderSlot);  // same author: dup-guard + HostSpawnPlacedProp
+    coop::net::PropDropIntentPayload birth = p;
+    birth.origin = coop::net::propdrop_origin::kContainerExtract;
+    OnPropDropIntent(session, birth, senderSlot);  // birth is not a personal-inventory retirement
 }
 
 void Reset() {

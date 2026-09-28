@@ -140,37 +140,61 @@ static bool HostAuthorityHandback_(void* actor, const std::wstring& keyW,
 static void* ResolveHostAdoptionRequest_(const coop::net::PropSpawnPayload& payload,
                                          const std::wstring& classW,
                                          const std::wstring& keyHint,
-                                         const std::wstring& levelKey) {
+                                         const std::wstring& levelKey,
+                                         const char** outResolution) {
+    if (outResolution) *outResolution = "none";
+    // Adoption requests are contact-edge traffic, but the old fallback still
+    // walked the entire GUObjectArray (twice when both locator and proximity
+    // missed). Reuse the prop census' maintained, liveness-anchored candidate
+    // index instead. It is refreshed by Init/census/reseed and contains both
+    // keyed and keyless ordinary props; stale entries fail IsLiveByIndex.
+    std::vector<coop::prop_element_tracker::PropCandidateEntry> candidates;
+    coop::prop_element_tracker::CollectPropCandidateEntries(candidates);
+
+    const auto isRequestedClass = [&](const auto& candidate) {
+        return candidate.actor && R::IsLiveByIndex(candidate.actor, candidate.internalIdx) &&
+               ue_wrap::prop::IsKeyedInteractable(candidate.actor) &&
+               R::ClassNameOf(candidate.actor) == classW;
+    };
+
     // A cooked level actor may have independently-minted gameplay Keys on the
     // two machines. Its RF_WasLoaded UObject name is structural and exact, so
     // it takes precedence over the explicitly non-authoritative key hint.
     if (!levelKey.empty()) {
         void* match = nullptr;
-        for (int32_t i = 0, n = R::NumObjects(); i < n; ++i) {
-            void* actor = R::ObjectAt(i);
-            if (!actor || !R::IsLive(actor) ||
-                !ue_wrap::prop::IsKeyedInteractable(actor) ||
-                R::ClassNameOf(actor) != classW ||
-                coop::element::PortableLevelActorWireKey(actor) != levelKey)
+        size_t matches = 0;
+        for (const auto& candidate : candidates) {
+            if (!isRequestedClass(candidate) ||
+                coop::element::PortableLevelActorWireKey(candidate.actor) != levelKey)
                 continue;
-            if (match && match != actor) {
-                UE_LOGW("prop_identity: HOST request levelKey='%ls' cls='%ls' is ambiguous -- refusing",
-                        levelKey.c_str(), classW.c_str());
-                return nullptr;
-            }
-            match = actor;
+            match = candidate.actor;
+            ++matches;
         }
-        if (match) return match;
+        if (matches > 1) {
+            UE_LOGW("prop_identity: HOST request levelKey='%ls' cls='%ls' is ambiguous "
+                    "(%zu indexed candidates) -- refusing",
+                    levelKey.c_str(), classW.c_str(), matches);
+            return nullptr;
+        }
+        if (match) {
+            if (outResolution) *outResolution = "locator";
+            return match;
+        }
     }
 
     // Save/runtime actors do not have a cooked-level locator. Their restored
     // gameplay Key is the next strongest name; the position below remains the
     // fail-closed fallback when that Key was independently minted.
     if (!keyHint.empty() && keyHint != L"None") {
-        if (void* actor = coop::prop_element_tracker::ResolveLiveActorByKey(keyHint)) {
+        // Deliberately use the index-only lookup. ResolveLiveActorByKey has a
+        // cold GUObjectArray fallback that is appropriate for snapshot repair,
+        // but an untrusted adoption request must never trigger that scan.
+        if (void* actor = coop::prop_element_tracker::FindLiveActorByKey(keyHint)) {
             if (R::IsLive(actor) && ue_wrap::prop::IsKeyedInteractable(actor) &&
-                R::ClassNameOf(actor) == classW)
+                R::ClassNameOf(actor) == classW) {
+                if (outResolution) *outResolution = "key";
                 return actor;
+            }
             UE_LOGW("prop_identity: HOST request keyHint='%ls' resolved to wrong/non-keyed class "
                     "(requested='%ls', actual='%ls') -- ignoring hint",
                     keyHint.c_str(), classW.c_str(),
@@ -184,23 +208,28 @@ static void* ResolveHostAdoptionRequest_(const coop::net::PropSpawnPayload& payl
     if (!payload.hasMatchPos) return nullptr;
     constexpr float kRadiusCm = 35.f;
     void* match = nullptr;
-    for (int32_t i = 0, n = R::NumObjects(); i < n; ++i) {
-        void* actor = R::ObjectAt(i);
-        if (!actor || !R::IsLive(actor) ||
-            !ue_wrap::prop::IsKeyedInteractable(actor) || R::ClassNameOf(actor) != classW)
-            continue;
-        const auto loc = E::GetActorLocation(actor);
+    size_t matches = 0;
+    for (const auto& candidate : candidates) {
+        if (!isRequestedClass(candidate)) continue;
+        const auto loc = E::GetActorLocation(candidate.actor);
         const float dx = loc.X - payload.matchX;
         const float dy = loc.Y - payload.matchY;
         const float dz = loc.Z - payload.matchZ;
         if (dx * dx + dy * dy + dz * dz > kRadiusCm * kRadiusCm) continue;
-        if (match && match != actor) {
-            UE_LOGW("prop_identity: HOST request cls='%ls' match=(%.1f,%.1f,%.1f) has multiple "
-                    "candidates within %.0fcm -- refusing rather than guessing",
-                    classW.c_str(), payload.matchX, payload.matchY, payload.matchZ, kRadiusCm);
-            return nullptr;
-        }
-        match = actor;
+        match = candidate.actor;
+        ++matches;
+    }
+    if (matches > 1) {
+        UE_LOGW("prop_identity: HOST request cls='%ls' match=(%.1f,%.1f,%.1f) has %zu indexed "
+                "candidates within %.0fcm -- refusing rather than guessing",
+                classW.c_str(), payload.matchX, payload.matchY, payload.matchZ,
+                matches, kRadiusCm);
+        return nullptr;
+    }
+    if (match && outResolution) {
+        const std::wstring candidateKey = ue_wrap::prop::GetInteractableKeyString(match);
+        *outResolution = (candidateKey.empty() || candidateKey == L"None")
+            ? "keyless-proximity" : "proximity";
     }
     return match;
 }
@@ -256,13 +285,23 @@ void OnSpawn(const coop::net::PropSpawnPayload& payload, int senderSlot,
                     static_cast<unsigned long long>(payload.adoptionId));
             return;
         }
-        void* actor = ResolveHostAdoptionRequest_(payload, classW, keyW, propNameW);
+        const char* resolution = "none";
+        void* actor = ResolveHostAdoptionRequest_(payload, classW, keyW, propNameW,
+                                                  &resolution);
         const ue_wrap::FVector requestMatch{payload.matchX, payload.matchY, payload.matchZ};
         const bool accepted = actor && coop::trash_collect_sync::HostAuthorizeAdoptionTarget(
             actor, static_cast<uint8_t>(senderSlot));
         const bool acknowledged = accepted && HostAuthorityHandback_(
             actor, keyW, classW, senderSlot, "adoption-request", &requestMatch,
             payload.adoptionId);
+        if (acknowledged) {
+            const coop::element::ElementId eid =
+                coop::prop_element_tracker::GetPropElementIdForActor(actor);
+            UE_LOGI("prop_identity: HOST accepted adoption slot=%d id=%llu eid=%u via=%s",
+                    senderSlot, static_cast<unsigned long long>(payload.adoptionId),
+                    eid == coop::element::kInvalidId ? 0u : static_cast<unsigned>(eid),
+                    resolution);
+        }
         if (!acknowledged) {
             UE_LOGW("prop_identity: HOST could not prove adoption target slot=%d cls='%ls' keyHint='%ls' "
                     "levelKey='%ls' id=%llu -- refusing (never materialize from a request)",

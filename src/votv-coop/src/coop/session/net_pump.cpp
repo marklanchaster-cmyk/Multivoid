@@ -34,6 +34,7 @@
 #include "coop/props/registry_reaper.h"    // 2026-07-18 decomposition: reaper/re-seed engine
 #include "coop/props/remote_prop_spawn.h"  // OnClientWorldReadyResetSweep (deferred prop sweep per-world reset)
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
+#include "coop/props/trash_collect_sync.h"  // client prop-adoption per-world reset
 #include "coop/session/player_handshake.h"
 #include "coop/player/players_registry.h"
 #include "coop/player/roster_ledger.h"
@@ -601,6 +602,7 @@ void Tick(coop::net::Session& session) {
                 // npc_adoption::Tick, gated on SnapshotComplete + adoption convergence).
                 coop::npc_adoption::OnClientWorldReady();
                 coop::kerfur_prop_adoption::OnClientWorldReady();  // K-6: drop stale prop-kerfur pending
+                coop::trash_collect_sync::OnClientWorldReady();  // drop old-world prop adoption transactions
                 // Same per-world reset for the deferred PROP divergence sweep -- a sweep armed for
                 // the prior world must not fire against this fresh one (save-transfer = two loads).
                 coop::join_membership_sweep::OnClientWorldReadyResetSweep();

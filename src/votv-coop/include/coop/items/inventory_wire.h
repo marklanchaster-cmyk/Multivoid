@@ -19,7 +19,7 @@
 namespace coop::inventory_wire {
 
 // Current blob format version (the first byte). Bump on any layout change.
-inline constexpr uint8_t kVersion = 1;
+inline constexpr uint8_t kVersion = 2;
 
 // Serialize `inv` into a fresh blob (always succeeds; bounded by the inventory size).
 std::vector<uint8_t> Serialize(const ue_wrap::inventory::PlayerInventory& inv);

@@ -151,7 +151,7 @@ void GrabObserver_Aprop_Init_POST_Body(void* self) {
                 self, R::ClassNameOf(self).c_str());
         return;
     }
-    PT::MarkKnownKeyedProp(self);
+    PT::MarkKnownKeyedProp(self, R::InternalIndexOf(self));
 
     auto* s = LoadSession();
     if (!s) return;
@@ -523,7 +523,7 @@ coop::element::ElementId RegisterHostPropSilent(void* actor) {
     // On a client fuzzy-miss (skin variant / race) that 2nd PropSpawn fresh-spawns a duplicate
     // kerfurOmega. Marking it known closes the echo at the source (the release path's
     // UnmarkKnownKeyedProp is symmetric). The kerfur prop still needs NO PropSpawn here.
-    PT::MarkKnownKeyedProp(actor);
+    PT::MarkKnownKeyedProp(actor, R::InternalIndexOf(actor));
     const coop::element::ElementId eid = PT::GetPropElementIdForActor(actor);
     UE_LOGI("prop_lifecycle[silent register]: host prop %p class '%ls' key '%ls' -> eid=%u (no PropSpawn broadcast; marked known so the re-seed won't re-express it)",
             actor, cls.c_str(), keyStr.c_str(), static_cast<uint32_t>(eid));

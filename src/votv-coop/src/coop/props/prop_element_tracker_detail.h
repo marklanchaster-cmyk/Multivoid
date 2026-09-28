@@ -19,12 +19,14 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace coop::prop_element_tracker {
 
 extern std::mutex g_knownKeyedPropsMutex;
 extern std::unordered_set<void*> g_knownKeyedProps;
+extern std::unordered_map<void*, int32_t> g_propCandidates;
 inline constexpr size_t kKnownKeyedPropsCap = 16384;
 
 // Key-index private helpers (defined in prop_key_index.cpp, which solely owns

@@ -35,9 +35,15 @@ struct EquipRecord {
 
 // The full player-scoped inventory snapshot.
 struct PlayerInventory {
-    std::vector<ue_wrap::save_record::SaveRecord> inventory;  // saveSlot.inventoryData
+    std::vector<ue_wrap::save_record::SaveRecord> inventory;  // live GObjStack[0] + save projection
     std::vector<EquipRecord> equipment;  // saveSlot.equipment (worn)
     std::vector<EquipRecord> hold;       // saveSlot.hold (hands)
+    struct Vitals {
+        float health = 100.f;
+        float maxHealth = 100.f;
+        float food = 100.f;
+        float stamina = 100.f;  // VotV saveSlot.sleep
+    } vitals;
 };
 
 // Resolve the live UsaveSlot_C (via mainGamemode_C.saveSlot). Cached + IsLive-revalidated;
@@ -100,7 +106,8 @@ bool ReadLivePersonalStore(LivePersonalStore& out);
 
 // INCREMENT 4 -- the WRITE side (the live apply on join).
 //
-// Overwrite the player-scoped arrays (inventoryData / equipment / hold) on `saveSlot` with `inv`,
+// Overwrite the verified live personal store (GObjStack[0]) plus the coherent
+// player-scoped projection/equipment/hold arrays on `saveSlot` with `inv`,
 // constructing engine-OWNED TArrays via reflection::EngineAlloc (FNames interned, FStrings
 // engine-minted, UClasses FindClass'd). This is the RULE-1 apply path: the caller writes the
 // REGISTERED save object BEFORE the game's native loadObjects() materializes it on the next

@@ -97,7 +97,8 @@ SeedCounts SeedWalk_(std::vector<void*>* outNewActors) {
             if (handAxis[h] == obj) return true;
         return false;
     };
-    std::vector<void*> live;
+    struct LiveCandidate { void* actor; int32_t idx; };
+    std::vector<LiveCandidate> live;
     live.reserve(4096);
     for (int32_t i = 0; i < n; ++i) {
         void* obj = R::ObjectAt(i);
@@ -113,13 +114,15 @@ SeedCounts SeedWalk_(std::vector<void*>* outNewActors) {
         const std::wstring nm = R::ToString(R::NameOf(obj));
         if (nm.rfind(L"Default__", 0) == 0) { ++c.cdo; continue; }
         if (!R::IsLive(obj)) { ++c.dying; continue; }
-        live.push_back(obj);
+        live.push_back(LiveCandidate{obj, i});
     }
     c.liveFound = static_cast<int>(live.size());
     {
         std::lock_guard<std::mutex> lk(g_knownKeyedPropsMutex);
-        for (void* obj : live) {
+        for (const LiveCandidate& candidate : live) {
+            void* const obj = candidate.actor;
             if (g_knownKeyedProps.size() >= kKnownKeyedPropsCap) break;
+            g_propCandidates[obj] = candidate.idx;
             if (g_knownKeyedProps.insert(obj).second) {
                 // CHURN GUARD (2026-07-03, the 11:48:59 keyless-PropSpawn re-broadcast):
                 // an actor ALREADY BOUND to a live owned element is NOT new -- it is the
@@ -168,7 +171,8 @@ SeedCounts SeedWalk_(std::vector<void*>* outNewActors) {
     // (KEY-UNIQUENESS AUTHORITY note, 2026-07-11 take-3: the duplicate-Key re-key lives inside
     // MarkPropElement -- the ONE enrollment owner -- so this walk AND the Init-POST late-load
     // catch AND every other enroll path are all covered. See prop_element_tracker.cpp.)
-    for (void* obj : live) {
+    for (const LiveCandidate& candidate : live) {
+        void* const obj = candidate.actor;
         if (!R::IsLive(obj)) continue;
         const std::wstring cls = R::ClassNameOf(obj);
         const std::wstring key = ue_wrap::prop::GetInteractableKeyString(obj);
@@ -529,6 +533,8 @@ void DrainReseedQueue() {
                     isNew = true;
                 }
             }
+            if (g_knownKeyedProps.count(it.obj) != 0)
+                g_propCandidates[it.obj] = it.idx;
         }
         // Phase-2 (outside the mutex, today's ordering): idempotent Mark refresh for
         // keyed (client: key-index only, v122 no-passive-mint) + keyless pile mint.

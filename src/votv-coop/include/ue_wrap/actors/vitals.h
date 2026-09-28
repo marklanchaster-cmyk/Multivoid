@@ -40,4 +40,9 @@ bool Read(Field f, float* out);
 // Game-thread only.
 bool Write(Field f, float v);
 
+// Apply validated profile values to the exact pre-materialization save object
+// supplied by the load hook. This avoids resolving the old registered save
+// object while a joining client's replacement is being installed.
+bool WriteToSaveObject(void* saveSlot, Field f, float v);
+
 }  // namespace ue_wrap::vitals

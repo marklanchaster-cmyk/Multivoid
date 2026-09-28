@@ -168,6 +168,22 @@ size_t DrainDeadKeyIndexEntries() {
         auto ait = g_actorToKey.find(ke.actor);
         if (ait != g_actorToKey.end() && ait->second == ke.key) g_actorToKey.erase(ait);
     }
+    // The adoption candidate universe also contains element-less KEYLESS
+    // ordinary props. They have no key-index row and no Registry element for
+    // the reaper to notice, so prune them at this same cold world-transition
+    // edge. Pair actor+InternalIndex before erasing to survive pointer reuse.
+    std::vector<PropCandidateEntry> candidates;
+    CollectPropCandidateEntries(candidates);
+    for (const auto& candidate : candidates) {
+        if (!candidate.actor || R::IsLiveByIndex(candidate.actor, candidate.internalIdx)) continue;
+        std::lock_guard<std::mutex> lk(g_knownKeyedPropsMutex);
+        auto it = g_propCandidates.find(candidate.actor);
+        if (it != g_propCandidates.end() && it->second == candidate.internalIdx) {
+            g_propCandidates.erase(it);
+            g_knownKeyedProps.erase(candidate.actor);
+            ++drained;
+        }
+    }
     return drained;
 }
 

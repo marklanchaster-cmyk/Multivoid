@@ -9,6 +9,7 @@
 #include "coop/element/registry.h"
 
 #include "coop/player/item_activate.h"
+#include "coop/items/player_inventory_sync.h"
 #include "coop/session/join_progress.h"
 #include "coop/creatures/npc_mirror.h"
 #include "coop/creatures/owner_entity_sync.h"  // v108 OWNER-ENTITY lane (eyer)
@@ -28,6 +29,7 @@
 
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 
 #include <cmath>
@@ -340,6 +342,32 @@ bool HandleEntityEvent(net::Session& session,
                         static_cast<unsigned>(p.elementId), static_cast<unsigned>(hostEid));
                 break;
             }
+        }
+        // A client-side K2_DestroyActor is the observable world->personal-
+        // inventory boundary. The host must authorize the concrete actor and
+        // sender reach before retiring its canonical world representation;
+        // that authorization permits exactly one matching profile addition.
+        if (session.role() == net::Role::Host && msg.senderPeerSlot > 0) {
+            const std::wstring key = remote_prop::KeyToWString(p.key);
+            void* actor = key.empty() ? nullptr
+                : coop::prop_element_tracker::FindLiveActorByKey(key);
+            if (!actor && p.elementId != 0) {
+                if (auto* el = coop::element::Registry::Get().Get(p.elementId);
+                    el && el->GetType() == coop::element::ElementType::Prop &&
+                    ue_wrap::reflection::IsLiveByIndex(el->GetActor(), el->GetInternalIdx()))
+                    actor = el->GetActor();
+            }
+            if (!actor || !coop::player_inventory_sync::AuthorizeWorldPickup(
+                              msg.senderPeerSlot, actor, key)) {
+                UE_LOGW("event_feed: HOST refused client PropDestroy slot=%d -- "
+                        "world->inventory ownership was not authorized",
+                        msg.senderPeerSlot);
+                break;
+            }
+            // PropDestroy is host-terminal in protocol 65009. Only after the
+            // ownership/reach decision succeeds does the host author the
+            // canonical destroy to every peer.
+            session.SendReliable(net::ReliableKind::PropDestroy, &p, sizeof(p));
         }
         // (v15 also had a senderContext compare here -- moved to
         // header senderEpoch in v16 PR-FOUNDATION-1b.)

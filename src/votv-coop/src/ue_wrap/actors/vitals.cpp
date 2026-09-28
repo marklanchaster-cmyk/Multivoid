@@ -99,4 +99,12 @@ bool Write(Field f, float v) {
     return true;
 }
 
+bool WriteToSaveObject(void* saveSlot, Field f, float v) {
+    if (!saveSlot || !R::IsLive(saveSlot) || !EnsureBase()) return false;
+    const int32_t off = ResolveFieldOffset(f);
+    if (off < 0) return false;
+    *reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(saveSlot) + off) = v;
+    return true;
+}
+
 }  // namespace ue_wrap::vitals

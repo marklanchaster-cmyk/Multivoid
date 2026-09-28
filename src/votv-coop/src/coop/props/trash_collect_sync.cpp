@@ -97,6 +97,19 @@ constexpr size_t kMaxPendingAdoptions = 8;
 constexpr auto kAdoptionTtl = std::chrono::seconds(30);
 uint64_t g_nextAdoptionId = 1;
 
+void PrunePendingAdoptions_(std::chrono::steady_clock::time_point now) {
+    for (auto it = g_pendingAdoptions.begin(); it != g_pendingAdoptions.end();) {
+        if (now >= it->deadline || !it->actor.Alive()) {
+            UE_LOGW("prop_identity: CLIENT retiring adoption id=%llu (%s)",
+                    static_cast<unsigned long long>(it->id),
+                    now >= it->deadline ? "ACK timeout" : "actor died");
+            it = g_pendingAdoptions.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 uint64_t NextAdoptionId_() {
     for (;;) {
         const uint64_t candidate = g_nextAdoptionId++;
@@ -328,16 +341,7 @@ bool DeferPendingAdoptionRelease(void* actor,
 
 void TickPendingAdoptionReleases(coop::net::Session* session) {
     const auto now = std::chrono::steady_clock::now();
-    for (auto it = g_pendingAdoptions.begin(); it != g_pendingAdoptions.end();) {
-        if (now >= it->deadline || !it->actor.Alive()) {
-            UE_LOGW("prop_identity: CLIENT retiring adoption id=%llu (%s)",
-                    static_cast<unsigned long long>(it->id),
-                    now >= it->deadline ? "ACK timeout" : "actor died");
-            it = g_pendingAdoptions.erase(it);
-        } else {
-            ++it;
-        }
-    }
+    PrunePendingAdoptions_(now);
     if (!session || session->role() != coop::net::Role::Client) return;
     for (auto it = g_pendingAdoptions.begin(); it != g_pendingAdoptions.end(); ++it) {
         if (!it->released || !it->ackClaimed || it->hostEid == 0) continue;
@@ -559,12 +563,24 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
     // per-process Keys. Pose/release remain silent until the host PropSpawn ACK
     // binds a host-range eid.
     if (s->role() == coop::net::Role::Client) {
+        PrunePendingAdoptions_(std::chrono::steady_clock::now());
         // A rapid re-grab of the same actor reuses its still-live transaction;
         // reliable delivery already owns retransmission and a second token would
         // create two valid ACKs for one actor.
-        for (auto& pending : g_pendingAdoptions) {
-            if (pending.actor.Raw() == heldActor) {
-                pending.released = false;
+        for (auto it = g_pendingAdoptions.begin(); it != g_pendingAdoptions.end(); ++it) {
+            if (it->actor.Raw() == heldActor) {
+                if (it->ackClaimed && it->hostEid != 0) {
+                    // The authoritative mirror already exists. Re-grabbing
+                    // cancels the queued deferred release and retires only this
+                    // completed transaction; the held-edge EID lookup below
+                    // resumes normal pose streaming on the bound identity.
+                    UE_LOGI("prop_identity: CLIENT re-grab canceled deferred release id=%llu eid=%u",
+                            static_cast<unsigned long long>(it->id), it->hostEid);
+                    g_pendingAdoptions.erase(it);
+                } else {
+                    it->released = false;
+                    it->finalPoseTicks = 0;
+                }
                 return true;
             }
         }
@@ -581,6 +597,9 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
         ue_wrap::FVector origin = ue_wrap::engine::GetActorLocation(heldActor);
         if (g_adoptionCapture.captured.Get() == heldActor)
             origin = g_adoptionCapture.capturedLocation;
+        // The locator is copied into this transaction now; never let the
+        // single input-edge capture leak into a later re-grab/request.
+        g_adoptionCapture.captured.Reset();
         req.hasMatchPos = 1;
         req.matchX = origin.X; req.matchY = origin.Y; req.matchZ = origin.Z;
         const auto loc = ue_wrap::engine::GetActorLocation(heldActor);
@@ -595,10 +614,10 @@ bool EnsureHeldItemBroadcast(void* heldActor, coop::net::Session* s) {
         req.elementId = 0;
         req.adoptionId = NextAdoptionId_();
         if (g_pendingAdoptions.size() >= kMaxPendingAdoptions) {
-            UE_LOGW("prop_identity: CLIENT pending adoption cap=%zu -- retiring oldest id=%llu",
-                    kMaxPendingAdoptions,
-                    static_cast<unsigned long long>(g_pendingAdoptions.front().id));
-            g_pendingAdoptions.pop_front();
+            UE_LOGW("prop_identity: CLIENT pending adoption cap=%zu -- refusing new request id=%llu "
+                    "without evicting an in-flight transaction",
+                    kMaxPendingAdoptions, static_cast<unsigned long long>(req.adoptionId));
+            return false;
         }
         PendingAdoption pending{};
         pending.id = req.adoptionId;
@@ -735,9 +754,17 @@ void Install(coop::net::Session* session) {
 
 void OnDisconnect() {
     g_session.store(nullptr, std::memory_order_release);
-    g_adoptionCapture.captured.Reset();
-    g_pendingAdoptions.clear();
+    OnClientWorldReady();
     coop::trash_use_intercept::OnDisconnect();  // clears its cached session + gesture-pairing latch
+}
+
+void OnClientWorldReady() {
+    g_adoptionCapture.captured.Reset();
+    if (!g_pendingAdoptions.empty()) {
+        UE_LOGI("prop_identity: CLIENT world reset retired %zu pending adoption transaction(s)",
+                g_pendingAdoptions.size());
+    }
+    g_pendingAdoptions.clear();
 }
 
 bool DebugSendGrabIntent(uint32_t eid) {

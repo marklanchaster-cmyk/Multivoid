@@ -74,10 +74,10 @@ constexpr const wchar_t* kFreshSlotName = L"coop_client_fresh";
 SaveObjectReadyHook g_saveObjectReadyHook = nullptr;
 // Fire the hook ONCE per loaded/created save object (guard against the boot poll re-firing it,
 // though the load/create blocks already run once). The hook self-gates to a no-op off a join.
-void FireSaveObjectReadyHook(void* saveObj) {
-    if (!g_saveObjectReadyHook || !saveObj) return;
+bool FireSaveObjectReadyHook(void* saveObj) {
+    if (!g_saveObjectReadyHook || !saveObj) return true;
     UE_LOGI("engine: firing SaveObjectReadyHook on save object %p (pre-materialize)", saveObj);
-    g_saveObjectReadyHook(saveObj);
+    return g_saveObjectReadyHook(saveObj);
 }
 
 // Story/sandbox GameMode fix (2026-06-03). VOTV stores a save's game mode ONLY in
@@ -395,7 +395,14 @@ bool LoadStorySave(const wchar_t* slot, int forceGameMode) {
         // Inc 4: the save's inventory arrays are now present but the world has NOT been built
         // from them yet -- the one moment a coop client can substitute its per-player inventory
         // (no-op off a join). Fires once (this block runs once; g_storySave then stays cached).
-        FireSaveObjectReadyHook(g_storySave);
+        if (!FireSaveObjectReadyHook(g_storySave)) {
+            UE_LOGE("engine: LoadStorySave -- SaveObjectReadyHook refused save '%ls'; "
+                    "not registering or traveling with host-derived player state", slot);
+            g_storySave = nullptr;
+            g_storySaveIdx = -1;
+            g_storySaveSlot.clear();
+            return false;
+        }
     }
 
     // Register on the (persistent) GameInstance + flag the GameMode to APPLY it on
@@ -509,7 +516,14 @@ bool StartFreshGame(bool storyMode) {
                 g_storySave, g_storySaveIdx);
         // Inc 4: a fresh client join (no host save) still gets its per-player inventory applied
         // onto the BLANK save here, before loadObjects() materializes it (no-op off a join).
-        FireSaveObjectReadyHook(g_storySave);
+        if (!FireSaveObjectReadyHook(g_storySave)) {
+            UE_LOGE("engine: StartFreshGame -- SaveObjectReadyHook refused blank save; "
+                    "not registering or traveling with unapplied player state");
+            g_storySave = nullptr;
+            g_storySaveIdx = -1;
+            g_storySaveSlot.clear();
+            return false;
+        }
     }
 
     // Register the blank save under a temp slot name. (Persistence suppression is a later

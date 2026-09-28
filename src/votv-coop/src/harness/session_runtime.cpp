@@ -319,21 +319,21 @@ void DriveMenuModeJoinWorldBoot() {
     // the moment our GUID arrives (in the Join, right after connect), so it has almost always arrived
     // during the save-transfer wait above -- this is the safety barrier. If it is already here we skip
     // the wait. Both load branches below wait first.
-    auto waitForApplyBlob = [] {
+    auto waitForApplyBlob = []() -> bool {
         namespace PIS = coop::player_inventory_sync;
-        if (PIS::HasPendingApply()) return;
+        if (PIS::HasPendingApply()) return true;
         const ULONGLONG w0 = ::GetTickCount64();
         while (!PIS::HasPendingApply()) {
-            if (coop::shutdown::IsShuttingDown() || !g_session.running()) return;
+            if (coop::shutdown::IsShuttingDown() || !g_session.running()) return false;
             // 20 s safety cap. In practice the apply blob lands in ~1 RTT -- almost always DURING the
             // save-transfer download above, before this wait even begins (HasPendingApply() is then
-            // already true and we never spin here). The cap only fires for a degenerate case: the host
-            // has no inventory for us / a version-mismatched host that never sends. On timeout we load
-            // anyway and the apply hook SKIPS (keeps the loaded inventory, never wipes).
+            // already true and we never spin here). The cap only fires for a degenerate case. Loading
+            // the transferred host save without a personal apply blob would clone the host inventory,
+            // so timeout is a failed join rather than a fail-open world load.
             if (::GetTickCount64() - w0 > 20000) {
-                UE_LOGW("harness: inventory apply blob did not arrive in 20s -- loading with the "
-                        "loaded inventory (the apply hook will skip)");
-                return;
+                UE_LOGE("harness: personal player-state blob did not arrive in 20s -- refusing "
+                        "world load (host inventory must never be used as a fallback)");
+                return false;
             }
             PostPumpComposite([] {
                 coop::net_pump::Tick(g_session);
@@ -345,7 +345,16 @@ void DriveMenuModeJoinWorldBoot() {
             ::Sleep(16);
         }
         UE_LOGI("harness: inventory apply blob ready -- proceeding to load the world");
+        return true;
     };
+
+    if (!waitForApplyBlob()) {
+        if (g_session.running() && g_session.role() == coop::net::Role::Client) g_session.Stop();
+        coop::join_progress::Reset();
+        ui::server_browser_surface::Open();
+        ue_wrap::log::Flush();
+        return;
+    }
 
     // v107 (2026-07-08) HOST-WIPE ROOT FIX: arm the world-load episode BEFORE the boot that triggers the
     // game's mainGamemode.loadObjects pre-delete. During that load the destroy seam suppresses the
@@ -367,14 +376,12 @@ void DriveMenuModeJoinWorldBoot() {
         auto rst = std::make_shared<std::atomic<int>>(0);
         Post([rst] { ue_wrap::engine::ResetCachedSave(); rst->store(1); });
         while (rst->load() == 0 && !coop::shutdown::IsShuttingDown()) ::Sleep(5);
-        waitForApplyBlob();
         if (!BootStorySaveBlocking(/*forceFresh=*/false, slot.c_str(), mode)) {
             UE_LOGW("harness: coop-slot load did not reach gameplay -- falling back fresh");
             BootStorySaveBlocking(/*forceFresh=*/true);
         }
     } else {
         UE_LOGI("harness: host save unavailable/failed -- fresh-booting the ephemeral baseline");
-        waitForApplyBlob();
         BootStorySaveBlocking(/*forceFresh=*/true);
     }
 }

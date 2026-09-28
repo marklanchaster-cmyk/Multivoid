@@ -71,6 +71,11 @@ void TickPendingAdoptionReleases(coop::net::Session* session);
 bool HostAuthorizeAdoptionTarget(void* actor, uint8_t senderSlot);
 bool HostSendAdoptionRefusal(uint8_t requesterSlot, uint64_t adoptionId);
 
+// A within-session client world change invalidates every actor pointer and
+// pre-grab locator captured in the departing world. Retire those transactions
+// before the fresh world's snapshot can deliver a coincidentally matching ACK.
+void OnClientWorldReady();
+
 // (The proximity RE-PILE death-watch -- WatchClumpForRepile / Tick -- is RETIRED 2026-06-21, RULE 2. It
 // converted on the clump's DEATH by a nearest-untracked pile search; the DETERMINISTIC UFunction::Func thunk
 // (OnBeginDeferredSpawnObserve in the .cpp, installed in Install) replaced it after a hands-on validated the

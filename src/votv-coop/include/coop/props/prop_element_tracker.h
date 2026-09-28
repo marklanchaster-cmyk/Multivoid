@@ -81,7 +81,18 @@ void UnmarkProcessedInit(void* actor);
 size_t ClearProcessedInit();
 
 // ---- KnownKeyedProps maintained set --------------------------------------
-void MarkKnownKeyedProp(void* actor);
+void MarkKnownKeyedProp(void* actor, int32_t internalIdx = -1);
+
+// Snapshot the bounded maintained ordinary-prop candidate universe used by
+// host adoption.  Unlike KeyIndexEntry this includes eligible keyless actors.
+// Entries originate only at the existing Init/census/reseed discovery seams;
+// this function never walks GUObjectArray.  Consumers must use
+// IsLiveByIndex(actor, internalIdx) before dereferencing actor.
+struct PropCandidateEntry {
+    void*   actor       = nullptr;
+    int32_t internalIdx = -1;
+};
+void CollectPropCandidateEntries(std::vector<PropCandidateEntry>& out);
 
 // Drains BOTH the known set AND the Prop Element shadow (one operation
 // because they share the actor-keyed lifecycle). Drain-then-destruct

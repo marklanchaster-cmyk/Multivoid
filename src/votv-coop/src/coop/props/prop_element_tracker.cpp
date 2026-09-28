@@ -89,8 +89,9 @@ std::atomic<bool> g_processedInitOverflowLogged{false};
 std::atomic<bool> g_knownKeyedPropsOverflowLogged{false};
 
 // ---- Prop Element shadow (PR-FOUNDATION-3 Inc3, 2026-05-30) --------------
-// Each entry in g_knownKeyedProps has a parallel Prop Element. The SOLE
-// canonical OWNER of every Prop Element -- this peer's own keyed-interactable
+// Keyed entries normally have a parallel Prop Element; keyless ordinary props
+// intentionally remain candidate-only until host adoption. The SOLE canonical
+// OWNER of every actual Prop Element -- this peer's own keyed-interactable
 // locals AND remote_prop's wire mirrors -- is now the shared singleton
 // coop::element::MirrorManager<Prop>::Instance() (PropMirrors()). The host/
 // seed side here used to keep a bespoke g_propElementsById owner map; that
@@ -140,6 +141,7 @@ using coop::element::PropMirrors;   // canonical accessor (coop/element/mirror_m
 // walk in prop_census.cpp and the Mark/Unmark maintenance here use one set).
 std::mutex g_knownKeyedPropsMutex;
 std::unordered_set<void*> g_knownKeyedProps;
+std::unordered_map<void*, int32_t> g_propCandidates;
 
 // ---- Session pointer setter ---------------------------------------------
 
@@ -194,10 +196,11 @@ size_t ClearProcessedInit() {
 
 // ---- KnownKeyedProps maintenance ----------------------------------------
 
-void MarkKnownKeyedProp(void* actor) {
+void MarkKnownKeyedProp(void* actor, int32_t internalIdx) {
     if (!actor) return;
     std::lock_guard<std::mutex> lk(g_knownKeyedPropsMutex);
-    if (g_knownKeyedProps.size() >= kKnownKeyedPropsCap) {
+    const bool alreadyKnown = g_knownKeyedProps.count(actor) != 0;
+    if (!alreadyKnown && g_knownKeyedProps.size() >= kKnownKeyedPropsCap) {
         if (!g_knownKeyedPropsOverflowLogged.exchange(true)) {
             UE_LOGW("prop_element_tracker: g_knownKeyedProps hit %zu cap; stopping inserts (snapshot will under-report -- Init/Destroy imbalance bug?)",
                     kKnownKeyedPropsCap);
@@ -205,6 +208,15 @@ void MarkKnownKeyedProp(void* actor) {
         return;
     }
     g_knownKeyedProps.insert(actor);
+    if (internalIdx >= 0) g_propCandidates[actor] = internalIdx;
+}
+
+void CollectPropCandidateEntries(std::vector<PropCandidateEntry>& out) {
+    out.clear();
+    std::lock_guard<std::mutex> lk(g_knownKeyedPropsMutex);
+    out.reserve(g_propCandidates.size());
+    for (const auto& [actor, idx] : g_propCandidates)
+        out.push_back(PropCandidateEntry{actor, idx});
 }
 
 void UnmarkKnownKeyedProp(void* actor) {
@@ -212,6 +224,7 @@ void UnmarkKnownKeyedProp(void* actor) {
     {
         std::lock_guard<std::mutex> lk(g_knownKeyedPropsMutex);
         g_knownKeyedProps.erase(actor);
+        g_propCandidates.erase(actor);
     }
     // (sync-refactor 2026-06-27) The is-save-native flag now lives on the Element and dies with it (the mirror
     // lifecycle is owned by the MirrorManager); no separate set to clear here.
@@ -621,6 +634,7 @@ size_t ReapDeadLocalPropElements(size_t maxEvictions,
             {
                 std::lock_guard<std::mutex> lk(g_knownKeyedPropsMutex);
                 g_knownKeyedProps.erase(pr.actor);
+                g_propCandidates.erase(pr.actor);
             }
             UnmarkProcessedInit(pr.actor);
             // Evict the key->actor index too (same ownership gate -- erases the

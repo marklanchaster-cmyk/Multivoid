@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <unordered_map>
 
 namespace ue_wrap::inventory {
 namespace {
@@ -93,6 +94,26 @@ void BuildAndSwapArray(void* saveSlot, int32_t off, int32_t stride,
     } else {
         SR::WriteArrHeader(saveSlot, off, nullptr, 0);  // num==0 or alloc failed -> empty
     }
+}
+
+bool ClassesResolvable(const SR::SaveRecord& record,
+                       std::unordered_map<std::wstring, bool>& cache) {
+    const auto resolve = [&](const std::wstring& leaf) {
+        if (leaf.empty()) return true;  // null nested TSubclassOf is valid
+        const auto it = cache.find(leaf);
+        if (it != cache.end()) return it->second;
+        const bool ok = R::FindClass(leaf.c_str()) != nullptr;
+        cache.emplace(leaf, ok);
+        if (!ok)
+            UE_LOGW("inventory: profile class '%ls' is not loaded/resolvable -- refusing apply",
+                    leaf.c_str());
+        return ok;
+    };
+    if (record.className.empty() || !resolve(record.className)) return false;
+    for (const auto& group : record.classes)
+        for (const auto& leaf : group)
+            if (!resolve(leaf)) return false;
+    return true;
 }
 
 }  // namespace
@@ -187,6 +208,16 @@ bool ReadLivePersonalStore(LivePersonalStore& out) {
 
 bool ApplyToSaveObject(void* saveSlot, const PlayerInventory& inv) {
     if (!saveSlot || !R::IsLive(saveSlot)) return false;
+    // Validate every UClass leaf before the first write. WriteSaveRecord's
+    // generic codec represents an unresolved class as null; allowing that here
+    // would silently corrupt an unsupported/lazy item instead of failing closed.
+    std::unordered_map<std::wstring, bool> classCache;
+    for (const auto& record : inv.inventory)
+        if (!ClassesResolvable(record, classCache)) return false;
+    for (const auto& row : inv.equipment)
+        if (!row.data.className.empty() && !ClassesResolvable(row.data, classCache)) return false;
+    for (const auto& row : inv.hold)
+        if (!row.data.className.empty() && !ClassesResolvable(row.data, classCache)) return false;
     if (void* probe = R::EngineAlloc(16)) {  // GMalloc probe: a failure -> we'd silently write
         R::EngineFree(probe);                // empty arrays over a real inventory; refuse instead
     } else {
@@ -194,13 +225,30 @@ bool ApplyToSaveObject(void* saveSlot, const PlayerInventory& inv) {
                 "refusing to write empty inventory over saveSlot %p", saveSlot);
         return false;
     }
+    // The gameplay inventory is saveSlot.GObjStack[0], not inventoryData.
+    // Index 0 is verified from prop_inventoryContainer_player_C's baked
+    // propInventory template. Require the transferred save to contain that
+    // slot; inventing/reordering the outer global container table would corrupt
+    // every world container that indexes it.
+    if (CachedOffset(g_offGObjStack, R::ClassOf(saveSlot), L"GObjStack") < 0) return false;
+    const SR::Arr stack = SR::ReadArr(saveSlot, g_offGObjStack);
+    if (!stack.data || stack.num <= 0) {
+        UE_LOGW("inventory: ApplyToSaveObject -- GObjStack[0] unavailable on %p; refusing host-inventory fallback",
+                saveSlot);
+        return false;
+    }
+    void* const personalSlot = const_cast<uint8_t*>(stack.data);
+    BuildAndSwapArray(personalSlot, 0, SR::kSaveStride, inv.inventory,
+                      [](uint8_t* e, const SR::SaveRecord& r) { SR::WriteSaveRecord(e, r); });
+    // Keep the save-side projection coherent for native save/repair code and
+    // diagnostics even though gameplay reads the personal GObjStack slot.
     BuildAndSwapArray(saveSlot, kOff_inventoryData, SR::kSaveStride, inv.inventory,
                       [](uint8_t* e, const SR::SaveRecord& r) { SR::WriteSaveRecord(e, r); });
     BuildAndSwapArray(saveSlot, kOff_equipment, kEquipStride, inv.equipment,
                       [](uint8_t* e, const EquipRecord& r) { WriteEquipRecord(e, r); });
     BuildAndSwapArray(saveSlot, kOff_hold, kEquipStride, inv.hold,
                       [](uint8_t* e, const EquipRecord& r) { WriteEquipRecord(e, r); });
-    UE_LOGI("inventory: ApplyToSaveObject(%p) wrote inventory=%zu equipment=%zu hold=%zu",
+    UE_LOGI("inventory: ApplyToSaveObject(%p) wrote GObjStack[0]+projection=%zu equipment=%zu hold=%zu",
             saveSlot, inv.inventory.size(), inv.equipment.size(), inv.hold.size());
     return true;
 }

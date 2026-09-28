@@ -76,9 +76,10 @@ bool StartFreshGame(bool storyMode);
 // from them yet. This is the RULE-1 apply injection point: the game's own load builds the live
 // inventory from whatever we leave in the save object (no live obj_11 poke, no second reload).
 // The hook MUST self-gate to a no-op unless the coop layer has a pending per-player inventory
-// (armed only on a CLIENT join); engine.cpp fires it unconditionally. Registering null disarms.
+// (armed only on a CLIENT join); engine.cpp fires it unconditionally. False refuses registration/
+// travel with that save object. Registering null disarms and is treated as success.
 // Principle 7: the substrate exposes the injection point, holding no inventory knowledge.
-using SaveObjectReadyHook = void(*)(void* saveSlotObject);
+using SaveObjectReadyHook = bool(*)(void* saveSlotObject);
 void SetSaveObjectReadyHook(SaveObjectReadyHook hook);
 
 // VOTV encodes a save's game MODE only in its slot-name PREFIX (story "s_", infinite

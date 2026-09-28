@@ -1,7 +1,7 @@
 // coop/player_inventory_sync.h -- per-player client inventory (host-persisted, GUID-keyed).
 //
 // Replaces the v56 whole-host-save inventory inheritance with a Minecraft-style per-player
-// inventory persisted on the HOST at SaveGamesDir()/<save_name>/coop_players/<guid>.json,
+// inventory persisted on the HOST at <game-dir>/coop_players/<save-slot>/<guid>.json,
 // keyed by the client's durable GUID -- hex(SHA-256(pubkey)[0..16]) of the key that
 // peer PROVED at admission (coop/net/peer_identity.h), never a value it sent.
 //
@@ -18,6 +18,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace coop::net { class Session; struct BlobChunkPayload; }
 
@@ -30,8 +31,8 @@ void Install(coop::net::Session* session);
 
 // Bidirectional PlayerInventoryBlob receiver (event_feed -> here); branches by role:
 //   * HOST receiving from a CLIENT slot (1..): one chunk of that client's inventory STREAM.
-//     Reassembles (per-sender) and, on a complete + CHANGED blob, persists it to that peer's
-//     coop_players/<guid>.json (atomic, magic + FNV integrity, .bak of last good, 15s rate-limit).
+//     Reassembles (per-sender), then validates additions against bounded host-issued pickup
+//     permits and existing host-owned identities before changing/checkpointing the profile.
 //   * CLIENT receiving from the HOST (slot 0): one chunk of the host's ON-JOIN apply blob (Inc 4,
 //     host->client). Reassembles and, on completion, deserializes + stashes it as the pending
 //     per-player inventory (HasPendingApply()), to be written into the save object by the
@@ -78,5 +79,12 @@ void Tick();
 // No-op off the host, or when the peer's GUID hasn't arrived yet (pre-v73 / Join not landed).
 // Called at the host's connect-replay edge (subsystems ConnectReplayForSlot). Game thread.
 void EnsurePlayerFile(int peerSlot);
+
+// HOST ownership transaction seams. A validated world pickup authorizes one
+// matching inventory addition for a short bounded window. A personal-inventory
+// drop retires and synchronously checkpoints ownership before world materialization.
+bool AuthorizeWorldPickup(int peerSlot, void* actor, const std::wstring& key);
+bool CommitInventoryDrop(int peerSlot, const std::wstring& key,
+                         const std::wstring& className);
 
 }  // namespace coop::player_inventory_sync

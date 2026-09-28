@@ -42,6 +42,10 @@ std::vector<uint8_t> Serialize(const PlayerInventory& inv) {
     for (const auto& r : inv.equipment) SerEquip(b, r);
     W::AppU32(b, static_cast<uint32_t>(inv.hold.size()));
     for (const auto& r : inv.hold) SerEquip(b, r);
+    W::AppF32(b, inv.vitals.health);
+    W::AppF32(b, inv.vitals.maxHealth);
+    W::AppF32(b, inv.vitals.food);
+    W::AppF32(b, inv.vitals.stamina);
     return b;
 }
 
@@ -59,7 +63,11 @@ bool Deserialize(const std::vector<uint8_t>& b, PlayerInventory& out) {
     if (!W::RdU32(b, o, n) || n > W::kMaxRecords || !W::Feasible(n, b, o)) return false;
     out.hold.resize(n);
     for (auto& r : out.hold) if (!DeEquip(b, o, r)) return false;
-    return true;
+    if (!W::RdF32(b, o, out.vitals.health) ||
+        !W::RdF32(b, o, out.vitals.maxHealth) ||
+        !W::RdF32(b, o, out.vitals.food) ||
+        !W::RdF32(b, o, out.vitals.stamina)) return false;
+    return o == b.size();
 }
 
 }  // namespace coop::inventory_wire
