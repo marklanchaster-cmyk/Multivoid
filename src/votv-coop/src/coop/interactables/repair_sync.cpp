@@ -2,6 +2,7 @@
 
 #include "coop/interactables/repair_sync.h"
 
+#include "coop/element/object_scan_hub.h"
 #include "coop/element/portable_identity.h"
 #include "coop/interactables/serverbox_sync.h"
 #include "coop/net/protocol.h"
@@ -13,6 +14,7 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
 #include "ue_wrap/core/vm_dispatch.h"
+#include "ue_wrap/engine/world_identity.h"
 
 #include <algorithm>
 #include <atomic>
@@ -55,11 +57,25 @@ struct Desc {
     int32_t cycleOff = -1;  // generator_C only
 };
 
+struct TargetRef {
+    void* actor = nullptr;
+    int32_t internalIndex = -1;
+    uint8_t target = 0;
+};
+
 Desc g_descs[] = {
     {kRepairServer,     L"serverBox_C",  L"IsBroken", L"isBroken", false},
     {kRepairRadioTower, L"radiotower_C", L"IsBroken", L"isBroken", false},
     {kRepairGenerator,  L"generator_C",  L"isBroken", L"IsBroken", false},
 };
+
+// Discovery belongs to the shared sliced object scan.  The old 100 ms poll did
+// two complete GUObjectArray walks (radio tower + generators) in one frame,
+// i.e. up to twenty full game-thread walks per second.  Keep the responsive
+// 100 ms state poll, but make it read this tiny index instead.
+std::vector<TargetRef> g_targetIndex;
+std::vector<TargetRef> g_scanFound;
+uint32_t g_targetIndexGen = 0;
 
 std::unordered_map<std::string, bool> g_lastRepaired;
 uint64_t g_lastPoll = 0;
@@ -156,13 +172,78 @@ bool IsTargetInstance(void* object, const Desc& d) {
     return cls == d.cls;
 }
 
-void SnapshotTargets(const Desc& d, std::vector<void*>& out) {
-    out.clear();
-    if (d.target == kRepairServer) {
-        coop::serverbox_sync::SnapshotServers(out);
+bool HubEnsureResolved() {
+    bool any = false;
+    for (auto& d : g_descs) {
+        ResolveDesc(d);
+        any = any || d.cls != nullptr;
+    }
+    return any;
+}
+
+bool HubIsInstance(void* object) {
+    for (const auto& d : g_descs)
+        if (IsTargetInstance(object, d)) return true;
+    return false;
+}
+
+void HubPassBegin(void*, bool) { g_scanFound.clear(); }
+
+void HubMatch(void*, void* object) {
+    for (const auto& d : g_descs) {
+        if (!IsTargetInstance(object, d)) continue;
+        g_scanFound.push_back(TargetRef{object, R::InternalIndexOf(object), d.target});
         return;
     }
-    out = R::FindObjectsByClass(d.className);
+}
+
+size_t HubPassComplete(void*, bool isFull, uint32_t worldGen) {
+    if (isFull) g_targetIndex.clear();
+    for (const auto& found : g_scanFound) {
+        const auto same = [&found](const TargetRef& old) {
+            return old.actor == found.actor && old.internalIndex == found.internalIndex;
+        };
+        if (std::find_if(g_targetIndex.begin(), g_targetIndex.end(), same) ==
+            g_targetIndex.end()) {
+            g_targetIndex.push_back(found);
+        }
+    }
+    g_targetIndex.erase(
+        std::remove_if(g_targetIndex.begin(), g_targetIndex.end(), [](const TargetRef& ref) {
+            return !R::IsLiveByIndex(ref.actor, ref.internalIndex);
+        }),
+        g_targetIndex.end());
+    g_scanFound.clear();
+    g_targetIndexGen = worldGen;
+    return g_targetIndex.size();
+}
+
+void RegisterWithScanHub() {
+    static bool registered = false;
+    if (registered) return;
+    registered = true;
+    coop::element::scan_hub::Register(coop::element::scan_hub::Consumer{
+        "repair_targets", nullptr, &HubEnsureResolved, &HubIsInstance,
+        &HubPassBegin, &HubMatch, &HubPassComplete, /*settleScans*/ 15});
+}
+
+void SnapshotTargets(const Desc& d, std::vector<void*>& out, bool allowColdFallback = false) {
+    out.clear();
+    if (g_targetIndexGen == ue_wrap::world_identity::Generation()) {
+        for (const auto& ref : g_targetIndex) {
+            if (ref.target == d.target && R::IsLiveByIndex(ref.actor, ref.internalIndex))
+                out.push_back(ref.actor);
+        }
+    }
+    if (!out.empty() || !allowColdFallback) return;
+
+    // A repair packet can beat the first sliced pass during a join.  That rare
+    // packet path may pay one synchronous lookup rather than dropping a valid
+    // authoritative outcome; the steady 100 ms poll never takes this fallback.
+    if (d.target == kRepairServer)
+        coop::serverbox_sync::SnapshotServers(out);
+    else
+        out = R::FindObjectsByClass(d.className);
 }
 
 bool ReadRawBool(void* actor, const Desc& d, bool& v) {
@@ -232,7 +313,7 @@ void* FindTarget(const coop::net::RepairOutcomePayload& p, Desc** outDesc = null
         if (!d.cls || d.stateOff < 0) continue;
 
         std::vector<void*> candidates;
-        SnapshotTargets(d, candidates);
+        SnapshotTargets(d, candidates, /*allowColdFallback*/ true);
         for (void* obj : candidates) {
             if (!obj || !R::IsLive(obj) || !IsTargetInstance(obj, d)) continue;
             if (ActorIdentity(obj) != want) continue;
@@ -569,6 +650,7 @@ void OnNativeVerbEntry(const VM::Bracket& bracket) {
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
+    RegisterWithScanHub();
     if (!g_nativeRegistrationAttempted) {
         g_nativeRegistrationAttempted = true;
         g_generatorFullFixReady = VM::RegisterVirtualVerb(
@@ -732,6 +814,9 @@ void OnDisconnect() {
     g_pendingNative.clear();
     g_nativeDebounce.clear();
     g_lastPoll = 0;
+    g_targetIndex.clear();
+    g_scanFound.clear();
+    g_targetIndexGen = 0;
     VM::SetEnabled(false);
     SG::SetEnabled(false);
 

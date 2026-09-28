@@ -65,8 +65,8 @@ bool g_opened = false;
 // The pre-existing answer was ~20 explicit Flush() calls at hand-picked milestones.
 // That is a SITE LIST, and it fails the way site lists fail: it covers the paths
 // someone anticipated, and the session that actually broke was not one of them.
-// The invariant replaces the list -- the log on disk is never more than
-// kFlushIntervalMs behind the process, whatever happens next and whoever writes.
+// The invariant replaces the list -- the log is handed to a background flush
+// within kFlushIntervalMs, whatever happens next and whoever writes.
 //
 // It does NOT reintroduce what the 2026-05-27 audit removed. That measured ~50
 // synchronous disk syncs/sec from per-INFO flush (a ~2000-line dedup burst over
@@ -76,12 +76,49 @@ bool g_opened = false;
 // The per-line cost added is one GetTickCount64(), which reads KUSER_SHARED_DATA
 // with no syscall; its ~15.6 ms granularity is irrelevant against a 1 s interval.
 //
-// RESIDUAL, stated rather than discovered later: a process that dies during a
-// QUIET period still loses the tail written since the last flush, because there is
-// no later write to carry the check. Bounded by "lines written in the final second
-// of activity", not by "everything since the last WARN".
+// RESIDUAL, stated rather than discovered later: dispatch plus the bounded quiet
+// wait below can put the durable file about two seconds behind during continuous
+// logging. A hard kill inside that window can lose that tail; it cannot lose an
+// unbounded session the way the old CRT-only buffering did.
 constexpr ULONGLONG kFlushIntervalMs = 1000;
 ULONGLONG g_lastFlushMs = 0;
+std::atomic<ULONGLONG> g_lastWriteMs{0};
+std::atomic<bool> g_asyncFlushQueued{false};
+
+// `fflush` was measured at 80-85 ms under Wine/Proton on 2026-09-28. Doing it
+// from Write() made the ordinary 2 s net/position diagnostics freeze one game
+// frame for ~95 ms every time. The worker waits for a short quiet gap before
+// taking the FILE lock, so a burst of diagnostic lines is not serialized behind
+// the slow flush either. Explicit Flush() and WARN/ERROR remain synchronous:
+// those are rare durability barriers, not a recurring game-thread task.
+DWORD WINAPI AsyncFlushWorker(void*) {
+    constexpr ULONGLONG kQuietMs = 50;
+    constexpr int kMaxWaits = 100;  // bounded: at most ~1 s under continuous logging
+    for (int i = 0; i < kMaxWaits; ++i) {
+        ::Sleep(10);
+        const ULONGLONG now = ::GetTickCount64();
+        if (now - g_lastWriteMs.load(std::memory_order_acquire) >= kQuietMs) break;
+    }
+
+    ::EnterCriticalSection(&g_lock);
+    const ULONGLONG now = ::GetTickCount64();
+    if (g_file && now >= g_lastFlushMs &&
+        now - g_lastFlushMs >= kFlushIntervalMs) {
+        std::fflush(g_file);
+        g_lastFlushMs = ::GetTickCount64();
+    }
+    ::LeaveCriticalSection(&g_lock);
+    g_asyncFlushQueued.store(false, std::memory_order_release);
+    return 0;
+}
+
+void RequestAsyncFlush() {
+    bool expected = false;
+    if (!g_asyncFlushQueued.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel)) return;
+    if (!::QueueUserWorkItem(&AsyncFlushWorker, nullptr, WT_EXECUTEDEFAULT))
+        g_asyncFlushQueued.store(false, std::memory_order_release);
+}
 
 // Optional log sink (the in-game console). Atomic so SetSink is lock-free vs Write.
 std::atomic<Sink> g_sink{nullptr};
@@ -248,6 +285,10 @@ void Write(Level level, const char* fmt, ...) {
         std::strftime(ts, sizeof(ts), "%H:%M:%S", &tm);
     }
 
+    const ULONGLONG writeMs = ::GetTickCount64();
+    g_lastWriteMs.store(writeMs, std::memory_order_release);
+    bool requestFlush = false;
+
     ::EnterCriticalSection(&g_lock);
     std::fprintf(g_file, "[%s] [%-5s] %s\n", ts, Tag(level), msg);
     // Audit 2026-05-27 (post-v2 anim ship): per-INFO fflush was eating
@@ -258,21 +299,19 @@ void Write(Level level, const char* fmt, ...) {
     // INFO lines ride the CRT stdio buffer (~4 KB) and land on disk in
     // bursts.
     //
-    // ...and INFO is flushed anyway once kFlushIntervalMs has passed, so the
-    // buffer can never outlive the process by more than that. See the constant
-    // for why the site list of explicit Flush() calls was not enough, and why
-    // this is 1/50th of the cost the 2026-05-27 audit rejected.
+    // Once kFlushIntervalMs has passed, INFO requests the quiet-period worker
+    // above. The expensive stdio drain therefore never runs inline on this
+    // recurring gameplay path.
     if (level != Level::Info) {
         std::fflush(g_file);
         g_lastFlushMs = ::GetTickCount64();
     } else {
-        const ULONGLONG now = ::GetTickCount64();
-        if (now - g_lastFlushMs >= kFlushIntervalMs) {
-            std::fflush(g_file);
-            g_lastFlushMs = now;
-        }
+        requestFlush = writeMs >= g_lastFlushMs &&
+                       writeMs - g_lastFlushMs >= kFlushIntervalMs;
     }
     ::LeaveCriticalSection(&g_lock);
+
+    if (requestFlush) RequestAsyncFlush();
 
     // Mirror to the sink OUTSIDE our critical section so the console's own lock can never
     // be held under g_lock (no lock-order inversion). The sink must not log (no recursion).
