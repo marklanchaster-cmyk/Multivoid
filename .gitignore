@@ -344,3 +344,9 @@ SUPPORT.md
 # Local-only: the server-browser redesign brief (USER 2026-08-30: "server_browser_arc не публикуем в паблик").
 docs/SERVER_BROWSER_ARC.md
 .aider*
+
+# Local CI downloads and editor/agent integration state.  These were swept
+# into b65011 by a broad staging operation; builds consume neither path.
+/build-artifact*/
+/.opencode/
+/temp.txt

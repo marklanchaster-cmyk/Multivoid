@@ -13,6 +13,7 @@
 #include <locale.h>
 #include <mutex>
 #include <share.h>
+#include <vector>
 
 namespace ue_wrap::log {
 namespace {
@@ -49,7 +50,15 @@ _locale_t Utf8Locale() {
 FILE* g_file = nullptr;
 CRITICAL_SECTION g_lock;
 std::once_flag g_lockOnce;
-bool g_opened = false;
+std::atomic<bool> g_opened{false};
+
+// INFO is produced predominantly on the game thread.  Never let that thread
+// contend with the Wine-slow fflush below: queue complete, already-formatted
+// lines in memory and let the worker be the sole ordinary INFO file writer.
+// WARN/ERROR and explicit Flush remain synchronous durability barriers and
+// drain this queue before writing their own line.
+std::mutex g_infoQueueMutex;
+std::vector<std::string> g_infoQueue;
 
 // STALENESS BOUND for buffered INFO.
 //
@@ -81,7 +90,20 @@ bool g_opened = false;
 constexpr ULONGLONG kFlushIntervalMs = 1000;
 std::atomic<ULONGLONG> g_lastWriteMs{0};
 std::atomic<bool> g_asyncFlushQueued{false};
-bool g_infoDirty = false;  // guarded by g_lock
+
+// Requires g_lock.  Lines are swapped out under their own short-held mutex so
+// producers never wait for file I/O.  Returning whether anything was drained
+// lets callers avoid a pointless fflush on an empty worker wake-up.
+bool DrainQueuedInfoLocked() {
+    std::vector<std::string> lines;
+    {
+        std::lock_guard<std::mutex> lk(g_infoQueueMutex);
+        lines.swap(g_infoQueue);
+    }
+    for (const std::string& line : lines)
+        std::fwrite(line.data(), 1, line.size(), g_file);
+    return !lines.empty();
+}
 
 // `fflush` was measured at 80-85 ms under Wine/Proton on 2026-09-28. Doing it
 // from Write() made the ordinary 2 s net/position diagnostics freeze one game
@@ -103,24 +125,39 @@ DWORD WINAPI AsyncFlushWorker(void*) {
     }
 
     ::EnterCriticalSection(&g_lock);
-    if (g_file && g_infoDirty) {
-        std::fflush(g_file);
-        g_infoDirty = false;
-    }
-    // Clear while still holding the same lock Write uses. A writer after this point observes
-    // false and queues the next worker; a writer before it was included in the flush above.
-    // Clearing after unlock leaves a lost-wakeup window and can strand the final quiet INFO.
-    g_asyncFlushQueued.store(false, std::memory_order_release);
+    const bool wrote = g_file && DrainQueuedInfoLocked();
+    if (wrote) std::fflush(g_file);
     ::LeaveCriticalSection(&g_lock);
+
+    // INFO producers no longer take g_lock, so close the lost-wakeup window
+    // under the queue mutex instead.  Anything appended while fflush ran gets
+    // its own worker; it must not be stranded behind the old worker's latch.
+    bool requeue = false;
+    {
+        std::lock_guard<std::mutex> lk(g_infoQueueMutex);
+        g_asyncFlushQueued.store(false, std::memory_order_release);
+        if (!g_infoQueue.empty()) {
+            g_asyncFlushQueued.store(true, std::memory_order_release);
+            requeue = true;
+        }
+    }
+    if (requeue && !::QueueUserWorkItem(&AsyncFlushWorker, nullptr, WT_EXECUTEDEFAULT)) {
+        std::lock_guard<std::mutex> lk(g_infoQueueMutex);
+        g_asyncFlushQueued.store(false, std::memory_order_release);
+    }
     return 0;
 }
 
 void RequestAsyncFlush() {
-    bool expected = false;
-    if (!g_asyncFlushQueued.compare_exchange_strong(
-            expected, true, std::memory_order_acq_rel)) return;
-    if (!::QueueUserWorkItem(&AsyncFlushWorker, nullptr, WT_EXECUTEDEFAULT))
+    {
+        std::lock_guard<std::mutex> lk(g_infoQueueMutex);
+        if (g_asyncFlushQueued.load(std::memory_order_acquire)) return;
+        g_asyncFlushQueued.store(true, std::memory_order_release);
+    }
+    if (!::QueueUserWorkItem(&AsyncFlushWorker, nullptr, WT_EXECUTEDEFAULT)) {
+        std::lock_guard<std::mutex> lk(g_infoQueueMutex);
         g_asyncFlushQueued.store(false, std::memory_order_release);
+    }
 }
 
 // Optional log sink (the in-game console). Atomic so SetSink is lock-free vs Write.
@@ -149,8 +186,12 @@ void EnsureOpen() {
     // threads before Init() (a plain-bool double-check would let two threads
     // init the CRITICAL_SECTION concurrently -- UB).
     std::call_once(g_lockOnce, [] { ::InitializeCriticalSection(&g_lock); });
+    // Steady-state INFO must not touch the file lock: the async worker can
+    // spend 80-85 ms in fflush while holding it under Wine.  Publication of
+    // g_file is sequenced before this release store at open.
+    if (g_opened.load(std::memory_order_acquire)) return;
     ::EnterCriticalSection(&g_lock);
-    if (!g_opened) {
+    if (!g_opened.load(std::memory_order_relaxed)) {
         wchar_t path[MAX_PATH] = {};
         LogPath(path);
         // Preserve the PREVIOUS session's log before the open below truncates it. Real
@@ -173,7 +214,7 @@ void EnsureOpen() {
         // log can be tailed live while the game runs -- without this the file is
         // locked exclusively and diagnostics can't be read until the game exits.
         g_file = _wfsopen(path, L"w", _SH_DENYWR);
-        g_opened = true;
+        g_opened.store(true, std::memory_order_release);
     }
     ::LeaveCriticalSection(&g_lock);
 }
@@ -194,7 +235,6 @@ void Init() {
     ::EnterCriticalSection(&g_lock);
     std::fprintf(g_file, "==== Multivoid log ====\n");
     std::fflush(g_file);
-    g_infoDirty = false;
     ::LeaveCriticalSection(&g_lock);
 }
 
@@ -202,9 +242,10 @@ void Shutdown() {
     std::call_once(g_lockOnce, [] { ::InitializeCriticalSection(&g_lock); });
     ::EnterCriticalSection(&g_lock);
     if (g_file) {
+        DrainQueuedInfoLocked();
         std::fclose(g_file);
         g_file = nullptr;
-        g_opened = false;
+        g_opened.store(false, std::memory_order_release);
     }
     ::LeaveCriticalSection(&g_lock);
 }
@@ -213,8 +254,8 @@ void Flush() {
     EnsureOpen();
     if (!g_file) return;
     ::EnterCriticalSection(&g_lock);
+    DrainQueuedInfoLocked();
     std::fflush(g_file);
-    g_infoDirty = false;
     ::LeaveCriticalSection(&g_lock);
 }
 
@@ -290,8 +331,11 @@ void Write(Level level, const char* fmt, ...) {
     g_lastWriteMs.store(writeMs, std::memory_order_release);
     bool requestFlush = false;
 
-    ::EnterCriticalSection(&g_lock);
-    std::fprintf(g_file, "[%s] [%-5s] %s\n", ts, Tag(level), msg);
+    char line[1120];
+    const int lineLen = std::snprintf(line, sizeof(line), "[%s] [%-5s] %s\n", ts, Tag(level), msg);
+    const size_t lineSize = lineLen <= 0 ? 0u
+        : (static_cast<size_t>(lineLen) < sizeof(line)
+               ? static_cast<size_t>(lineLen) : sizeof(line) - 1);
     // Audit 2026-05-27 (post-v2 anim ship): per-INFO fflush was eating
     // game-thread time -- a spam burst of ~2000 dedup INFO lines / ~40 s
     // (host re-broadcasting known props) translated to ~50 synchronous
@@ -304,13 +348,18 @@ void Write(Level level, const char* fmt, ...) {
     // above. The expensive stdio drain therefore never runs inline on this
     // recurring gameplay path.
     if (level != Level::Info) {
+        ::EnterCriticalSection(&g_lock);
+        DrainQueuedInfoLocked();
+        std::fwrite(line, 1, lineSize, g_file);
         std::fflush(g_file);
-        g_infoDirty = false;
+        ::LeaveCriticalSection(&g_lock);
     } else {
-        g_infoDirty = true;
+        {
+            std::lock_guard<std::mutex> lk(g_infoQueueMutex);
+            g_infoQueue.emplace_back(line, lineSize);
+        }
         requestFlush = true;
     }
-    ::LeaveCriticalSection(&g_lock);
 
     if (requestFlush) RequestAsyncFlush();
 

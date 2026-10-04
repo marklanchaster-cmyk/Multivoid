@@ -521,6 +521,7 @@ void DrainReseedQueue() {
         // the SOLE authority; the churn guard + freshness re-check keep a rebound/
         // recycled actor out of the express exactly as before.
         bool isNew = false;
+        bool known = false;
         {
             std::lock_guard<std::mutex> lk(g_knownKeyedPropsMutex);
             if (g_knownKeyedProps.size() < kKnownKeyedPropsCap &&
@@ -533,9 +534,23 @@ void DrainReseedQueue() {
                     isNew = true;
                 }
             }
-            if (g_knownKeyedProps.count(it.obj) != 0)
+            if (g_knownKeyedProps.count(it.obj) != 0) {
                 g_propCandidates[it.obj] = it.idx;
+                known = true;
+            }
         }
+        // A known pointer can still need a Mark refresh after its Element was
+        // retired, so skip only when the unified local-or-mirror binding is
+        // present and still points at this live array slot.  Do Registry work
+        // outside g_knownKeyedPropsMutex to keep the two lock domains unnested.
+        const coop::element::ElementId boundEid = known
+            ? coop::element::Registry::Get().EidForActor(it.obj)
+            : coop::element::kInvalidId;
+        coop::element::Element* boundEl = boundEid != coop::element::kInvalidId
+            ? coop::element::Registry::Get().Get(boundEid) : nullptr;
+        const bool alreadyTracked = boundEl &&
+            R::IsLiveByIndex(it.obj, boundEl->GetInternalIdx());
+        if (alreadyTracked) continue;
         // Phase-2 (outside the mutex, today's ordering): idempotent Mark refresh for
         // keyed (client: key-index only, v122 no-passive-mint) + keyless pile mint.
         const std::wstring cls = R::ClassNameOf(it.obj);

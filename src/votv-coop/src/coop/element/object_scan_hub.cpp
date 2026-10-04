@@ -167,9 +167,12 @@ void CompletePass() {
     for (Row& r : g_rows) {
         if (!r.activeThisPass) continue;
         const size_t count = r.c.OnPassComplete(r.c.ctx, g_passFull, gen);
-        // Settle feed -- verbatim SettledObjectScan::End semantics (zero never settles; any
-        // change resets; see the retired component's 18:41 rationale, preserved).
-        if (count > 0 && count == r.lastCount) {
+        // A stable empty result settles like every other stable result.  The old
+        // "zero never settles" rule made one legitimately absent optional family
+        // demand a 237k-object FULL pass every two seconds forever.  Late-loaded
+        // instances remain discoverable by tail passes and the ~20 s full
+        // backstop; absence is not a concrete reason for continuous full scans.
+        if (count == r.lastCount) {
             if (r.stableScans < r.c.settleScans) ++r.stableScans;
         } else if (count != r.lastCount) {
             r.stableScans = 0;
