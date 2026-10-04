@@ -19,9 +19,14 @@
 #include "coop/net/session.h"
 #include "coop/creatures/kerfur_entity.h"  // K-3: reserve the stable KerfurId when a kerfur NPC is registered
 #include "coop/creatures/npc_sync.h"
+#include "coop/creatures/fossilhound_birth.h"
 #include "coop/world/world_actor_sync.h"  // HostEnrollExSpawn -- the WA branch of the EX-catch drain
 #include "coop/world/event_active_sync.h"
 #include "coop/world/event_output_sync.h"
+#include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_lifecycle.h"
+#include "coop/props/prop_synth_key.h"
+#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/engine/engine.h"   // GetActorLocation / GetActorRotation
 #include "ue_wrap/actors/kerfur.h"   // HasSaveKey -- the ConnectEdge savePersisted gate
 #include "ue_wrap/core/log.h"
@@ -113,6 +118,7 @@ coop::element::ElementId EnrollUntrackedNpcActor(void* obj, const std::wstring& 
         // initiator peer parked a ghost tagged with it). kInvalidId -> 0 -> no eid ghost adopt.
         const coop::element::ElementId fromEid = coop::kerfur_entity::GetConvertFromEidForEid(eid);
         p.convertFromEid = (fromEid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(fromEid);
+        coop::fossilhound_birth::Capture(obj,p);
         if (!s->SendEntitySpawn(p)) {
             UE_LOGW("npc-sync[%s]: SendEntitySpawn failed for newly-registered eid=%u",
                     logTag, p.elementId);
@@ -181,6 +187,11 @@ constexpr ExSpawnPair kEventExSpawnPairs[] = {
     {L"ticker_treeSpawner_C", L"walkingTree_C"},
     {L"ticker_gost_C", L"poolwalker_C"},
     {L"ticker_egSpawner_C", L"eg_C"},
+    {L"event_fleshRain_C", L"prop_garbageClump_C"},
+    {L"event_fossilBoarWar_C", L"fossilhound_C"},
+    {L"event_fossilBoarWar_C", L"grayboar_C"},
+    {L"mainGamemode_C", L"NewBlueprint5_C"},
+    {L"screamingCorpseController_C", L"screamingCorpse_C"},
 };
 
 // A source's output may be a WorldActor-lane class (piramid2_C): same catch seam, drained to
@@ -198,10 +209,47 @@ bool IsWaAllowlistedClass(void* cls) {
 // Queue entries carry the internal index CAPTURED AT CATCH TIME so the drain validates with
 // IsLiveByIndex -- a raw pointer cached across a tick boundary is the documented AV/recycle
 // hazard class (reflection.h; the 2026-05-30 connect-edge precedent). Cleared on disconnect.
-struct PendingExSpawn { void* actor; int32_t internalIdx; };
+struct PendingExSpawn {
+    void* actor;
+    int32_t internalIdx;
+    void* source;
+    int32_t sourceIdx;
+    uint8_t retries;
+    bool eventPair;
+};
 std::mutex g_pendingMx;
 std::vector<PendingExSpawn> g_pendingExSpawns;        // queued actors awaiting the GT drain
-constexpr size_t kMaxPendingExSpawns = 256;           // sanity cap (a swarm is 32)
+// Flesh Rain can create roughly 400 clumps in one producer turn. Keep this
+// finite, but large enough that its source/product catch cannot truncate a
+// valid burst before the 1024-entry event-output registry sees it.
+constexpr size_t kMaxPendingExSpawns = 1024;
+size_t g_pendingHighWater = 0;
+size_t g_pendingTyped = 0;
+uint64_t g_pendingCaught = 0;
+uint64_t g_pendingRejected = 0;
+uint64_t g_pendingDeadBeforeDrain = 0;
+bool g_pendingOverflowWarned = false;
+bool g_pendingDeadWarned = false;
+
+// g_pendingMx must be held. Retries are not new catches, but a retry that
+// cannot re-enter the bounded queue is still a rejected entry.
+bool QueuePendingLocked(const PendingExSpawn& entry, bool freshCatch) {
+    if (g_pendingExSpawns.size() >= kMaxPendingExSpawns) {
+        ++g_pendingRejected;
+        if (!g_pendingOverflowWarned) {
+            g_pendingOverflowWarned = true;
+            UE_LOGW("npc-sync[ex-spawn]: deferred queue overflow at cap=%zu; entries are being "
+                    "rejected (run event_sync_status for totals)", kMaxPendingExSpawns);
+        }
+        return false;
+    }
+    g_pendingExSpawns.push_back(entry);
+    if (entry.eventPair) ++g_pendingTyped;
+    if (freshCatch) ++g_pendingCaught;
+    if (g_pendingExSpawns.size() > g_pendingHighWater)
+        g_pendingHighWater = g_pendingExSpawns.size();
+    return true;
+}
 
 // ufunction_hook post-native callback: fires for EVERY BeginDeferredActorSpawnFromClass
 // dispatch (PE-visible AND EX_CallMath), DEEP inside the engine spawn -- keep it cheap.
@@ -226,7 +274,7 @@ void OnBeginDeferredExSpawn(void* /*context*/, void* srcObj, void* spawned) {
     if (!coop::npc_sync::IsInstalled()) return;
     void* srcCls = R::ClassOf(srcObj);
     if (!srcCls) return;
-    bool sourceMatch = false;
+    bool sourceMatch = false, eventPair = false;
     for (const wchar_t* name : kExSpawnSourceClasses) {
         if (R::NameEquals(R::NameOf(srcCls), name)) { sourceMatch = true; break; }
     }
@@ -239,16 +287,18 @@ void OnBeginDeferredExSpawn(void* /*context*/, void* srcObj, void* spawned) {
             if (R::NameEquals(srcName, pair.source) &&
                 R::NameEquals(productName, pair.product)) {
                 sourceMatch = true;
+                eventPair = true;
                 break;
             }
         }
     }
     if (!sourceMatch) return;
-    if (!coop::npc_sync::IsAllowlistedClass(cls) && !IsWaAllowlistedClass(cls)) return;
+    if (!eventPair&&!coop::npc_sync::IsAllowlistedClass(cls) && !IsWaAllowlistedClass(cls)) return;
     const int32_t idx = R::InternalIndexOf(spawned);
     std::lock_guard<std::mutex> lk(g_pendingMx);
-    if (g_pendingExSpawns.size() >= kMaxPendingExSpawns) return;  // drain stalled? never grow unbounded
-    g_pendingExSpawns.push_back({spawned, idx});
+    QueuePendingLocked(
+        {spawned, idx, srcObj, R::InternalIndexOf(srcObj), 0, eventPair},
+        /*freshCatch=*/true);
 }
 
 }  // namespace
@@ -275,25 +325,67 @@ void DrainPendingExSpawns() {
         std::lock_guard<std::mutex> lk(g_pendingMx);
         if (g_pendingExSpawns.empty()) return;
         pending.swap(g_pendingExSpawns);
+        g_pendingTyped = 0;
     }
     for (const PendingExSpawn& e : pending) {
         void* obj = e.actor;
         // Index-paired liveness: the catch-time internal index makes a recycled slot read DEAD
         // instead of validating a different object at the same address (reflection.h pattern).
-        if (!obj || !R::IsLiveByIndex(obj, e.internalIdx)) continue;  // died before Finish / recycled
+        if (!obj || !R::IsLiveByIndex(obj, e.internalIdx)) {
+            std::lock_guard<std::mutex> lk(g_pendingMx);
+            ++g_pendingDeadBeforeDrain;
+            if (!g_pendingDeadWarned) {
+                g_pendingDeadWarned = true;
+                UE_LOGW("npc-sync[ex-spawn]: actor expired before deferred enrollment; "
+                        "further occurrences are counted by event_sync_status");
+            }
+            continue;
+        }
         void* cls = R::ClassOf(obj);
         if (!cls) continue;
+        const std::wstring clsName = R::ToString(R::NameOf(cls));
+        std::wstring sourceName;
+        if(e.source&&R::IsLiveByIndex(e.source,e.sourceIdx))
+            if(void* sourceCls=R::ClassOf(e.source))sourceName=R::ToString(R::NameOf(sourceCls));
+        const bool flesh=sourceName==L"event_fleshRain_C";
+        const bool fossil=sourceName==L"event_fossilBoarWar_C";
+        if((flesh&&clsName==L"prop_garbageClump_C")||(fossil&&clsName==L"grayboar_C")){
+            auto eid=coop::element::Registry::Get().EidForActor(obj);
+            if(eid==coop::element::kInvalidId){
+                // The ordinary Init observer is connected-gated.  Reuse its
+                // exact expression path for a live peer; when the host is
+                // alone, silently establish the same Prop identity so the
+                // later connect snapshot and event-output snapshot agree.
+                coop::prop_lifecycle::ExpressSpawnedProp(obj);
+                eid=coop::element::Registry::Get().EidForActor(obj);
+                if(eid==coop::element::kInvalidId){
+                    std::wstring key=ue_wrap::prop::GetInteractableKeyString(obj);
+                    key=coop::prop_synth_key::EnsureKeyForBroadcast(obj,key,/*mintForAprop=*/true);
+                    if(!key.empty()&&key!=L"None"){
+                        coop::prop_element_tracker::MarkPropElement(
+                            obj,key,clsName,coop::prop_element_tracker::EnrollSource::kExpressSeam);
+                        eid=coop::element::Registry::Get().EidForActor(obj);
+                    }
+                }
+            }
+            if(eid==coop::element::kInvalidId&&e.retries<10){auto retry=e;++retry.retries;std::lock_guard<std::mutex>lk(g_pendingMx);QueuePendingLocked(retry,/*freshCatch=*/false);continue;}
+            if(eid==coop::element::kInvalidId){UE_LOGW("event_output: event prop never acquired backing identity class=%ls source=%ls",clsName.c_str(),sourceName.c_str());continue;}
+            uint64_t instance=coop::event_active_sync::HostInstanceForController(e.source);
+            if(!instance&&fossil)instance=coop::event_active_sync::HostBeginExternal(e.source,"event_fossilBoarWar_C","fossilBoarWar");
+            if(instance&&eid!=coop::element::kInvalidId)coop::event_output_sync::HostBeginActor(instance,obj,static_cast<uint32_t>(eid),clsName==L"grayboar_C"?"grayboar_C":"prop_garbageClump_C",false);
+            continue;
+        }
         if (!coop::npc_sync::IsAllowlistedClass(cls)) {
-            // WorldActor-lane output (piramid2_C): hand to world_actor_sync's own enroll (it
-            // re-gates on its allowlist/lifecycle + dedups via its reverse map + broadcasts).
-            if (IsWaAllowlistedClass(cls))
-                coop::world_actor_sync::HostEnrollExSpawn(obj);
+            // WorldActor-lane output: hand the exact source/product catch to the
+            // package-aware enroll function. It re-gates class identity and lifecycle
+            // itself, so repeating the legacy leaf allowlist here would reject typed
+            // actors such as /Game/objects/NewBlueprint5 before its exact-package gate.
+            coop::world_actor_sync::HostEnrollExSpawn(obj);
             continue;
         }
         // npc-specific lifecycle gate (moved out of the catch 2026-07-04): without a working
         // destroy observer an Npc Element would leak -- skip the enroll, not the WA branch above.
         if (coop::npc_sync::IsHostNpcSyncDisabled()) continue;
-        const std::wstring clsName = R::ToString(R::NameOf(cls));
         // Dedup vs the interceptor+POST path: a PE-dispatched spawn that ALSO matched a source
         // class was already allocated by the PRE + bound by the POST (both ran before this drain).
         // Keep that backing eid, because the generic event-output association is independent and
@@ -318,6 +410,10 @@ void DrainPendingExSpawns() {
                         instance, obj, static_cast<uint32_t>(eid), "killerwisp_C", true) &&
                     instanceCreated)
                     coop::event_active_sync::HostEndExternal(obj);
+            } else if(fossil&&clsName==L"fossilhound_C") {
+                uint64_t instance=coop::event_active_sync::HostInstanceForController(e.source);
+                if(!instance)instance=coop::event_active_sync::HostBeginExternal(e.source,"event_fossilBoarWar_C","fossilBoarWar");
+                if(instance)coop::event_output_sync::HostBeginActor(instance,obj,static_cast<uint32_t>(eid),"fossilhound_C",false);
             }
         }
     }
@@ -329,6 +425,25 @@ void ClearPendingExSpawns() {
     // liveness gate). Called from npc_sync::OnDisconnect.
     std::lock_guard<std::mutex> lk(g_pendingMx);
     g_pendingExSpawns.clear();
+    g_pendingHighWater = 0;
+    g_pendingTyped = 0;
+    g_pendingCaught = 0;
+    g_pendingRejected = 0;
+    g_pendingDeadBeforeDrain = 0;
+    g_pendingOverflowWarned = false;
+    g_pendingDeadWarned = false;
+}
+
+void LogDiagnostics() {
+    std::lock_guard<std::mutex> lk(g_pendingMx);
+    UE_LOGI("event_sync_status: deferred current=%zu typedCurrent=%zu "
+            "highWaterSession=%zu capacity=%zu",
+            g_pendingExSpawns.size(), g_pendingTyped, g_pendingHighWater, kMaxPendingExSpawns);
+    UE_LOGI("event_sync_status: deferred caughtTotalSession=%llu "
+            "overflowDroppedTotalSession=%llu expiredBeforeDrainTotalSession=%llu",
+            static_cast<unsigned long long>(g_pendingCaught),
+            static_cast<unsigned long long>(g_pendingRejected),
+            static_cast<unsigned long long>(g_pendingDeadBeforeDrain));
 }
 
 int RegisterExistingWorldNpcs(NpcEnumOrigin origin) {

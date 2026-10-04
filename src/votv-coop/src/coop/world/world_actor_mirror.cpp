@@ -15,6 +15,7 @@
 
 #include "coop/element/identity_create.h"  // the single WorldActor mirror create funnel (Inc A)
 #include "coop/items/coingun_sync.h"
+#include "coop/world/event_actor_birth.h"
 #include "coop/element/mirror_managers.h"  // WaMirrors
 #include "coop/element/registry.h"
 #include "coop/element/world_actor.h"
@@ -27,7 +28,6 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/types.h"
 
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -55,6 +55,7 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
         UE_LOGI("world-actor[client OnSpawn]: received on host -- dropping (loopback bounce)");
         return;
     }
+    D::NoteBirthReceived();
     // Host-authoritative: the eid must be in the host range (the event_feed senderPeerSlot==0 gate
     // already rejected non-host senders).
     if (!coop::element::Registry::IsAllowedHostAllocatedEid(payload.elementId)) {
@@ -113,6 +114,7 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
     if (coop::element::WorldActor* existing = WaMirrors().Get(payload.elementId)) {
         void* prevActor = existing->GetActor();
         if (prevActor && R::IsLiveByIndex(prevActor, existing->GetInternalIdx())) {
+            D::NoteDuplicateBirth();
             UE_LOGW("world-actor[client OnSpawn]: eid=%u already mirrored by a LIVE actor=%p -- "
                     "dropping duplicate", payload.elementId, prevActor);
             return;
@@ -132,7 +134,9 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
                 payload.elementId);
         return;
     }
-    void* actorClass = R::FindClass(classW.c_str());
+    void* actorClass = coop::event_actor_birth::IsWireClassKey(classW)
+        ? coop::event_actor_birth::ResolveWireClass(classW)
+        : R::FindClass(classW.c_str());
     if (!actorClass) {
         UE_LOGW("world-actor[client OnSpawn]: class '%ls' not loaded -- dropping (eid=%u)",
                 classW.c_str(), payload.elementId);
@@ -221,6 +225,15 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
             coop::coingun_sync::SeedCoinMirror(spawned, pts);
         }
     }
+    if (coop::event_actor_birth::IsWireClassKey(classW) &&
+        !coop::event_actor_birth::ApplyBeforeFinish(spawned, classW, payload)) {
+        D::NoteBirthValidationFailure();
+        UE_LOGW("world-actor[client OnSpawn]: invalid required event birth for '%ls' eid=%u -- "
+                "destroying before FinishSpawning", classW.c_str(), payload.elementId);
+        D::ClearIncomingClass();
+        if (sp.k2DestroyFn && R::IsLive(spawned)) R::CallFunction(spawned, sp.k2DestroyFn, nullptr);
+        return;
+    }
     {
         ParamFrame finish(sp.finishSpawnFn);
         if (!finish.valid()) {
@@ -238,6 +251,13 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
             return;
         }
     }
+    if (!coop::event_actor_birth::ApplyAfterFinish(spawned, classW, payload)) {
+        D::NoteBirthValidationFailure();
+        UE_LOGW("world-actor[client OnSpawn]: failed to restore event lifecycle for '%ls' eid=%u -- "
+                "destroying mirror", classW.c_str(), payload.elementId);
+        if (sp.k2DestroyFn && R::IsLive(spawned)) R::CallFunction(spawned, sp.k2DestroyFn, nullptr);
+        return;
+    }
 
     const coop::element::ElementId eid = static_cast<coop::element::ElementId>(payload.elementId);
     if (!coop::element::CreateOrAdoptWorldActorMirror(eid, spawned, classW, /*senderSlot=*/-1)) {
@@ -249,7 +269,9 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload) {
     // Park the mirror so the streamed pose drive is authoritative: GENERIC actor-tick OFF (no CMC read --
     // a WorldActor is a plain AActor). Any residual component tick is overwritten each frame by the
     // pose drive's SetActorLocation/SetActorRotation (the MTA dead-reckoning model).
-    E::SetActorTickEnabled(spawned, false);
+    if (!coop::event_actor_birth::UsesLocalPresentationTick(
+            std::string(classW.begin(), classW.end())))
+        E::SetActorTickEnabled(spawned, false);
     // v137: a pose-driven mirror must not ALSO simulate -- the two fight and the mirror drifts off the
     // host's authoritative transform. `[V]` baocoin_C's `Sphere` ships bSimulatePhysics=True, making it
     // the FIRST simulating member of this allowlist; the 18 already-shipped classes are event actors
@@ -290,6 +312,7 @@ void OnWorldActorDestroy(const coop::net::EntityDestroyPayload& payload) {
         UE_LOGI("world-actor[client OnDestroy]: received on host -- dropping (loopback bounce)");
         return;
     }
+    D::NoteDestroyReceived();
     if (!coop::element::Registry::IsAllowedHostAllocatedEid(payload.elementId)) {
         UE_LOGW("world-actor[client OnDestroy]: eid=%u out of host range -- dropping", payload.elementId);
         return;
@@ -326,34 +349,20 @@ void TickClientWorldActors() {
     //    the trust boundary (a NaN must not reach SetActorLocation/SetActorRotation).
     std::vector<coop::net::WorldActorPoseSnapshot> batch;
     if (s->TakeRemoteWorldActorBatch(batch)) {
-        // [WA-TRACE client-apply] 1 Hz per-entry OUTCOME trace (2026-07-05 0s-frozen-pyramid hunt).
-        // Every skip branch below was SILENT -- a wrong eid / not-a-mirror / range-clamped entry
-        // freezes the mirror with zero evidence. The old "first batch" INFO only proved ARRIVAL.
-        static long long s_lastApplyTraceMs = 0;
-        const long long nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
-        const bool trace = !batch.empty() && (nowMs - s_lastApplyTraceMs >= 1000);
-        if (trace) s_lastApplyTraceMs = nowMs;
         for (const auto& snap : batch) {
             if (!std::isfinite(snap.x) || !std::isfinite(snap.y) || !std::isfinite(snap.z) ||
                 !std::isfinite(snap.pitch) || !std::isfinite(snap.yaw) || !std::isfinite(snap.roll)) {
-                if (trace) UE_LOGW("[WA-TRACE client-apply] eid=%u SKIP non-finite pose", snap.elementId);
                 continue;
             }
             if (std::fabs(snap.x) > 1.0e6f || std::fabs(snap.y) > 1.0e6f || std::fabs(snap.z) > 1.0e6f) {
-                if (trace) UE_LOGW("[WA-TRACE client-apply] eid=%u SKIP out-of-range (%.0f,%.0f,%.0f)",
-                                   snap.elementId, snap.x, snap.y, snap.z);
                 continue;
             }
             coop::element::WorldActor* el = WaMirrors().Get(snap.elementId);
             if (!el || !el->IsMirror()) {  // not materialized yet (connect gap) / defensive
-                if (trace) UE_LOGW("[WA-TRACE client-apply] eid=%u SKIP %s", snap.elementId,
-                                   el ? "element-not-mirror" : "no-element");
                 continue;
             }
+            if (coop::event_actor_birth::UsesLocalPresentationTick(el->GetTypeName())) continue;
             el->SetTargetPose(snap);
-            if (trace) UE_LOGI("[WA-TRACE client-apply] eid=%u wire=(%.0f,%.0f,%.0f) yaw=%.1f aux=%.1f -> SetTargetPose",
-                               snap.elementId, snap.x, snap.y, snap.z, snap.yaw, snap.auxYaw);
         }
         static bool s_loggedFirst = false;
         if (!batch.empty() && !s_loggedFirst) { s_loggedFirst = true;
@@ -366,6 +375,7 @@ void TickClientWorldActors() {
     WaMirrors().Snapshot(elems);
     for (coop::element::WorldActor* el : elems) {
         if (!el || !el->IsMirror()) continue;
+        if (coop::event_actor_birth::UsesLocalPresentationTick(el->GetTypeName())) continue;
         el->Tick();
         // v100 auxYaw + v102 auxVec consumers: the piramid's visible heading lives in its
         // ArrowComponents and its head look target in relLook -- neither is the actor

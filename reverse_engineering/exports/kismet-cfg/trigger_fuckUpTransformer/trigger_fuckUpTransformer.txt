@@ -1,0 +1,37 @@
+FunctionExport ExecuteUbergraph_trigger_fuckUpTransformer
+=== Block @ 0 ===
+    Successors: 
+
+0: EX_ComputedJump
+1:     EX_LocalVariable [EntryPoint]
+
+=== Block @ 10 ===
+    Successors: 
+
+10: EX_Context
+11:     EX_ObjectConst import /Script/Engine->Default__KismetArrayLibrary
+32:     EX_FinalFunction import /Script/Engine->KismetArrayLibrary->Array_Get
+41:         EX_Context
+42:             EX_InstanceVariable [gamemode]
+63:             EX_InstanceVariable [generators]
+72:         EX_InstanceVariable [index]
+81:         EX_LocalVariable [CallFunc_Array_Get_Item]
+91: EX_Context
+92:     EX_LocalVariable [CallFunc_Array_Get_Item]
+113:     EX_LocalVirtualFunction break
+127: EX_Return
+128:     EX_Nothing
+
+FunctionExport runTrigger
+=== Block @ 0 ===
+    Successors: ExecuteUbergraph_trigger_fuckUpTransformer:10 (Function)
+
+0: EX_LetValueOnPersistentFrame [K2Node_Event_owner]
+9:     EX_LocalVariable [owner]
+18: EX_LetValueOnPersistentFrame [K2Node_Event_index]
+27:     EX_LocalVariable [index]
+36: EX_LocalFinalFunction ExecuteUbergraph_trigger_fuckUpTransformer
+45:     EX_IntConst 10
+51: EX_Return
+52:     EX_Nothing
+

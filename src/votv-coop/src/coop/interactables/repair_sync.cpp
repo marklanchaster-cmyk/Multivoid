@@ -4,6 +4,7 @@
 
 #include "coop/element/object_scan_hub.h"
 #include "coop/element/portable_identity.h"
+#include "coop/interactables/generator_break_sync.h"
 #include "coop/interactables/serverbox_sync.h"
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -22,6 +23,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -78,7 +80,21 @@ std::vector<TargetRef> g_scanFound;
 uint32_t g_targetIndexGen = 0;
 
 std::unordered_map<std::string, bool> g_lastRepaired;
+std::unordered_map<std::string, uint32_t> g_hostRevision;
+std::unordered_map<std::string, uint32_t> g_clientRevision;
 uint64_t g_lastPoll = 0;
+
+struct PendingHostState {
+    coop::net::RepairOutcomePayload payload{};
+    uint64_t expiresMs = 0;
+    uint64_t nextAttemptMs = 0;
+};
+std::deque<PendingHostState> g_pendingHostStates;
+constexpr size_t kMaxPendingHostStates = 32;
+constexpr uint64_t kPendingHostStateTtlMs = 30000;
+constexpr uint64_t kPendingHostStateRetryMs = 100;
+bool g_retryingHostState = false;
+uint64_t g_retryingHostStateExpiryMs = 0;
 
 enum NativeVerbId : int {
     kVerbServerFix = 1,
@@ -313,7 +329,7 @@ void* FindTarget(const coop::net::RepairOutcomePayload& p, Desc** outDesc = null
         if (!d.cls || d.stateOff < 0) continue;
 
         std::vector<void*> candidates;
-        SnapshotTargets(d, candidates, /*allowColdFallback*/ true);
+        SnapshotTargets(d, candidates);
         for (void* obj : candidates) {
             if (!obj || !R::IsLive(obj) || !IsTargetInstance(obj, d)) continue;
             if (ActorIdentity(obj) != want) continue;
@@ -428,6 +444,22 @@ bool ApplyRepair(void* actor, Desc& d) {
     return ok;
 }
 
+bool ApplyBroken(void* actor, Desc& d) {
+    if (d.target != kRepairRadioTower) {
+        // ServerState owns server-box break state and GeneratorBreakState owns
+        // the transformer's full randomized puzzle. This message is still the
+        // ordering/revision barrier for those families.
+        return true;
+    }
+    const bool called = CallRadioTowerSetBroken(actor, true, false);
+    CallNoArg(actor, L"updPuzzle");
+    bool converged = true;
+    if (!IsRepairConverged(actor, d, converged) || converged) return false;
+    UE_LOGI("repair_sync[worldauth]: APPLY-BROKEN target=%u id='%s' called=%d",
+            static_cast<unsigned>(d.target), ActorIdentity(actor).c_str(), called ? 1 : 0);
+    return called;
+}
+
 std::string BaselineKey(uint8_t target, const std::string& id) {
     return std::to_string(static_cast<unsigned>(target)) + ":" + id;
 }
@@ -438,7 +470,7 @@ void NoteBaseline(uint8_t target, void* actor, bool repaired) {
         g_lastRepaired[BaselineKey(target, id)] = repaired;
 }
 
-bool SendOutcome(uint8_t target, void* actor) {
+bool SendOutcome(uint8_t target, void* actor, bool repaired = true, int slot = -1) {
     auto* s = g_session.load(std::memory_order_acquire);
     if (!s || !actor) return false;
 
@@ -451,14 +483,32 @@ bool SendOutcome(uint8_t target, void* actor) {
 
     coop::net::RepairOutcomePayload p{};
     p.target = target;
-    p.repaired = 1;
+    p.repaired = repaired ? 1 : 0;
     PutWireKey(p.key, id);
 
-    const bool sent = s->SendReliable(coop::net::ReliableKind::RepairOutcome, &p, sizeof(p));
+    const std::string bk = BaselineKey(target, id);
+    if (s->role() == coop::net::Role::Host) {
+        uint32_t& revision = g_hostRevision[bk];
+        if (revision == 0) revision = 1;
+        p.revision = revision;
+    } else {
+        const auto it = g_clientRevision.find(bk);
+        p.revision = it == g_clientRevision.end() ? 0 : it->second;
+        if (p.revision == 0)
+            UE_LOGW("repair_sync[worldauth]: CLIENT intent has no host revision target=%u "
+                    "id='%s' -- host must reject and resynchronize",
+                    static_cast<unsigned>(target), id.c_str());
+    }
+
+    const bool sent = slot >= 0
+        ? s->SendReliableToSlot(slot, coop::net::ReliableKind::RepairOutcome, &p, sizeof(p))
+        : s->SendReliable(coop::net::ReliableKind::RepairOutcome, &p, sizeof(p));
     if (sent) {
-        UE_LOGI("repair_sync[worldauth]: TX %s target=%u id='%s'",
-                s->role() == coop::net::Role::Host ? "host-outcome" : "client-request",
-                static_cast<unsigned>(target), GetWireKey(p.key).c_str());
+        UE_LOGI("repair_sync[worldauth]: TX %s target=%u id='%s' repaired=%u rev=%u%s",
+                s->role() == coop::net::Role::Host ? "host-state" : "client-request",
+                static_cast<unsigned>(target), GetWireKey(p.key).c_str(),
+                static_cast<unsigned>(p.repaired), p.revision,
+                slot >= 0 ? " snapshot/resync" : "");
     }
     return sent;
 }
@@ -601,6 +651,14 @@ void CheckNativeCompletion(PendingNativeCompletion pending) {
         return;
     }
 
+    const std::string bk = BaselineKey(pending.target, id);
+    const auto old = g_lastRepaired.find(bk);
+    const bool changed = old == g_lastRepaired.end() || !old->second;
+    if (s->role() == coop::net::Role::Host) {
+        uint32_t& revision = g_hostRevision[bk];
+        if (revision == 0) revision = 1;
+        else if (changed) ++revision;
+    }
     // Baseline first: polling is maintenance-only for native-observed targets,
     // but this also prevents a future fallback configuration from double-sending.
     NoteBaseline(pending.target, pending.actor, true);
@@ -674,6 +732,30 @@ void Tick() {
     ResolveGeneratorHumanWatch();
     DrainNativeCompletions();
 
+    if (!g_pendingHostStates.empty()) {
+        std::deque<PendingHostState> retry;
+        retry.swap(g_pendingHostStates);
+        const uint64_t retryNow = NowMs();
+        for (const auto& pending : retry) {
+            if (retryNow > pending.expiresMs) {
+                UE_LOGW("repair_sync[worldauth]: CLIENT pending host state expired target=%u "
+                        "id='%s' rev=%u",
+                        static_cast<unsigned>(pending.payload.target),
+                        GetWireKey(pending.payload.key).c_str(), pending.payload.revision);
+                continue;
+            }
+            if (retryNow < pending.nextAttemptMs) {
+                g_pendingHostStates.push_back(pending);
+                continue;
+            }
+            g_retryingHostState = true;
+            g_retryingHostStateExpiryMs = pending.expiresMs;
+            OnReliable(pending.payload, 0);
+            g_retryingHostState = false;
+            g_retryingHostStateExpiryMs = 0;
+        }
+    }
+
     const uint64_t now = NowMs();
     if (now - g_lastPoll < kPollMs) return;
     g_lastPoll = now;
@@ -699,6 +781,8 @@ void Tick() {
             auto it = g_lastRepaired.find(bk);
             if (it == g_lastRepaired.end()) {
                 g_lastRepaired.emplace(bk, repaired);
+                if (s->role() == coop::net::Role::Host)
+                    g_hostRevision.emplace(bk, 1);
                 UE_LOGI("repair_sync[worldauth]: BASELINE target=%u id='%s' repaired=%d",
                         static_cast<unsigned>(d.target), id.c_str(), repaired ? 1 : 0);
                 continue;
@@ -718,8 +802,16 @@ void Tick() {
             // Native detection owns the edge while its post-call check is
             // pending. Polling remains a fallback if registration/resolution
             // failed or an unexpected dispatch path never produced a bracket.
-            if (!was && repaired && !nativeCheckPending)
-                SendOutcome(d.target, obj);
+            const bool hostEdge = s->role() == coop::net::Role::Host && was != repaired;
+            const bool clientRepair = s->role() == coop::net::Role::Client && !was && repaired;
+            if ((hostEdge || clientRepair) && !nativeCheckPending) {
+                if (hostEdge) {
+                    uint32_t& revision = g_hostRevision[bk];
+                    if (revision == 0) revision = 1;
+                    else ++revision;
+                }
+                SendOutcome(d.target, obj, hostEdge ? repaired : true);
+            }
         }
     }
 }
@@ -727,9 +819,10 @@ void Tick() {
 void OnReliable(const coop::net::RepairOutcomePayload& p, uint8_t senderSlot) {
     if (!GT::IsGameThread()) return;
 
-    if (p.repaired != 1 || p.target < kRepairServer || p.target > kRepairGenerator) {
-        UE_LOGW("repair_sync: invalid payload target=%u repaired=%u",
-                static_cast<unsigned>(p.target), static_cast<unsigned>(p.repaired));
+    if (p.repaired > 1 ||
+        p.target < kRepairServer || p.target > kRepairGenerator) {
+        UE_LOGW("repair_sync: invalid payload target=%u repaired=%u revision=%u",
+                static_cast<unsigned>(p.target), static_cast<unsigned>(p.repaired), p.revision);
         return;
     }
 
@@ -750,15 +843,37 @@ void OnReliable(const coop::net::RepairOutcomePayload& p, uint8_t senderSlot) {
         return;
     }
 
-    UE_LOGI("repair_sync[worldauth]: RX %s target=%u id='%s' repaired=%u from slot=%u",
+    UE_LOGI("repair_sync[worldauth]: RX %s target=%u id='%s' repaired=%u rev=%u from slot=%u",
             isHost ? "client-request" : "host-outcome", static_cast<unsigned>(p.target),
-            GetWireKey(p.key).c_str(), static_cast<unsigned>(p.repaired), senderSlot);
+            GetWireKey(p.key).c_str(), static_cast<unsigned>(p.repaired), p.revision, senderSlot);
 
     Desc* d = nullptr;
     void* actor = FindTarget(p, &d);
     if (!actor || !d) {
-        UE_LOGW("repair_sync: target=%u id='%s' unresolved",
-                static_cast<unsigned>(p.target), GetWireKey(p.key).c_str());
+        if (!isHost) {
+            const std::string key = GetWireKey(p.key);
+            for (auto it = g_pendingHostStates.begin(); it != g_pendingHostStates.end();) {
+                if (it->payload.target == p.target && GetWireKey(it->payload.key) == key)
+                    it = g_pendingHostStates.erase(it);
+                else
+                    ++it;
+            }
+            if (g_pendingHostStates.size() >= kMaxPendingHostStates)
+                g_pendingHostStates.pop_front();
+            const uint64_t now = NowMs();
+            g_pendingHostStates.push_back(PendingHostState{
+                p,
+                g_retryingHostState ? g_retryingHostStateExpiryMs
+                                    : now + kPendingHostStateTtlMs,
+                now + kPendingHostStateRetryMs});
+            if (!g_retryingHostState)
+                UE_LOGI("repair_sync[worldauth]: CLIENT queued unresolved host state target=%u "
+                        "id='%s' rev=%u",
+                        static_cast<unsigned>(p.target), key.c_str(), p.revision);
+        }
+        if (isHost || !g_retryingHostState)
+            UE_LOGW("repair_sync: target=%u id='%s' unresolved",
+                    static_cast<unsigned>(p.target), GetWireKey(p.key).c_str());
         return;
     }
 
@@ -768,6 +883,34 @@ void OnReliable(const coop::net::RepairOutcomePayload& p, uint8_t senderSlot) {
         if (!IsRepairConverged(actor, *d, hostConverged, &hostCycle)) {
             UE_LOGW("repair_sync: host could not read authoritative target=%u id='%s' slot=%u",
                     static_cast<unsigned>(p.target), GetWireKey(p.key).c_str(), senderSlot);
+            return;
+        }
+        const std::string bk = BaselineKey(p.target, ActorIdentity(actor));
+        uint32_t& hostRevision = g_hostRevision[bk];
+        auto baseline = g_lastRepaired.find(bk);
+        if (hostRevision == 0) hostRevision = 1;
+        if (baseline == g_lastRepaired.end()) {
+            g_lastRepaired.emplace(bk, hostConverged);
+        } else if (baseline->second != hostConverged) {
+            baseline->second = hostConverged;
+            ++hostRevision;
+            UE_LOGI("repair_sync[worldauth]: host caught unpolled state edge target=%u "
+                    "id='%s' repaired=%d rev=%u",
+                    static_cast<unsigned>(p.target), ActorIdentity(actor).c_str(),
+                    hostConverged ? 1 : 0, hostRevision);
+        }
+        if (p.repaired != 1 || p.revision != hostRevision) {
+            UE_LOGW("repair_sync[worldauth]: host rejected stale/invalid request target=%u "
+                    "id='%s' requested_repaired=%u request_rev=%u host_repaired=%d host_rev=%u",
+                    static_cast<unsigned>(p.target), ActorIdentity(actor).c_str(),
+                    static_cast<unsigned>(p.repaired), p.revision,
+                    hostConverged ? 1 : 0, hostRevision);
+            SendOutcome(p.target, actor, hostConverged, senderSlot);
+            // Reassert the detailed companion lanes as well. They share the
+            // Normal FIFO with RepairOutcome, so the rejected client's local
+            // optimistic repair cannot survive this resynchronization.
+            coop::generator_break_sync::SendJoinSnapshotForSlot(senderSlot);
+            coop::serverbox_sync::QueueConnectBroadcastForSlot(senderSlot);
             return;
         }
         if (d->target == kRepairGenerator) {
@@ -787,6 +930,7 @@ void OnReliable(const coop::net::RepairOutcomePayload& p, uint8_t senderSlot) {
                         static_cast<unsigned>(p.target), GetWireKey(p.key).c_str(), senderSlot);
                 return;
             }
+            ++hostRevision;
         } else {
             UE_LOGI("repair_sync[worldauth]: host target already repaired; issuing idempotent commit "
                     "target=%u id='%s' slot=%u",
@@ -796,7 +940,7 @@ void OnReliable(const coop::net::RepairOutcomePayload& p, uint8_t senderSlot) {
         NoteBaseline(p.target, actor, true);
         // Rebuild the commit from the host-resolved actor.  Never echo the
         // client's packet as though it were authoritative state.
-        if (SendOutcome(p.target, actor)) {
+        if (SendOutcome(p.target, actor, true)) {
             UE_LOGI("repair_sync[worldauth]: host COMMIT+BROADCAST target=%u id='%s' "
                     "from slot=%u",
                     static_cast<unsigned>(p.target), ActorIdentity(actor).c_str(), senderSlot);
@@ -807,12 +951,65 @@ void OnReliable(const coop::net::RepairOutcomePayload& p, uint8_t senderSlot) {
         return;
     }
 
-    if (ApplyRepair(actor, *d))
-        NoteBaseline(p.target, actor, true);
+    const std::string bk = BaselineKey(p.target, ActorIdentity(actor));
+    const uint32_t lastRevision = g_clientRevision[bk];
+    if (p.revision < lastRevision) {
+        UE_LOGI("repair_sync[worldauth]: CLIENT stale state ignored target=%u id='%s' "
+                "rev=%u last=%u",
+                static_cast<unsigned>(p.target), ActorIdentity(actor).c_str(),
+                p.revision, lastRevision);
+        return;
+    }
+    bool localConverged = false;
+    if (p.revision == lastRevision &&
+        IsRepairConverged(actor, *d, localConverged) &&
+        localConverged == (p.repaired != 0)) {
+        return;
+    }
+    const bool applied = p.repaired ? ApplyRepair(actor, *d) : ApplyBroken(actor, *d);
+    if (!applied) return;
+    g_clientRevision[bk] = p.revision;
+    // ServerState and GeneratorBreakState own the actual broken transition for
+    // those two families; do not forge a local baseline before that ordered
+    // companion packet applies. Radio tower is fully applied here.
+    if (p.repaired || p.target == kRepairRadioTower)
+        NoteBaseline(p.target, actor, p.repaired != 0);
+}
+
+void SendJoinSnapshotForSlot(int slot) {
+    if (!GT::IsGameThread()) return;
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || s->role() != coop::net::Role::Host || !s->connected() ||
+        slot <= 0 || slot >= coop::net::kMaxPeers) return;
+
+    size_t sent = 0;
+    for (auto& d : g_descs) {
+        ResolveDesc(d);
+        if (!d.cls || d.stateOff < 0) continue;
+        std::vector<void*> candidates;
+        SnapshotTargets(d, candidates);
+        for (void* actor : candidates) {
+            if (!actor || !R::IsLive(actor) || !IsTargetInstance(actor, d)) continue;
+            bool repaired = false;
+            if (!IsRepairConverged(actor, d, repaired)) continue;
+            const std::string id = ActorIdentity(actor);
+            if (id.empty()) continue;
+            const std::string bk = BaselineKey(d.target, id);
+            g_lastRepaired[bk] = repaired;
+            if (g_hostRevision[bk] == 0) g_hostRevision[bk] = 1;
+            if (SendOutcome(d.target, actor, repaired, slot)) ++sent;
+        }
+    }
+    UE_LOGI("repair_sync[worldauth]: HOST join snapshot slot=%d states=%zu", slot, sent);
 }
 
 void OnDisconnect() {
     g_lastRepaired.clear();
+    g_hostRevision.clear();
+    g_clientRevision.clear();
+    g_pendingHostStates.clear();
+    g_retryingHostState = false;
+    g_retryingHostStateExpiryMs = 0;
     g_pendingNative.clear();
     g_nativeDebounce.clear();
     g_lastPoll = 0;

@@ -401,12 +401,15 @@ add_library(votv-coop SHARED
     src/coop/creatures/npc_sync.cpp
     src/coop/creatures/npc_sync_install.cpp
     src/coop/creatures/npc_world_enum.cpp
+    src/coop/creatures/fossilhound_birth.cpp
     src/coop/creatures/piramid_sync.cpp
     src/coop/creatures/roach_sync.cpp
     src/coop/creatures/owner_entity_sync.cpp
     src/coop/world/world_actor_sync.cpp
     src/coop/world/world_actor_mirror.cpp
+    src/coop/world/event_actor_birth.cpp
     src/coop/world/event_output_sync.cpp
+    src/coop/world/event_family_sync.cpp
     src/coop/props/prop_echo_suppress.cpp
     src/coop/props/pile_spawn_bind.cpp
     src/coop/props/snapshot_census.cpp

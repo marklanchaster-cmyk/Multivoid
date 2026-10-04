@@ -1,0 +1,408 @@
+FunctionExport ExecuteUbergraph_badSun
+=== Block @ 0 ===
+    Successors: 1843 (Push), 5
+
+0: EX_PushExecutionFlow 1843
+
+=== Block @ 1843 ===
+    Successors: 
+
+1843: EX_Return
+1844:     EX_Nothing
+
+=== Block @ 464 ===
+    Successors: ExecuteUbergraph_badSun:15 (Latent), 518
+
+464: EX_CallMath import /Script/Engine->KismetSystemLibrary->Delay
+473:     EX_Self
+474:     EX_FloatConst 5
+479:     EX_StructConst import /Script/Engine->LatentActionInfo
+492:         EX_SkipOffsetConst 15
+497:         EX_IntConst -292750195
+502:         EX_NameConst ExecuteUbergraph_badSun
+515:         EX_Self
+
+=== Block @ 241 ===
+    Successors: 
+
+241: EX_Context
+242:     EX_ObjectConst import /Game/main/lib->Default__lib_C
+263:     EX_LocalVirtualFunction setEvent
+276:         EX_True
+277:         EX_False
+278:         EX_Self
+280: EX_LetObj
+281:     EX_LocalVariable [CallFunc_Create_ReturnValue]
+290:     EX_Context
+291:         EX_ObjectConst import /Script/UMG->Default__WidgetBlueprintLibrary
+312:         EX_FinalFunction import /Script/UMG->WidgetBlueprintLibrary->Create
+321:             EX_Self
+322:             EX_ObjectConst import /Game/umg/misc/ui_badSun->ui_badSun_C
+331:             EX_NoObject
+333: EX_CallMath import /Script/Engine->KismetSystemLibrary->SetObjectPropertyByName
+342:     EX_LocalVariable [CallFunc_Create_ReturnValue]
+351:     EX_NameConst sunObj
+364:     EX_Self
+366: EX_CallMath import /Script/Engine->KismetSystemLibrary->SetBoolPropertyByName
+375:     EX_LocalVariable [CallFunc_Create_ReturnValue]
+384:     EX_NameConst super
+397:     EX_InstanceVariable [super]
+407: EX_LetObj
+408:     EX_InstanceVariable [widget]
+417:     EX_LocalVariable [CallFunc_Create_ReturnValue]
+426: EX_Context
+427:     EX_InstanceVariable [widget]
+448:     EX_FinalFunction import /Script/UMG->UserWidget->AddToViewport
+457:         EX_IntConst 0
+463: EX_PopExecutionFlow
+
+=== Block @ 15 ===
+    Successors: 464 (JumpFalse), 241 (JumpTrue)
+
+15: EX_LetBool
+16:     EX_LocalVariable [CallFunc_LessEqual_IntInt_ReturnValue]
+25:     EX_CallMath import /Script/Engine->KismetMathLibrary->LessEqual_IntInt
+34:         EX_StructMemberContext [X]
+43:             EX_Context
+44:                 EX_Context
+45:                     EX_InstanceVariable [gamemode]
+66:                     EX_InstanceVariable [daynightCycle]
+87:                 EX_InstanceVariable [timeZ]
+96:         EX_IntConst 18
+102: EX_LetBool
+103:     EX_LocalVariable [CallFunc_GreaterEqual_IntInt_ReturnValue]
+112:     EX_CallMath import /Script/Engine->KismetMathLibrary->GreaterEqual_IntInt
+121:         EX_StructMemberContext [X]
+130:             EX_Context
+131:                 EX_Context
+132:                     EX_InstanceVariable [gamemode]
+153:                     EX_InstanceVariable [daynightCycle]
+174:                 EX_InstanceVariable [timeZ]
+183:         EX_IntConst 7
+189: EX_LetBool
+190:     EX_LocalVariable [CallFunc_BooleanAND_ReturnValue]
+199:     EX_CallMath import /Script/Engine->KismetMathLibrary->BooleanAND
+208:         EX_LocalVariable [CallFunc_GreaterEqual_IntInt_ReturnValue]
+217:         EX_LocalVariable [CallFunc_LessEqual_IntInt_ReturnValue]
+227: EX_JumpIfNot 464
+232:     EX_LocalVariable [CallFunc_BooleanAND_ReturnValue]
+
+=== Block @ 754 ===
+    Successors: 
+
+754: EX_Context
+755:     EX_InstanceVariable [Audio]
+776:     EX_VirtualFunction Deactivate
+790: EX_PopExecutionFlow
+
+=== Block @ 1180 ===
+    Successors: 
+
+1180: EX_BindDelegate updateRvt
+1193:     EX_LocalVariable [K2Node_CreateDelegate_OutputDelegate]
+1202:     EX_Self
+1203: EX_Let
+1212:     EX_LocalVariable [CallFunc_K2_SetTimerDelegate_ReturnValue]
+1221:     EX_CallMath import /Script/Engine->KismetSystemLibrary->K2_SetTimerDelegate
+1230:         EX_LocalVariable [K2Node_CreateDelegate_OutputDelegate]
+1239:         EX_FloatConst 15
+1244:         EX_True
+1245:         EX_FloatConst 0
+1250:         EX_FloatConst 0
+1256: EX_PopExecutionFlow
+
+=== Block @ 1088 ===
+    Successors: 1180 (Push), 1142
+
+1088: EX_LetObj
+1089:     EX_LocalVariable [CallFunc_GetActorOfClass_ReturnValue]
+1098:     EX_CallMath import /Script/Engine->GameplayStatics->GetActorOfClass
+1107:         EX_Self
+1108:         EX_ObjectConst import /Script/Engine->RuntimeVirtualTextureVolume
+1118: EX_LetObj
+1119:     EX_InstanceVariable [rvt]
+1128:     EX_LocalVariable [CallFunc_GetActorOfClass_ReturnValue]
+1137: EX_PushExecutionFlow 1180
+
+=== Block @ 1642 ===
+    Successors: 
+
+1642: EX_Context
+1643:     EX_InstanceVariable [a]
+1664:     EX_FinalFunction import /Script/Engine->TimelineComponent->PlayFromStart
+1674: EX_PopExecutionFlow
+
+=== Block @ 519 ===
+    Successors: ExecuteUbergraph_badSun:754 (Latent), 753
+
+519: EX_Context
+520:     EX_ObjectConst import /Script/Engine->Default__GameplayStatics
+541:     EX_FinalFunction import /Script/Engine->GameplayStatics->PlaySound2D
+550:         EX_Self
+551:         EX_ObjectConst import /Game/audio/effects/piramid_step_far-01->piramid_step_far-01
+560:         EX_FloatConst 1
+565:         EX_FloatConst 0
+570:         EX_FloatConst 0
+575:         EX_NoObject
+576:         EX_NoObject
+577:         EX_True
+579: EX_Context
+580:     EX_ObjectConst import /Script/Engine->Default__GameplayStatics
+601:     EX_FinalFunction import /Script/Engine->GameplayStatics->PlaySound2D
+610:         EX_Self
+611:         EX_ObjectConst import /Game/audio/effects/piramid_step_far-01->piramid_step_far-01
+620:         EX_FloatConst 0.5
+625:         EX_FloatConst 0.5
+630:         EX_FloatConst 0
+635:         EX_NoObject
+636:         EX_NoObject
+637:         EX_True
+639: EX_Context
+640:     EX_ObjectConst import /Script/Engine->Default__GameplayStatics
+661:     EX_FinalFunction import /Script/Engine->GameplayStatics->PlaySound2D
+670:         EX_Self
+671:         EX_ObjectConst import /Game/audio/effects/piramid_step_far-01->piramid_step_far-01
+680:         EX_FloatConst 0.25
+685:         EX_FloatConst 1
+690:         EX_FloatConst 0
+695:         EX_NoObject
+696:         EX_NoObject
+697:         EX_True
+699: EX_CallMath import /Script/Engine->KismetSystemLibrary->Delay
+708:     EX_Self
+709:     EX_FloatConst 0.25
+714:     EX_StructConst import /Script/Engine->LatentActionInfo
+727:         EX_SkipOffsetConst 754
+732:         EX_IntConst 1296924661
+737:         EX_NameConst ExecuteUbergraph_badSun
+750:         EX_Self
+
+=== Block @ 1833 ===
+    Successors: 
+
+1833: EX_Jump 791
+791: EX_Let
+800:     EX_InstanceVariable [NewVar_0]
+809:     EX_Context
+810:         EX_InstanceVariable [gamemode]
+831:         EX_InstanceVariable [dryAlpha]
+840: EX_LetObj
+841:     EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue]
+850:     EX_CallMath import /Script/Engine->GameplayStatics->GetPlayerCameraManager
+859:         EX_Self
+860:         EX_IntConst 0
+866: EX_Let
+875:     EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+884:     EX_Context
+885:         EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue]
+906:         EX_FinalFunction import /Script/Engine->Actor->K2_GetActorLocation
+916: EX_Let
+925:     EX_StructMemberContext [Origin]
+934:         EX_LocalVariable [K2Node_MakeStruct_BoxSphereBounds]
+943:     EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+952: EX_Let
+961:     EX_StructMemberContext [BoxExtent]
+970:         EX_LocalVariable [K2Node_MakeStruct_BoxSphereBounds]
+979:     EX_VectorConst 0,0,0
+992: EX_Let
+1001:     EX_StructMemberContext [SphereRadius]
+1010:         EX_LocalVariable [K2Node_MakeStruct_BoxSphereBounds]
+1019:     EX_FloatConst 500000
+1024: EX_Context
+1025:     EX_Context
+1026:         EX_InstanceVariable [rvt]
+1047:         EX_InstanceVariable [VirtualTextureComponent]
+1068:     EX_FinalFunction import /Script/Engine->RuntimeVirtualTextureComponent->Invalidate
+1077:         EX_LocalVariable [K2Node_MakeStruct_BoxSphereBounds]
+1087: EX_PopExecutionFlow
+
+=== Block @ 1763 ===
+    Successors: 1833 (JumpTrue)
+
+1763: EX_LetBool
+1764:     EX_LocalVariable [CallFunc_NotEqual_FloatFloat_ReturnValue]
+1773:     EX_CallMath import /Script/Engine->KismetMathLibrary->NotEqual_FloatFloat
+1782:         EX_Context
+1783:             EX_InstanceVariable [gamemode]
+1804:             EX_InstanceVariable [dryAlpha]
+1813:         EX_InstanceVariable [NewVar_0]
+1823: EX_PopExecutionFlowIfNot
+1824:     EX_LocalVariable [CallFunc_NotEqual_FloatFloat_ReturnValue]
+
+=== Block @ 1503 ===
+    Successors: 1642 (Push), 1545
+
+1503: EX_Context
+1504:     EX_InstanceVariable [Audio]
+1525:     EX_VirtualFunction Activate
+1538:         EX_True
+1540: EX_PushExecutionFlow 1642
+
+=== Block @ 1459 ===
+    Successors: 
+
+1459: EX_Context
+1460:     EX_ObjectConst import /Game/main/lib->Default__lib_C
+1481:     EX_LocalVirtualFunction setEvent
+1494:         EX_False
+1495:         EX_False
+1496:         EX_Self
+1498: EX_Jump 1323
+1323: EX_Context
+1324:     EX_InstanceVariable [widget]
+1345:     EX_VirtualFunction RemoveFromParent
+1359: EX_LetObj
+1360:     EX_Context
+1361:         EX_InstanceVariable [gamemode]
+1382:         EX_InstanceVariable [badSun]
+1391:     EX_NoObject
+1392: EX_Context
+1393:     EX_ObjectConst import /Game/main/lib->Default__lib_C
+1414:     EX_LocalVirtualFunction progressAchievement
+1427:         EX_NameConst badsun
+1440:         EX_True
+1441:         EX_False
+1442:         EX_Self
+1444: EX_VirtualFunction K2_DestroyActor
+1458: EX_PopExecutionFlow
+
+=== Block @ 1257 ===
+    Successors: ExecuteUbergraph_badSun:1088 (Latent), 1321
+
+1257: EX_LocalFinalFunction import /Game/objects/actor_save->actor_save_C->ReceiveBeginPlay
+1267: EX_CallMath import /Script/Engine->KismetSystemLibrary->Delay
+1276:     EX_Self
+1277:     EX_FloatConst 0.2
+1282:     EX_StructConst import /Script/Engine->LatentActionInfo
+1295:         EX_SkipOffsetConst 1088
+1300:         EX_IntConst 1790717308
+1305:         EX_NameConst ExecuteUbergraph_badSun
+1318:         EX_Self
+
+=== Block @ 1838 ===
+    Successors: 
+
+1838: EX_Jump 1717
+1717: EX_Context
+1718:     EX_InstanceVariable [Audio]
+1739:     EX_FinalFunction import /Script/Engine->AudioComponent->SetVolumeMultiplier
+1748:         EX_InstanceVariable [a_a_ADF069CE4A49B896D1064B954824CC67]
+1758: EX_Jump 1675
+1675: EX_Context
+1676:     EX_InstanceVariable [Audio]
+1697:     EX_FinalFunction import /Script/Engine->AudioComponent->SetPitchMultiplier
+1706:         EX_InstanceVariable [a_a_ADF069CE4A49B896D1064B954824CC67]
+1716: EX_PopExecutionFlow
+
+=== Block @ 1322 ===
+    Successors: 
+
+1322: EX_PopExecutionFlow
+
+=== Block @ 5 ===
+    Successors: 
+
+5: EX_ComputedJump
+6:     EX_LocalVariable [EntryPoint]
+
+=== Block @ 518 ===
+    Successors: 
+
+518: EX_PopExecutionFlow
+
+=== Block @ 1142 ===
+    Successors: 464
+
+1142: EX_LetObj
+1143:     EX_Context
+1144:         EX_InstanceVariable [gamemode]
+1165:         EX_InstanceVariable [badSun]
+1174:     EX_Self
+1175: EX_Jump 464
+
+=== Block @ 753 ===
+    Successors: 
+
+753: EX_PopExecutionFlow
+
+=== Block @ 1545 ===
+    Successors: ExecuteUbergraph_badSun:519 (Latent), 1641
+
+1545: EX_Let
+1554:     EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue]
+1563:     EX_CallMath import /Script/Engine->KismetMathLibrary->RandomFloatInRange
+1572:         EX_FloatConst 50
+1577:         EX_FloatConst 60
+1583: EX_CallMath import /Script/Engine->KismetSystemLibrary->Delay
+1592:     EX_Self
+1593:     EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue]
+1602:     EX_StructConst import /Script/Engine->LatentActionInfo
+1615:         EX_SkipOffsetConst 519
+1620:         EX_IntConst -804584687
+1625:         EX_NameConst ExecuteUbergraph_badSun
+1638:         EX_Self
+
+=== Block @ 1321 ===
+    Successors: 
+
+1321: EX_PopExecutionFlow
+
+=== Block @ 1641 ===
+    Successors: 
+
+1641: EX_PopExecutionFlow
+
+FunctionExport updateRvt
+=== Block @ 0 ===
+    Successors: ExecuteUbergraph_badSun:1763 (Function)
+
+0: EX_LocalFinalFunction ExecuteUbergraph_badSun
+9:     EX_IntConst 1763
+15: EX_Return
+16:     EX_Nothing
+
+FunctionExport siren
+=== Block @ 0 ===
+    Successors: ExecuteUbergraph_badSun:1503 (Function)
+
+0: EX_LocalFinalFunction ExecuteUbergraph_badSun
+9:     EX_IntConst 1503
+15: EX_Return
+16:     EX_Nothing
+
+FunctionExport remove
+=== Block @ 0 ===
+    Successors: ExecuteUbergraph_badSun:1459 (Function)
+
+0: EX_LocalFinalFunction ExecuteUbergraph_badSun
+9:     EX_IntConst 1459
+15: EX_Return
+16:     EX_Nothing
+
+FunctionExport ReceiveBeginPlay
+=== Block @ 0 ===
+    Successors: ExecuteUbergraph_badSun:1257 (Function)
+
+0: EX_LocalFinalFunction ExecuteUbergraph_badSun
+9:     EX_IntConst 1257
+15: EX_Return
+16:     EX_Nothing
+
+FunctionExport a__UpdateFunc
+=== Block @ 0 ===
+    Successors: ExecuteUbergraph_badSun:1838 (Function)
+
+0: EX_LocalFinalFunction ExecuteUbergraph_badSun
+9:     EX_IntConst 1838
+15: EX_Return
+16:     EX_Nothing
+
+FunctionExport a__FinishedFunc
+=== Block @ 0 ===
+    Successors: ExecuteUbergraph_badSun:1322 (Function)
+
+0: EX_LocalFinalFunction ExecuteUbergraph_badSun
+9:     EX_IntConst 1322
+15: EX_Return
+16:     EX_Nothing
+

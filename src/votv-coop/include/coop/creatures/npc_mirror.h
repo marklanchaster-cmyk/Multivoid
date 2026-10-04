@@ -99,7 +99,8 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload);
 bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t elementId,
                          float locX, float locY, float locZ,
                          float rotPitch, float rotYaw, float rotRoll,
-                         float scaleX = 1.f, float scaleY = 1.f, float scaleZ = 1.f);  // v99: spawn-
+                         float scaleX = 1.f, float scaleY = 1.f, float scaleZ = 1.f,
+                         const coop::net::EntitySpawnPayload* birth = nullptr);  // v99: spawn-
                          // transform Scale3D (wire-sanitized by the caller); the adoption/convert
                          // callers bind EXISTING actors elsewhere and default to unit here.
 

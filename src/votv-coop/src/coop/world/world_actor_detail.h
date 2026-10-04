@@ -46,4 +46,10 @@ void ClearIncomingClass();
 // built from the wire string).
 bool IsAllowlistedClassNameW(const std::wstring& nm);
 
+// Cheap lifecycle counters owned by the host TU and incremented by the client TU.
+void NoteBirthReceived();
+void NoteDestroyReceived();
+void NoteBirthValidationFailure();
+void NoteDuplicateBirth();
+
 }  // namespace coop::world_actor_sync::detail

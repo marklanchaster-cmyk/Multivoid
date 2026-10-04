@@ -11,9 +11,8 @@ struct EventOutputStatePayload;
 
 namespace coop::event_output_sync {
 
-// Wire-level output families. Only ActorMirror and EnvironmentState have
-// adapters in this pass; the remaining values reserve the architectural
-// classification without causing native event replay. Unknown is always inert.
+// Wire-level output families. ActorMirror, EnvironmentState, TransientCue and
+// EventState have concrete adapters. Unknown/reserved families stay inert.
 enum class OutputType : uint8_t {
     Unknown = 0,
     ActorMirror = 1,
@@ -22,6 +21,7 @@ enum class OutputType : uint8_t {
     TransientCue = 4,
     PerPlayer = 5,
     SafeClientReplay = 6,
+    EventState = 7,
 };
 
 void Install(coop::net::Session* session);
@@ -34,6 +34,13 @@ uint64_t HostBeginActor(uint64_t eventInstanceId, void* actor, uint32_t backingE
 uint64_t HostBeginEnvironment(uint64_t eventInstanceId, const char* className,
                               uint8_t state);
 void HostUpdateEnvironment(uint64_t eventInstanceId, uint64_t outputId, uint8_t state);
+uint64_t HostBeginState(uint64_t eventInstanceId, const char* className,
+                        const void* state, uint8_t stateLen);
+void HostUpdateState(uint64_t eventInstanceId, uint64_t outputId,
+                     const void* state, uint8_t stateLen);
+void HostEmitTransient(uint64_t eventInstanceId, const char* className,
+                       uint8_t cue);
+void HostEndOutput(uint64_t eventInstanceId, uint64_t outputId);
 void HostEndInstance(uint64_t eventInstanceId);
 
 void SendJoinSnapshotForSlot(int slot);
@@ -46,5 +53,8 @@ void OnResult(const coop::net::EventOutputResultPayload& payload);
 // not only on full session teardown.
 void OnPeerLeft(uint8_t slot);
 void OnDisconnect();
+
+// Explicit console diagnostic. Reads only this module's bounded registries.
+void LogDiagnostics();
 
 }  // namespace coop::event_output_sync

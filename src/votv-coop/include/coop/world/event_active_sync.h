@@ -15,10 +15,14 @@ uint64_t HostBeginExternal(void* controller, const char* className, const char* 
 // Emits only when the quantized flags changed.
 void HostRefreshExternal(void* controller);
 void HostEndExternal(void* controller);
+uint64_t HostInstanceForController(void* controller);
 // Atomic current-set bracket, including an empty set, at ClientWorldReady.
 void SendJoinSnapshotForSlot(int slot);
 void OnReliable(const coop::net::EventAuthorityPayload& payload);
 // Defensive legacy parser; mixed protocol versions cannot normally reach it.
 void OnReliable(const coop::net::EventSnapshotPayload& payload);
 void OnDisconnect();
+
+// Explicit console diagnostic. Reads only the active/staged registries.
+void LogDiagnostics();
 }

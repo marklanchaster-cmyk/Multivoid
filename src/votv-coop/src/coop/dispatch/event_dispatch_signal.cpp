@@ -125,10 +125,9 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::DriveSlotState: {
-        // v119 (L5): an idempotent drive-slot FSM state line (any-peer
-        // announced; pre-check + host-canonical logic in drive_sync).
-        if (msg.payloadLen < sizeof(net::DriveSlotStatePayload)) {
-            UE_LOGW("event_feed: DriveSlotState payload too short (%zu < %zu)",
+        // v119 (L5): client intent / host-authored canonical drive-slot line.
+        if (msg.payloadLen != sizeof(net::DriveSlotStatePayload)) {
+            UE_LOGW("event_feed: DriveSlotState payload size mismatch (%zu != %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::DriveSlotStatePayload));
             break;
         }
@@ -142,9 +141,9 @@ bool HandleSignalEvent(net::Session& /*session*/,
         break;
     }
     case net::ReliableKind::DrivePayload: {
-        // v119 (L5): chunked drive data_0 rows (writer-authored, host-relayed).
-        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
-            UE_LOGW("event_feed: DrivePayload payload too short (%zu < %zu)",
+        // v119 (L5): chunked drive data_0 intent/result rows, host-terminal.
+        if (msg.payloadLen != sizeof(net::BlobChunkPayload)) {
+            UE_LOGW("event_feed: DrivePayload payload size mismatch (%zu != %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
             break;
         }
@@ -159,8 +158,8 @@ bool HandleSignalEvent(net::Session& /*session*/,
     }
     case net::ReliableKind::RackState: {
         // v119 (L5): rack index ops (peer->host) / canonical + deny (host->peer).
-        if (msg.payloadLen < sizeof(net::BlobChunkPayload)) {
-            UE_LOGW("event_feed: RackState payload too short (%zu < %zu)",
+        if (msg.payloadLen != sizeof(net::BlobChunkPayload)) {
+            UE_LOGW("event_feed: RackState payload size mismatch (%zu != %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::BlobChunkPayload));
             break;
         }

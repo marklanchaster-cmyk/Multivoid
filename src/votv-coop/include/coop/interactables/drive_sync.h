@@ -1,15 +1,13 @@
 // coop/drive_sync.h -- v119 L5: the drive-chain lanes.
 //
-//   DriveSlotState (109) -- idempotent per-slot FSM state lines (desk play/
-//     comp + eraser slots; slot actors have NO eids -> keyed by role). ANY
-//     peer announces its organic slot transitions (receiver-side overlap
-//     SELF-SIMULATES inserts; ejects never self-sim); receivers pre-check
-//     then apply (reflected putDriveIn / drivePulledOut + the deterministic
-//     eject-latch completion); HOST canonical on conflict + connect seed.
+//   DriveSlotState (109) -- per-slot intent/result lines (desk play/comp +
+//     eraser slots; slot actors have NO eids -> keyed by role). A client's
+//     organic edge terminates at the host; the host validates and broadcasts
+//     the canonical reflected putDriveIn/drivePulledOut result.
 //   DrivePayload (110) -- prop_drive.data_0 rows ({u32 eid} + the v65
 //     signal_wire codec sans image, BlobChunkPayload chunks). 0x45
-//     dirty-marks + a 1 Hz diff-gated baseline poll; birth authors broadcast
-//     at adoption.
+//     dirty-marks + a 1 Hz diff-gated baseline poll; client rows terminate at
+//     the host and host-authored rows are the only results clients apply.
 //   (RackState (111) lives in drive_rack_sync -- extracted 2026-07-18,
 //    votv-rack-extraction-DESIGN-2026-07-18.md. This module keeps ALL the
 //    0x45 verb registration and forwards rack marks.)
@@ -17,8 +15,9 @@
 // Design of record: votv-drive-chain-L5-impl-DESIGN-2026-07-18.md (7-round
 // /qf). The slotted-latch of that design is SATISFIED BY the existing
 // frozen/static pose gate (remote_prop.cpp "frozen/static non-attachable --
-// ignored"): a slotted drive is frozen by putDriveIn on every peer, so
-// straggler poses are already dropped -- no second mechanism (RULE 2).
+// ignored") plus an insertion-time ClearAnyDriveFor handoff: putDriveIn
+// freezes the drive, the handoff retires an already-active pose cache, and a
+// genuinely later straggler must resolve afresh through the frozen gate.
 //
 // Game thread throughout.
 
@@ -47,6 +46,12 @@ void OnDrivePayloadChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlo
 // canonicals ride drive_rack_sync's seed right after) for a peer that just
 // reached world-ready.
 void QueueConnectBroadcastForSlot(int peerSlot);
+
+// CLIENT JIP bracket: unresolved slot/payload applies do not age while the
+// host's prop snapshot is still materializing their referenced drive actors.
+// SnapshotComplete re-stamps the bounded queue; its TTL is then only a leak
+// guard for genuinely missing identities.
+void NoteJoinSnapshotBracket(bool open);
 
 // (The v118-style slot-only birth reap was audit-rejected for drives -- one
 // shared class, no byte discriminator, false positives on multi-take play.

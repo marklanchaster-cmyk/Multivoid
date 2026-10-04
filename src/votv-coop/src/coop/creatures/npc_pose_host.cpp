@@ -19,6 +19,7 @@
 #include "coop/element/npc.h"
 #include "coop/creatures/kerfur_entity.h"  // scope A: GetOriginOffEidForEid -- carry the off->active retire eid
 #include "coop/creatures/npc_world_enum.h" // 2026-07-03: DrainPendingExSpawns (EX_CallMath catch)
+#include "coop/creatures/fossilhound_birth.h"
 #include "coop/dev/kerfur_census.h"        // [dev] kerfur_census=1: periodic HOST census (5-vs-6 measurement)
 #include "coop/net/protocol.h"
 #include "coop/net/session.h"
@@ -89,6 +90,7 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         // v56 B2; hands-on 16:37 + 13:21 root).
         const coop::element::ElementId offEid = coop::kerfur_entity::GetOriginOffEidForEid(el->GetId());
         p.retireOffEid = (offEid == coop::element::kInvalidId) ? 0u : static_cast<uint32_t>(offEid);
+        coop::fossilhound_birth::Capture(actor,p);
         if (s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::EntitySpawn, &p, sizeof(p)))
             ++sent;
     }

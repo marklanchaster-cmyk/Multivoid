@@ -1,0 +1,297 @@
+#!/usr/bin/env python3
+
+from pathlib import Path
+import struct
+
+ROOT = Path(__file__).resolve().parents[3]
+
+TEMPLATE = (
+    ROOT
+    / "tools/walkie_radio/work/citizen_template/citizenradio_reference.uexp"
+)
+
+GEN = ROOT / "tools/walkie_radio/work/generated"
+
+# Exact boundaries measured from our parser probe.
+LOD_START       = 40161
+SECTION_START   = 40167
+SECTION_END     = 40203
+BUFFER_STRIP    = 40215
+
+COLOR_START     = 57459
+COLOR_END       = 57469
+
+SAMPLERS_START  = 80109
+SIZES_START     = 80133
+LOD_END         = 80145
+
+
+template = TEMPLATE.read_bytes()
+
+position = (GEN / "position.bin").read_bytes()
+vertex = (GEN / "vertex.bin").read_bytes()
+
+main_index = (GEN / "index.bin").read_bytes()
+reversed_index = (GEN / "reversed_index.bin").read_bytes()
+depth_index = (GEN / "depth_index.bin").read_bytes()
+reversed_depth = (GEN / "reversed_depth_index.bin").read_bytes()
+
+
+# ----------------------------------------------------------------------
+# Basic template sanity checks.
+# ----------------------------------------------------------------------
+
+if len(template) < LOD_END:
+    raise RuntimeError("Template .uexp is shorter than expected")
+
+old_lod_size = LOD_END - LOD_START
+
+print("Template LOD:")
+print(f"  offset: {LOD_START} -> {LOD_END}")
+print(f"  size:   {old_lod_size:,} bytes")
+
+
+# ----------------------------------------------------------------------
+# Verify original FStaticMeshBuffersSize.
+#
+# Template raw GPU data:
+#
+# position:       212 * 12 = 2544
+# tangent/UV:                3392
+# main indices:   540 * 2  = 1080
+# reversed:                  1080
+# depth:                     1080
+# reversed depth:            1080
+# adjacency:      2160 * 2 = 4320
+#
+# total = 14576
+#
+# DepthOnlyIBSize = 1080
+# ReversedIBsSize = reversed + reversed-depth = 2160
+# ----------------------------------------------------------------------
+
+old_sizes = struct.unpack_from("<III", template, SIZES_START)
+
+expected_old_sizes = (
+    39752,
+    2820,
+    5640,
+)
+
+print()
+print("Template FStaticMeshBuffersSize:")
+print(f"  SerializedBuffersSize = {old_sizes[0]}")
+print(f"  DepthOnlyIBSize       = {old_sizes[1]}")
+print(f"  ReversedIBsSize       = {old_sizes[2]}")
+
+if old_sizes != expected_old_sizes:
+    raise RuntimeError(
+        "Template buffer-size fields do not match our expected UE4 layout.\n"
+        f"Expected {expected_old_sizes}, got {old_sizes}"
+    )
+
+print("  interpretation: OK")
+
+
+# ----------------------------------------------------------------------
+# Rebuild the one FStaticMeshSection.
+#
+# Layout:
+#   MaterialIndex
+#   FirstIndex
+#   NumTriangles
+#   MinVertexIndex
+#   MaxVertexIndex
+#   EnableCollision
+#   CastShadow
+#   ForceOpaque
+#   VisibleInRayTracing
+#
+# Preserve all flags from the VotV template; only change geometry ranges.
+# ----------------------------------------------------------------------
+
+section = list(
+    struct.unpack_from("<9i", template, SECTION_START)
+)
+
+print()
+print("Original section:")
+print(f"  material:     {section[0]}")
+print(f"  first index:  {section[1]}")
+print(f"  triangles:    {section[2]}")
+print(f"  vertex range: {section[3]}..{section[4]}")
+print(f"  flags:        {section[5:]}")
+
+vertex_count = 3388
+triangle_count = 1420
+
+section[1] = 0
+section[2] = triangle_count
+section[3] = 0
+section[4] = vertex_count - 1
+
+new_section = struct.pack("<9i", *section)
+
+
+# ----------------------------------------------------------------------
+# Buffer strip flags.
+#
+# byte 0 = global strip flags
+# byte 1 = class strip flags
+#
+# Keep whatever VotV cooked originally, then additionally strip:
+#
+#   bit 0 = adjacency data
+#   bit 3 = ray-tracing resources
+#
+# We are deliberately not generating either for the walkie prototype.
+# ----------------------------------------------------------------------
+
+global_strip = template[BUFFER_STRIP]
+class_strip = template[BUFFER_STRIP + 1]
+
+new_class_strip = class_strip | 0x01 | 0x08
+new_buffer_strip = bytes((global_strip, new_class_strip))
+
+print()
+print("SerializeBuffer strip flags:")
+print(f"  original: global=0x{global_strip:02X} class=0x{class_strip:02X}")
+print(f"  new:      global=0x{global_strip:02X} class=0x{new_class_strip:02X}")
+
+
+# ----------------------------------------------------------------------
+# Color buffer.
+#
+# Template contains an empty FColorVertexBuffer. Preserve it.
+# ----------------------------------------------------------------------
+
+color_buffer = template[COLOR_START:COLOR_END]
+
+if len(color_buffer) != 10:
+    raise RuntimeError("Unexpected color-buffer size")
+
+
+# ----------------------------------------------------------------------
+# Weighted random samplers.
+#
+# The original mesh has one section sampler plus one overall sampler.
+# Both are empty, 12 bytes each:
+#
+#   TArray<float> Prob      -> count 0
+#   TArray<int32> Alias     -> count 0
+#   float TotalWeight       -> 0
+#
+# Preserve them.
+# ----------------------------------------------------------------------
+
+samplers = template[SAMPLERS_START:SIZES_START]
+
+if len(samplers) != 24:
+    raise RuntimeError("Unexpected sampler block size")
+
+for off in (0, 12):
+    prob_count = struct.unpack_from("<i", samplers, off)[0]
+    alias_count = struct.unpack_from("<i", samplers, off + 4)[0]
+    weight = struct.unpack_from("<f", samplers, off + 8)[0]
+
+    if prob_count != 0 or alias_count != 0:
+        raise RuntimeError("Template sampler is unexpectedly populated")
+
+print()
+print("Area-weighted samplers: empty / reusable")
+
+
+# ----------------------------------------------------------------------
+# New FStaticMeshBuffersSize.
+#
+# These fields describe raw render-resource bytes, not serialization
+# headers.
+# ----------------------------------------------------------------------
+
+position_raw = len(position) - 16
+vertex_raw = len(vertex) - 34
+
+index_raw = len(main_index) - 16
+
+if not all(
+    len(x) - 16 == index_raw
+    for x in (
+        reversed_index,
+        depth_index,
+        reversed_depth,
+    )
+):
+    raise RuntimeError("Index-buffer raw sizes do not match")
+
+serialized_buffers_size = (
+    position_raw
+    + vertex_raw
+    + index_raw        # main
+    + index_raw        # reversed
+    + index_raw        # depth
+    + index_raw        # reversed depth
+)
+
+depth_only_size = index_raw
+reversed_size = index_raw * 2
+
+new_sizes = struct.pack(
+    "<III",
+    serialized_buffers_size,
+    depth_only_size,
+    reversed_size,
+)
+
+
+# ----------------------------------------------------------------------
+# Assemble replacement LOD.
+# ----------------------------------------------------------------------
+
+lod = bytearray()
+
+# LOD strip flags + section count.
+lod += template[LOD_START:SECTION_START]
+
+lod += new_section
+
+# MaxDeviation + bIsLODCookedOut + bInlined.
+lod += template[SECTION_END:BUFFER_STRIP]
+
+lod += new_buffer_strip
+
+lod += position
+lod += vertex
+lod += color_buffer
+
+lod += main_index
+lod += reversed_index
+lod += depth_index
+lod += reversed_depth
+
+# No adjacency buffer because CDSF_AdjacencyData is now stripped.
+# No ray tracing data because CDSF_RaytracingResources is stripped.
+
+lod += samplers
+lod += new_sizes
+
+
+OUT = GEN / "lod0.bin"
+OUT.write_bytes(lod)
+
+
+print()
+print("New LOD:")
+print(f"  vertices:               {vertex_count}")
+print(f"  triangles:              {triangle_count}")
+print(f"  position raw:           {position_raw:,}")
+print(f"  tangent/UV raw:         {vertex_raw:,}")
+print(f"  each index raw:         {index_raw:,}")
+print(f"  SerializedBuffersSize:  {serialized_buffers_size:,}")
+print(f"  DepthOnlyIBSize:        {depth_only_size:,}")
+print(f"  ReversedIBsSize:        {reversed_size:,}")
+print()
+print(f"  old LOD size:           {old_lod_size:,}")
+print(f"  new LOD size:           {len(lod):,}")
+print(f"  delta:                 +{len(lod) - old_lod_size:,}")
+print()
+print("Wrote:", OUT)

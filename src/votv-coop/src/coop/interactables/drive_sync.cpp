@@ -3,7 +3,7 @@
 // v119 L5 (votv-drive-chain-L5-impl-DESIGN-2026-07-18.md, 7-round /qf).
 // Two lanes over this module (the rack lane extracted 2026-07-18 to
 // drive_rack_sync -- votv-rack-extraction-DESIGN-2026-07-18.md):
-//   DriveSlotState -- idempotent any-peer slot FSM lines, host canonical.
+//   DriveSlotState -- client slot-mutation intents, host-authored canonicals.
 //   DrivePayload   -- drive data_0 rows (signal_wire codec, blob chunks).
 // Detection = 0x45 verb dirty-marks (vm_dispatch; capture-only, barrier
 // emission) + 1 Hz diff-gated sweeps. Apply+prime is GT-atomic per lane.
@@ -20,7 +20,9 @@
 #include "coop/net/blob_chunks.h"
 #include "coop/net/session.h"
 #include "coop/props/prop_lifecycle.h"        // DestroyLocalProp (deny-ghost teardown)
+#include "coop/props/remote_prop.h"           // ClearAnyDriveFor (slot ownership handoff)
 
+#include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/vm_dispatch.h"
@@ -86,6 +88,7 @@ struct Pending {
 std::vector<Pending> g_pending;
 constexpr auto kPendingTtl = std::chrono::seconds(10);
 constexpr size_t kPendingCap = 256;  // perf-audit F-7: drop-oldest + WARN past this
+bool g_joinBracketOpen = false;
 
 // ---- locally-authored drive births (client): the payload broadcasts at
 // adoption ONLY for these; every other first sight is prime-only (a joiner's
@@ -196,6 +199,106 @@ void AnnounceSlot(int role, bool occupied, uint32_t eid) {
             p.role, p.occupied, p.driveEid, ok ? 1 : 0);
 }
 
+void SendPayload(uint32_t eid, const SD::Row& row, int toSlot);
+
+// Retire the inserted-owner state without inventing a machine-specific path.
+// The cooked prop_drive removal block used by both hand buttons and the normal
+// grab path calls drivePulledOut, clears prop_drive.slot, then enables physics.
+// The wire apply reproduces those first two operations; this helper owns the
+// common loose-world half and retires pre-insertion PropPose/settle work.
+void MakeDriveLoose(void* drive) {
+    if (!drive || !R::IsLive(drive) || !DC::IsDriveClass(R::ClassOf(drive))) return;
+    coop::remote_prop::ClearAnyDriveFor(drive);
+    // putDriveIn authors frozen=true.  The native removal directly enables
+    // simulation; clear the bookkeeping bit too so the PropPose resolver does
+    // not mistake the newly-loose drive for a still-slotted/stuck prop.
+    ue_wrap::prop::WriteFrozen(drive, false);
+    if (void* mesh = ue_wrap::prop::GetStaticMesh(drive))
+        coop::remote_prop::DriveSimulate(mesh, true);
+}
+
+// DrivePayload and DriveSlotState share the Normal FIFO.  The HOST sends the
+// complete row first so an empty-slot canonical is a self-contained ownership
+// handoff: every receiver commits authoritative contents before thawing.
+bool SendCurrentPayload(uint32_t eid, void* drive, int toSlot) {
+    if (!eid || !drive || !R::IsLive(drive) || !DC::IsDriveClass(R::ClassOf(drive)))
+        return false;
+    SD::Row row;
+    if (!DC::ReadDriveRow(drive, row)) return false;
+    const uint64_t h = coop::blob_chunks::Fnv64(
+        coop::signal_wire::Serialize(row, false));
+    g_driveBase[eid] = h;
+    SendPayload(eid, row, toSlot);
+    return true;
+}
+
+// Re-read, never infer, the host's post-validation state.  This one result
+// path serves both a successful mutation (now empty/changed) and a rejection
+// (the pre-existing occupant is still present).
+void BroadcastCanonicalSlot(int role, uint32_t requestedEid, uint8_t senderSlot) {
+    void* slot = DC::SlotActor(role);
+    if (!slot) return;
+    void* drive = DC::SlotDrive(slot);
+    const uint32_t eid = drive ? static_cast<uint32_t>(
+        coop::element::Registry::Get().EidForActor(drive)) : 0;
+    void* payloadDrive = drive ? drive : LivePropActor(requestedEid);
+    const uint32_t payloadEid = drive ? eid : requestedEid;
+    SendCurrentPayload(payloadEid, payloadDrive, -1);
+    AnnounceSlot(role, drive != nullptr, eid);
+    UE_LOGI("drive_sync[worldauth]: host CANONICAL slot role=%d occupied=%d eid=%u "
+            "after request from slot %u",
+            role, drive ? 1 : 0, eid, senderSlot);
+}
+
+// A driveSlot's `drive` field is the logical ownership record for the desk
+// listening/processing slots.  The native local interaction normally clears
+// the old slot before filling the new one, but per-role wire lines can be
+// observed/applied in either role order (notably comp -> play, because our
+// sweep visits play first).  Applying the insert without this cross-role
+// handoff leaves both slot actors pointing at the same drive and the later
+// driveOut callback can tear down the newly-selected computer state.
+//
+// Remove every older claim before assigning `targetRole`.  On the host the
+// removal is broadcast immediately as part of the same authoritative commit;
+// clients only apply the host's result.  Game thread throughout.
+bool ReleaseOtherSlotClaims(int targetRole, void* drive, uint8_t senderSlot) {
+    if (!drive) return false;
+    const uint32_t eid = static_cast<uint32_t>(
+        coop::element::Registry::Get().EidForActor(drive));
+    bool ok = true;
+    for (int role = 0; role < DC::kRoleCount; ++role) {
+        if (role == targetRole) continue;
+        void* other = DC::SlotActor(role);
+        if (!other || DC::SlotDrive(other) != drive) continue;
+
+        {
+            coop::desk_snd_fx::ScopedWireApply guard;
+            if (!DC::CallDrivePulledOut(other)) {
+                UE_LOGW("drive_sync[worldauth]: REFUSED move eid=%u role=%d -> role=%d "
+                        "from slot %u -- old-slot drivePulledOut failed",
+                        eid, role, targetRole, senderSlot);
+                ok = false;
+                continue;
+            }
+            if (!DC::ClearDriveSlot(drive, other)) {
+                UE_LOGW("drive_sync[worldauth]: old slot cleared but drive reverse owner changed "
+                        "eid=%u role=%d", eid, role);
+                ok = false;
+                continue;
+            }
+            DC::CompleteEjectLatch(other, drive);
+        }
+        g_slotBase[role] = {true, false, 0};
+        ++g_cSlotApplied;
+        ++g_cLatchCompleted;
+        if (IsHost()) AnnounceSlot(role, false, eid);
+        UE_LOGI("drive_sync[worldauth]: MOVE eid=%u role=%d -> role=%d sourceSlot=%u "
+                "(old logical owner cleared)",
+                eid, role, targetRole, senderSlot);
+    }
+    return ok;
+}
+
 // Read a slot's live state; diff vs baseline; announce the edge. `announce`
 // false = prime-only (the connect seed).
 void ProcessSlot(int role, bool announce) {
@@ -207,10 +310,23 @@ void ProcessSlot(int role, bool announce) {
     const bool occupied = drive != nullptr;
     SlotBase& b = g_slotBase[role];
     if (b.known && b.occupied == occupied && b.eid == eid) return;
-    const uint32_t ejectEid = g_lastEjectEid[role].exchange(0, std::memory_order_relaxed);
+    const uint32_t priorEid = (b.known && b.occupied) ? b.eid : 0;
+    uint32_t ejectEid = g_lastEjectEid[role].exchange(0, std::memory_order_relaxed);
+    if (!ejectEid) ejectEid = priorEid;  // poll-only fallback if the verb mark was missed
     b = {true, occupied, eid};
-    if (announce)
+    if (announce) {
+        if (!occupied && ejectEid) {
+            void* removed = LivePropActor(ejectEid);
+            MakeDriveLoose(removed);
+            // The actor survives insertion/removal, so its row survives on the
+            // host without trusting a client-proposed row as part of the eject.
+            // Only a host-originated organic removal authors the result here;
+            // a client sends just the expected-eid slot intent, and the host
+            // sends its own row after validation in OnDriveSlotState.
+            if (IsHost()) SendCurrentPayload(ejectEid, removed, -1);
+        }
         AnnounceSlot(role, occupied, occupied ? eid : ejectEid);
+    }
 }
 
 void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, bool fromPending);
@@ -359,6 +475,11 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
 
     if (p.occupied) {
         if (cur && curEid == p.driveEid) {  // already true: prime-only no-op
+            // A same-target canonical is also the ownership barrier: clean a
+            // stale second slot claim and stop any in-flight PropPose cache
+            // from pulling the now-slotted actor back out on the next tick.
+            if (!ReleaseOtherSlotClaims(p.role, cur, senderSlot)) return;
+            coop::remote_prop::ClearAnyDriveFor(cur);
             g_slotBase[p.role] = {true, true, curEid};
             return;
         }
@@ -381,10 +502,10 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
                 pd.senderSlot = senderSlot;
                 pd.until = Clock::now() + kPendingTtl;
                 if (g_pending.size() >= kPendingCap) {
-                g_pending.erase(g_pending.begin());
-                UE_LOGW("drive_sync: pending cap hit -- oldest dropped");
-            }
-            g_pending.push_back(pd);
+                    g_pending.erase(g_pending.begin());
+                    UE_LOGW("drive_sync: pending cap hit -- oldest dropped");
+                }
+                g_pending.push_back(pd);
             }
             return;
         }
@@ -397,14 +518,41 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
                         p.role, p.driveEid, curEid, senderSlot);
                 return;
             }
+        }
+        if (!ReleaseOtherSlotClaims(p.role, drive, senderSlot)) return;
+        // PropPose is an ordinary held-world-prop stream.  A peer can have a
+        // final pose already queued when the reliable slot transition lands;
+        // clearing the receiver's active drive cache here makes the slot FSM
+        // the new owner.  A genuinely later re-grab must resolve afresh and is
+        // rejected while putDriveIn keeps the drive frozen/static.
+        coop::remote_prop::ClearAnyDriveFor(drive);
+        if (cur && curEid != p.driveEid) {
             coop::desk_snd_fx::ScopedWireApply guard;
-            DC::CallDrivePulledOut(slot);
+            if (!DC::CallDrivePulledOut(slot)) {
+                UE_LOGW("drive_sync[worldauth]: REFUSED canonical replacement role=%u "
+                        "oldEid=%u newEid=%u -- drivePulledOut failed",
+                        p.role, curEid, p.driveEid);
+                return;
+            }
+            if (!DC::ClearDriveSlot(cur, slot)) {
+                UE_LOGW("drive_sync[worldauth]: replacement cleared slot but reverse owner changed "
+                        "role=%u oldEid=%u", p.role, curEid);
+                return;
+            }
             DC::CompleteEjectLatch(slot, cur);
             ++g_cLatchCompleted;
         }
+        if (cur && curEid != p.driveEid) MakeDriveLoose(cur);
         {
             coop::desk_snd_fx::ScopedWireApply guard;
-            DC::CallPutDriveIn(slot, drive);
+            if (!DC::CallPutDriveIn(slot, drive)) {
+                MakeDriveLoose(drive);
+                g_slotBase[p.role] = {true, false, 0};
+                UE_LOGW("drive_sync[worldauth]: REFUSED insert role=%u eid=%u from slot %u "
+                        "-- putDriveIn failed",
+                        p.role, p.driveEid, senderSlot);
+                return;
+            }
             g_slotBase[p.role] = {true, true, p.driveEid};
         }
         ++g_cSlotApplied;
@@ -421,17 +569,49 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
                     p.role, p.driveEid, curEid, senderSlot);
             return;
         }
+        if (IsHost() && senderSlot > 0 && !cur) {
+            UE_LOGW("drive_sync[worldauth]: REFUSED stale eject role=%u clientEid=%u "
+                    "slot=%u -- authoritative slot already empty",
+                    p.role, p.driveEid, senderSlot);
+            return;
+        }
         if (!cur) {  // already empty: prime + belt latch completion
+            // The initiating client reaches this branch when the host echoes
+            // its accepted speculative removal.  Reassert loose ownership so
+            // a stale pre-insertion drive/settle cannot survive the round trip.
+            MakeDriveLoose(LivePropActor(p.driveEid));
             g_slotBase[p.role] = {true, false, 0};
             DC::CompleteEjectLatch(slot, LivePropActor(p.driveEid));
             return;
         }
+        coop::remote_prop::ClearAnyDriveFor(cur);
         {
             coop::desk_snd_fx::ScopedWireApply guard;
-            DC::CallDrivePulledOut(slot);
+            if (!DC::NudgeDriveOut(cur)) {
+                UE_LOGW("drive_sync[worldauth]: REFUSED eject role=%u eid=%u from slot %u "
+                        "-- native +8 local-Z release failed",
+                        p.role, curEid, senderSlot);
+                return;
+            }
+            if (!DC::CallDrivePulledOut(slot)) {
+                UE_LOGW("drive_sync[worldauth]: REFUSED eject role=%u eid=%u from slot %u "
+                        "-- drivePulledOut failed",
+                        p.role, curEid, senderSlot);
+                return;
+            }
+            if (!DC::ClearDriveSlot(cur, slot)) {
+                UE_LOGW("drive_sync[worldauth]: eject cleared slot but reverse owner changed "
+                        "role=%u eid=%u", p.role, curEid);
+                return;
+            }
             DC::CompleteEjectLatch(slot, cur);
             g_slotBase[p.role] = {true, false, 0};
         }
+        MakeDriveLoose(cur);
+        // A client can have speculatively installed a different actor while an
+        // older host empty result is in flight.  The host result empties the
+        // role, but the named prior occupant must also be thawed if still live.
+        if (p.driveEid != curEid) MakeDriveLoose(LivePropActor(p.driveEid));
         ++g_cSlotApplied;
         ++g_cLatchCompleted;
         UE_LOGI("drive_sync: slot role=%u EJECT applied (was eid=%u, from slot %u)",
@@ -444,7 +624,7 @@ void RetryPendingTick() {
     const auto now = Clock::now();
     std::vector<Pending> keep;
     for (auto& pd : g_pending) {
-        if (now >= pd.until) {
+        if (!g_joinBracketOpen && now >= pd.until) {
             if (pd.kind == 0) {
                 UE_LOGW("drive_sync[worldauth]: DROP deferred slot role=%u occupied=%u eid=%u "
                         "from slot %u -- actor never resolved",
@@ -553,18 +733,21 @@ void Tick() {
     g_wasConnected = conn;
     if (!conn) return;
 
-    // Barrier drain: verb dirty-marks -> immediate diff-gated processing.
+    // Barrier drain: commit a legitimate payload mutation before a same-frame
+    // slot edge.  Both kinds share the Normal FIFO, so the host sees the data
+    // intent before the ownership intent; the eject itself never smuggles an
+    // unvalidated client row.
+    if (g_payloadDirty.exchange(false, std::memory_order_relaxed))
+        SweepPayloads(/*announce*/true);
     for (int r = 0; r < DC::kRoleCount; ++r)
         if (g_slotDirty[r].exchange(false, std::memory_order_relaxed))
             ProcessSlot(r, /*announce*/true);
-    if (g_payloadDirty.exchange(false, std::memory_order_relaxed))
-        SweepPayloads(/*announce*/true);
 
     const auto now = Clock::now();
     if (now >= g_nextSweep) {  // 1 Hz safety sweeps (matcher gaps: eraser wipe etc.)
         g_nextSweep = now + std::chrono::seconds(1);
-        for (int r = 0; r < DC::kRoleCount; ++r) ProcessSlot(r, /*announce*/true);
         SweepPayloads(/*announce*/true);
+        for (int r = 0; r < DC::kRoleCount; ++r) ProcessSlot(r, /*announce*/true);
         g_payloadAsm.Sweep(now, std::chrono::seconds(20));
         RetryPendingTick();
     }
@@ -589,29 +772,42 @@ void OnDriveSlotState(const coop::net::DriveSlotStatePayload& p, uint8_t senderS
                 p.role, senderSlot);
         return;
     }
+    // DriveSlotState is host-terminal: clients may originate intents, but a
+    // client applies only slot results authored by slot 0.
+    if (!IsHost() && senderSlot != 0) {
+        UE_LOGW("drive_sync[worldauth]: DROP non-host slot result role=%u from slot %u",
+                p.role, senderSlot);
+        return;
+    }
     if (!DC::EnsureResolved()) {
         UE_LOGW("drive_sync[worldauth]: DROP slot role=%u -- drive-chain classes unresolved",
                 p.role);
+        return;
+    }
+    if (p.occupied > 1 || p.censusIdx != 0) {
+        UE_LOGW("drive_sync[worldauth]: DROP malformed slot role=%u occupied=%u "
+                "census=%u from slot %u",
+                p.role, p.occupied, p.censusIdx, senderSlot);
+        if (IsHost() && senderSlot > 0 && senderSlot < coop::net::kMaxPeers)
+            BroadcastCanonicalSlot(p.role, p.driveEid, senderSlot);
         return;
     }
     OnSlotLine(p, senderSlot, /*fromPending*/false);
 
     if (IsHost() && senderSlot > 0 && senderSlot < coop::net::kMaxPeers &&
         (!p.occupied || LivePropActor(p.driveEid))) {
-        void* slot = DC::SlotActor(p.role);
-        if (slot) {
-            void* drive = DC::SlotDrive(slot);
-            const uint32_t eid = drive ? static_cast<uint32_t>(
-                coop::element::Registry::Get().EidForActor(drive)) : 0;
-            AnnounceSlot(p.role, drive != nullptr, eid);
-            UE_LOGI("drive_sync[worldauth]: host CANONICAL slot role=%u occupied=%d eid=%u "
-                    "after request from slot %u",
-                    p.role, drive ? 1 : 0, eid, senderSlot);
-        }
+        BroadcastCanonicalSlot(p.role, p.driveEid, senderSlot);
     }
 }
 
 void OnDrivePayloadChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
+    // Same host-terminal rule as slot state: a client row is an intent for the
+    // host to validate/apply/re-author, never a sibling-authored result.
+    if (!IsHost() && senderSlot != 0) {
+        UE_LOGW("drive_sync[worldauth]: DROP non-host payload chunk from slot %u",
+                senderSlot);
+        return;
+    }
     std::vector<uint8_t> blob;
     if (!g_payloadAsm.OnChunk(p, senderSlot, blob)) return;
     UE_LOGI("drive_sync[worldauth]: RX payload-complete bytes=%zu from slot %u",
@@ -656,6 +852,19 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
             peerSlot, sent);
 }
 
+void NoteJoinSnapshotBracket(bool open) {
+    if (g_joinBracketOpen == open) return;
+    g_joinBracketOpen = open;
+    if (!open) {
+        const auto until = Clock::now() + kPendingTtl;
+        for (auto& pd : g_pending) pd.until = until;
+        if (!g_pending.empty()) {
+            UE_LOGI("drive_sync: snapshot bracket closed -- %zu pending apply entries re-stamped",
+                    g_pending.size());
+        }
+    }
+}
+
 void NoteLocalDriveBirth(void* actor) {
     if (!actor) return;
     const auto now = Clock::now();
@@ -674,6 +883,7 @@ void OnDisconnect() {
     g_payloadDirty.store(false, std::memory_order_relaxed);
     g_driveBase.clear();
     g_pending.clear();
+    g_joinBracketOpen = false;
     g_payloadAsm.Clear();
     g_notedBirths.clear();
     g_primed = false;

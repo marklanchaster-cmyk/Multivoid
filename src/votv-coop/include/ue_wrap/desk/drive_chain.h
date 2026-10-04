@@ -59,6 +59,14 @@ bool  SlotRecentlyDetached(void* slotActor);
 bool CallPutDriveIn(void* slotActor, void* driveActor);
 bool CallDrivePulledOut(void* slotActor);
 
+// The prop_drive side of the native removal sequence. The drive Blueprint
+// moves itself +8 local Z before notifying driveSlot, then clears its own
+// `slot` pointer after the notification. These keep a wire-authored eject
+// structurally identical on the receiving machine. ClearDriveSlot is a CAS:
+// it refuses to clear a different/new owner.
+bool NudgeDriveOut(void* driveActor);
+bool ClearDriveSlot(void* driveActor, void* expectedSlotActor);
+
 // The deterministic eject-latch completion (design R3): if the ejected drive
 // no longer overlaps the slot's drivePort (or is null/dead), complete the
 // EndOverlap transition the FSM is waiting for: isRecentlyDetached = false.

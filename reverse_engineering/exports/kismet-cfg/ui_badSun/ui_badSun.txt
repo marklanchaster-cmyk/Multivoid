@@ -1,0 +1,1469 @@
+FunctionExport ExecuteUbergraph_ui_badSun
+=== Block @ 0 ===
+    Successors: 10059 (Push), 5
+
+0: EX_PushExecutionFlow 10059
+
+=== Block @ 10059 ===
+    Successors: 
+
+10059: EX_Return
+10060:     EX_Nothing
+
+=== Block @ 51 ===
+    Successors: 1268 (Push), 56
+
+51: EX_PushExecutionFlow 1268
+
+=== Block @ 50 ===
+    Successors: 
+
+50: EX_PopExecutionFlow
+
+=== Block @ 1268 ===
+    Successors: ExecuteUbergraph_ui_badSun:15 (Latent), 1322
+
+1268: EX_CallMath import /Script/Engine->KismetSystemLibrary->Delay
+1277:     EX_Self
+1278:     EX_FloatConst 0.5
+1283:     EX_StructConst import /Script/Engine->LatentActionInfo
+1296:         EX_SkipOffsetConst 15
+1301:         EX_IntConst -458980739
+1306:         EX_NameConst ExecuteUbergraph_ui_badSun
+1319:         EX_Self
+
+=== Block @ 216 ===
+    Successors: 1323 (JumpFalse), 941 (JumpTrue)
+
+216: EX_LetBool
+217:     EX_InstanceVariable [turnCam]
+226:     EX_False
+227: EX_LetObj
+228:     EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue]
+237:     EX_CallMath import /Script/Engine->GameplayStatics->GetPlayerCameraManager
+246:         EX_Self
+247:         EX_IntConst 0
+253: EX_Let
+262:     EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+271:     EX_Context
+272:         EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue]
+293:         EX_FinalFunction import /Script/Engine->Actor->K2_GetActorLocation
+303: EX_Let
+312:     EX_LocalVariable [CallFunc_GetForwardVector_ReturnValue]
+321:     EX_Context
+322:         EX_Context
+323:             EX_Context
+324:                 EX_InstanceVariable [gamemode]
+345:                 EX_InstanceVariable [daynightCycle]
+366:             EX_InstanceVariable [light_sun]
+387:         EX_FinalFunction import /Script/Engine->SceneComponent->GetForwardVector
+397: EX_Let
+406:     EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue]
+415:     EX_CallMath import /Script/Engine->KismetMathLibrary->Multiply_VectorFloat
+424:         EX_LocalVariable [CallFunc_GetForwardVector_ReturnValue]
+433:         EX_FloatConst -50000
+439: EX_Let
+448:     EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_1]
+457:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_VectorVector
+466:         EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue]
+475:         EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+485: EX_LetBool
+486:     EX_LocalVariable [CallFunc_LineTraceSingleForObjects_ReturnValue]
+495:     EX_CallMath import /Script/Engine->KismetSystemLibrary->LineTraceSingleForObjects
+504:         EX_Self
+505:         EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_1]
+514:         EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+523:         EX_InstanceVariable [obj]
+532:         EX_False
+533:         EX_InstanceVariable [ignores]
+542:         EX_ByteConst 1
+544:         EX_LocalVariable [CallFunc_LineTraceSingleForObjects_OutHit]
+553:         EX_True
+554:         EX_StructConst import /Script/CoreUObject->LinearColor
+567:             EX_FloatConst 1
+572:             EX_FloatConst 0
+577:             EX_FloatConst 0
+582:             EX_FloatConst 1
+588:         EX_StructConst import /Script/CoreUObject->LinearColor
+601:             EX_FloatConst 0
+606:             EX_FloatConst 1
+611:             EX_FloatConst 0
+616:             EX_FloatConst 1
+622:         EX_FloatConst 5
+628: EX_CallMath import /Script/Engine->GameplayStatics->BreakHitResult
+637:     EX_LocalVariable [CallFunc_LineTraceSingleForObjects_OutHit]
+646:     EX_LocalVariable [CallFunc_BreakHitResult_bBlockingHit]
+655:     EX_LocalVariable [CallFunc_BreakHitResult_bInitialOverlap]
+664:     EX_LocalVariable [CallFunc_BreakHitResult_Time]
+673:     EX_LocalVariable [CallFunc_BreakHitResult_Distance]
+682:     EX_LocalVariable [CallFunc_BreakHitResult_Location]
+691:     EX_LocalVariable [CallFunc_BreakHitResult_ImpactPoint]
+700:     EX_LocalVariable [CallFunc_BreakHitResult_Normal]
+709:     EX_LocalVariable [CallFunc_BreakHitResult_ImpactNormal]
+718:     EX_LocalVariable [CallFunc_BreakHitResult_PhysMat]
+727:     EX_LocalVariable [CallFunc_BreakHitResult_HitActor]
+736:     EX_LocalVariable [CallFunc_BreakHitResult_HitComponent]
+745:     EX_LocalVariable [CallFunc_BreakHitResult_HitBoneName]
+754:     EX_LocalVariable [CallFunc_BreakHitResult_HitItem]
+763:     EX_LocalVariable [CallFunc_BreakHitResult_ElementIndex]
+772:     EX_LocalVariable [CallFunc_BreakHitResult_FaceIndex]
+781:     EX_LocalVariable [CallFunc_BreakHitResult_TraceStart]
+790:     EX_LocalVariable [CallFunc_BreakHitResult_TraceEnd]
+800: EX_LetBool
+801:     EX_LocalVariable [CallFunc_Array_Contains_ReturnValue]
+810:     EX_Context
+811:         EX_ObjectConst import /Script/Engine->Default__KismetArrayLibrary
+832:         EX_FinalFunction import /Script/Engine->KismetArrayLibrary->Array_Contains
+841:             EX_InstanceVariable [seeThrough]
+850:             EX_LocalVariable [CallFunc_BreakHitResult_PhysMat]
+860: EX_LetBool
+861:     EX_LocalVariable [CallFunc_Not_PreBool_ReturnValue_2]
+870:     EX_CallMath import /Script/Engine->KismetMathLibrary->Not_PreBool
+879:         EX_LocalVariable [CallFunc_Array_Contains_ReturnValue]
+889: EX_LetBool
+890:     EX_LocalVariable [CallFunc_BooleanAND_ReturnValue_1]
+899:     EX_CallMath import /Script/Engine->KismetMathLibrary->BooleanAND
+908:         EX_LocalVariable [CallFunc_LineTraceSingleForObjects_ReturnValue]
+917:         EX_LocalVariable [CallFunc_Not_PreBool_ReturnValue_2]
+927: EX_JumpIfNot 1323
+932:     EX_LocalVariable [CallFunc_BooleanAND_ReturnValue_1]
+
+=== Block @ 1323 ===
+    Successors: 2364 (JumpFalse), 2037 (JumpTrue)
+
+1323: EX_LetObj
+1324:     EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue]
+1333:     EX_CallMath import /Script/Engine->GameplayStatics->GetPlayerCameraManager
+1342:         EX_Self
+1343:         EX_IntConst 0
+1349: EX_Let
+1358:     EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+1367:     EX_Context
+1368:         EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue]
+1389:         EX_FinalFunction import /Script/Engine->Actor->K2_GetActorLocation
+1399: EX_Let
+1408:     EX_LocalVariable [CallFunc_GetForwardVector_ReturnValue]
+1417:     EX_Context
+1418:         EX_Context
+1419:             EX_Context
+1420:                 EX_InstanceVariable [gamemode]
+1441:                 EX_InstanceVariable [daynightCycle]
+1462:             EX_InstanceVariable [light_sun]
+1483:         EX_FinalFunction import /Script/Engine->SceneComponent->GetForwardVector
+1493: EX_Let
+1502:     EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue]
+1511:     EX_CallMath import /Script/Engine->KismetMathLibrary->Multiply_VectorFloat
+1520:         EX_LocalVariable [CallFunc_GetForwardVector_ReturnValue]
+1529:         EX_FloatConst -50000
+1535: EX_Let
+1544:     EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_1]
+1553:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_VectorVector
+1562:         EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue]
+1571:         EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+1581: EX_LetBool
+1582:     EX_LocalVariable [CallFunc_LineTraceSingleForObjects_ReturnValue_1]
+1591:     EX_CallMath import /Script/Engine->KismetSystemLibrary->LineTraceSingleForObjects
+1600:         EX_Self
+1601:         EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+1610:         EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_1]
+1619:         EX_InstanceVariable [obj]
+1628:         EX_False
+1629:         EX_InstanceVariable [ignores]
+1638:         EX_ByteConst 1
+1640:         EX_LocalVariable [CallFunc_LineTraceSingleForObjects_OutHit_1]
+1649:         EX_True
+1650:         EX_StructConst import /Script/CoreUObject->LinearColor
+1663:             EX_FloatConst 1
+1668:             EX_FloatConst 0
+1673:             EX_FloatConst 0
+1678:             EX_FloatConst 1
+1684:         EX_StructConst import /Script/CoreUObject->LinearColor
+1697:             EX_FloatConst 0
+1702:             EX_FloatConst 1
+1707:             EX_FloatConst 0
+1712:             EX_FloatConst 1
+1718:         EX_FloatConst 5
+1724: EX_CallMath import /Script/Engine->GameplayStatics->BreakHitResult
+1733:     EX_LocalVariable [CallFunc_LineTraceSingleForObjects_OutHit_1]
+1742:     EX_LocalVariable [CallFunc_BreakHitResult_bBlockingHit_1]
+1751:     EX_LocalVariable [CallFunc_BreakHitResult_bInitialOverlap_1]
+1760:     EX_LocalVariable [CallFunc_BreakHitResult_Time_1]
+1769:     EX_LocalVariable [CallFunc_BreakHitResult_Distance_1]
+1778:     EX_LocalVariable [CallFunc_BreakHitResult_Location_1]
+1787:     EX_LocalVariable [CallFunc_BreakHitResult_ImpactPoint_1]
+1796:     EX_LocalVariable [CallFunc_BreakHitResult_Normal_1]
+1805:     EX_LocalVariable [CallFunc_BreakHitResult_ImpactNormal_1]
+1814:     EX_LocalVariable [CallFunc_BreakHitResult_PhysMat_1]
+1823:     EX_LocalVariable [CallFunc_BreakHitResult_HitActor_1]
+1832:     EX_LocalVariable [CallFunc_BreakHitResult_HitComponent_1]
+1841:     EX_LocalVariable [CallFunc_BreakHitResult_HitBoneName_1]
+1850:     EX_LocalVariable [CallFunc_BreakHitResult_HitItem_1]
+1859:     EX_LocalVariable [CallFunc_BreakHitResult_ElementIndex_1]
+1868:     EX_LocalVariable [CallFunc_BreakHitResult_FaceIndex_1]
+1877:     EX_LocalVariable [CallFunc_BreakHitResult_TraceStart_1]
+1886:     EX_LocalVariable [CallFunc_BreakHitResult_TraceEnd_1]
+1896: EX_LetBool
+1897:     EX_LocalVariable [CallFunc_Array_Contains_ReturnValue_2]
+1906:     EX_Context
+1907:         EX_ObjectConst import /Script/Engine->Default__KismetArrayLibrary
+1928:         EX_FinalFunction import /Script/Engine->KismetArrayLibrary->Array_Contains
+1937:             EX_InstanceVariable [seeThrough]
+1946:             EX_LocalVariable [CallFunc_BreakHitResult_PhysMat_1]
+1956: EX_LetBool
+1957:     EX_LocalVariable [CallFunc_Not_PreBool_ReturnValue_4]
+1966:     EX_CallMath import /Script/Engine->KismetMathLibrary->Not_PreBool
+1975:         EX_LocalVariable [CallFunc_Array_Contains_ReturnValue_2]
+1985: EX_LetBool
+1986:     EX_LocalVariable [CallFunc_BooleanAND_ReturnValue_3]
+1995:     EX_CallMath import /Script/Engine->KismetMathLibrary->BooleanAND
+2004:         EX_LocalVariable [CallFunc_LineTraceSingleForObjects_ReturnValue_1]
+2013:         EX_LocalVariable [CallFunc_Not_PreBool_ReturnValue_4]
+2023: EX_JumpIfNot 2364
+2028:     EX_LocalVariable [CallFunc_BooleanAND_ReturnValue_3]
+
+=== Block @ 941 ===
+    Successors: 
+
+941: EX_CallMath import /Script/Engine->GameplayStatics->BreakHitResult
+950:     EX_LocalVariable [CallFunc_LineTraceSingleForObjects_OutHit]
+959:     EX_LocalVariable [CallFunc_BreakHitResult_bBlockingHit]
+968:     EX_LocalVariable [CallFunc_BreakHitResult_bInitialOverlap]
+977:     EX_LocalVariable [CallFunc_BreakHitResult_Time]
+986:     EX_LocalVariable [CallFunc_BreakHitResult_Distance]
+995:     EX_LocalVariable [CallFunc_BreakHitResult_Location]
+1004:     EX_LocalVariable [CallFunc_BreakHitResult_ImpactPoint]
+1013:     EX_LocalVariable [CallFunc_BreakHitResult_Normal]
+1022:     EX_LocalVariable [CallFunc_BreakHitResult_ImpactNormal]
+1031:     EX_LocalVariable [CallFunc_BreakHitResult_PhysMat]
+1040:     EX_LocalVariable [CallFunc_BreakHitResult_HitActor]
+1049:     EX_LocalVariable [CallFunc_BreakHitResult_HitComponent]
+1058:     EX_LocalVariable [CallFunc_BreakHitResult_HitBoneName]
+1067:     EX_LocalVariable [CallFunc_BreakHitResult_HitItem]
+1076:     EX_LocalVariable [CallFunc_BreakHitResult_ElementIndex]
+1085:     EX_LocalVariable [CallFunc_BreakHitResult_FaceIndex]
+1094:     EX_LocalVariable [CallFunc_BreakHitResult_TraceStart]
+1103:     EX_LocalVariable [CallFunc_BreakHitResult_TraceEnd]
+1113: EX_Let
+1122:     EX_LocalVariable [CallFunc_GetDisplayName_ReturnValue]
+1131:     EX_CallMath import /Script/Engine->KismetSystemLibrary->GetDisplayName
+1140:         EX_LocalVariable [CallFunc_BreakHitResult_HitComponent]
+1150: EX_Let
+1159:     EX_LocalVariable [CallFunc_Concat_StrStr_ReturnValue]
+1168:     EX_CallMath import /Script/Engine->KismetStringLibrary->Concat_StrStr
+1177:         EX_StringConst Bad sun hit 2-1: 
+1196:         EX_LocalVariable [CallFunc_GetDisplayName_ReturnValue]
+1206: EX_CallMath import /Script/Engine->KismetSystemLibrary->PrintString
+1215:     EX_Self
+1216:     EX_LocalVariable [CallFunc_Concat_StrStr_ReturnValue]
+1225:     EX_True
+1226:     EX_False
+1227:     EX_StructConst import /Script/CoreUObject->LinearColor
+1240:         EX_FloatConst 1
+1245:         EX_FloatConst 0.977627
+1250:         EX_FloatConst 0
+1255:         EX_FloatConst 1
+1261:     EX_FloatConst 1
+1267: EX_PopExecutionFlow
+
+=== Block @ 15 ===
+    Successors: 51 (JumpFalse), 50 (JumpTrue)
+
+15: EX_LetBool
+16:     EX_LocalVariable [CallFunc_IsGamePaused_ReturnValue]
+25:     EX_CallMath import /Script/Engine->GameplayStatics->IsGamePaused
+34:         EX_Self
+36: EX_JumpIfNot 51
+41:     EX_LocalVariable [CallFunc_IsGamePaused_ReturnValue]
+
+=== Block @ 2364 ===
+    Successors: 2849 (JumpTrue)
+
+2364: EX_LetBool
+2365:     EX_InstanceVariable [turnCam]
+2374:     EX_True
+2375: EX_Context
+2376:     EX_ObjectConst import /Game/main/lib->Default__lib_C
+2397:     EX_LocalVirtualFunction getMainPlayer
+2410:         EX_Self
+2411:         EX_LocalVariable [CallFunc_getMainPlayer_AsMain_Player]
+2421: EX_Let
+2430:     EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue_1]
+2439:     EX_CallMath import /Script/Engine->KismetMathLibrary->RandomFloatInRange
+2448:         EX_FloatConst 2
+2453:         EX_FloatConst 3
+2459: EX_Context
+2460:     EX_LocalVariable [CallFunc_getMainPlayer_AsMain_Player]
+2481:     EX_LocalVirtualFunction Add Player Damage
+2494:         EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue_1]
+2503:         EX_VectorConst 0,0,0
+2516:         EX_VectorConst 0,0,0
+2529:         EX_False
+2530:         EX_Self
+2532: EX_LetObj
+2533:     EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue_1]
+2542:     EX_CallMath import /Script/Engine->GameplayStatics->GetPlayerCameraManager
+2551:         EX_Self
+2552:         EX_IntConst 0
+2558: EX_Let
+2567:     EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue_1]
+2576:     EX_Context
+2577:         EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue_1]
+2598:         EX_FinalFunction import /Script/Engine->Actor->K2_GetActorLocation
+2608: EX_LetObj
+2609:     EX_LocalVariable [CallFunc_SpawnEmitterAtLocation_ReturnValue]
+2618:     EX_CallMath import /Script/Engine->GameplayStatics->SpawnEmitterAtLocation
+2627:         EX_Self
+2628:         EX_ObjectConst import /Game/particles/eff_bloodSpray->eff_bloodSpray
+2637:         EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue_1]
+2646:         EX_RotationConst 0,0,0
+2659:         EX_VectorConst 1,1,1
+2672:         EX_True
+2673:         EX_ByteConst 0
+2675:         EX_True
+2677: EX_Context
+2678:     EX_ObjectConst import /Script/Engine->Default__GameplayStatics
+2699:     EX_FinalFunction import /Script/Engine->GameplayStatics->PlaySound2D
+2708:         EX_Self
+2709:         EX_ObjectConst import /Game/audio/effects/physics/impact/flesh_impact_Cue->flesh_impact_Cue
+2718:         EX_FloatConst 0.25
+2723:         EX_FloatConst 1.5
+2728:         EX_FloatConst 0
+2733:         EX_NoObject
+2734:         EX_NoObject
+2735:         EX_True
+2737: EX_Context
+2738:     EX_ObjectConst import /Game/main/lib->Default__lib_C
+2759:     EX_LocalVirtualFunction getSaveSlot
+2772:         EX_Self
+2773:         EX_LocalVariable [CallFunc_getSaveSlot_saveSlot]
+2783: EX_LetBool
+2784:     EX_LocalVariable [CallFunc_LessEqual_FloatFloat_ReturnValue]
+2793:     EX_CallMath import /Script/Engine->KismetMathLibrary->LessEqual_FloatFloat
+2802:         EX_Context
+2803:             EX_LocalVariable [CallFunc_getSaveSlot_saveSlot]
+2824:             EX_InstanceVariable [health]
+2833:         EX_FloatConst 0
+2839: EX_PopExecutionFlowIfNot
+2840:     EX_LocalVariable [CallFunc_LessEqual_FloatFloat_ReturnValue]
+
+=== Block @ 2037 ===
+    Successors: 
+
+2037: EX_CallMath import /Script/Engine->GameplayStatics->BreakHitResult
+2046:     EX_LocalVariable [CallFunc_LineTraceSingleForObjects_OutHit_1]
+2055:     EX_LocalVariable [CallFunc_BreakHitResult_bBlockingHit_1]
+2064:     EX_LocalVariable [CallFunc_BreakHitResult_bInitialOverlap_1]
+2073:     EX_LocalVariable [CallFunc_BreakHitResult_Time_1]
+2082:     EX_LocalVariable [CallFunc_BreakHitResult_Distance_1]
+2091:     EX_LocalVariable [CallFunc_BreakHitResult_Location_1]
+2100:     EX_LocalVariable [CallFunc_BreakHitResult_ImpactPoint_1]
+2109:     EX_LocalVariable [CallFunc_BreakHitResult_Normal_1]
+2118:     EX_LocalVariable [CallFunc_BreakHitResult_ImpactNormal_1]
+2127:     EX_LocalVariable [CallFunc_BreakHitResult_PhysMat_1]
+2136:     EX_LocalVariable [CallFunc_BreakHitResult_HitActor_1]
+2145:     EX_LocalVariable [CallFunc_BreakHitResult_HitComponent_1]
+2154:     EX_LocalVariable [CallFunc_BreakHitResult_HitBoneName_1]
+2163:     EX_LocalVariable [CallFunc_BreakHitResult_HitItem_1]
+2172:     EX_LocalVariable [CallFunc_BreakHitResult_ElementIndex_1]
+2181:     EX_LocalVariable [CallFunc_BreakHitResult_FaceIndex_1]
+2190:     EX_LocalVariable [CallFunc_BreakHitResult_TraceStart_1]
+2199:     EX_LocalVariable [CallFunc_BreakHitResult_TraceEnd_1]
+2209: EX_Let
+2218:     EX_LocalVariable [CallFunc_GetDisplayName_ReturnValue_1]
+2227:     EX_CallMath import /Script/Engine->KismetSystemLibrary->GetDisplayName
+2236:         EX_LocalVariable [CallFunc_BreakHitResult_HitComponent_1]
+2246: EX_Let
+2255:     EX_LocalVariable [CallFunc_Concat_StrStr_ReturnValue_1]
+2264:     EX_CallMath import /Script/Engine->KismetStringLibrary->Concat_StrStr
+2273:         EX_StringConst Bad sun hit 2-2: 
+2292:         EX_LocalVariable [CallFunc_GetDisplayName_ReturnValue_1]
+2302: EX_CallMath import /Script/Engine->KismetSystemLibrary->PrintString
+2311:     EX_Self
+2312:     EX_LocalVariable [CallFunc_Concat_StrStr_ReturnValue_1]
+2321:     EX_True
+2322:     EX_False
+2323:     EX_StructConst import /Script/CoreUObject->LinearColor
+2336:         EX_FloatConst 1
+2341:         EX_FloatConst 0.841539
+2346:         EX_FloatConst 0
+2351:         EX_FloatConst 1
+2357:     EX_FloatConst 1
+2363: EX_PopExecutionFlow
+
+=== Block @ 2849 ===
+    Successors: 3325 (JumpFalse), 2920 (JumpTrue)
+
+2849: EX_Let
+2858:     EX_LocalVariable [Temp_int_Variable_1]
+2867:     EX_IntConst 0
+2872: EX_LetBool
+2873:     EX_LocalVariable [CallFunc_LessEqual_IntInt_ReturnValue]
+2882:     EX_CallMath import /Script/Engine->KismetMathLibrary->LessEqual_IntInt
+2891:         EX_LocalVariable [Temp_int_Variable_1]
+2900:         EX_IntConst 25
+2906: EX_JumpIfNot 3325
+2911:     EX_LocalVariable [CallFunc_LessEqual_IntInt_ReturnValue]
+
+=== Block @ 3325 ===
+    Successors: ExecuteUbergraph_ui_badSun:3380 (Latent), 3379
+
+3325: EX_CallMath import /Script/Engine->KismetSystemLibrary->Delay
+3334:     EX_Self
+3335:     EX_FloatConst 0.3
+3340:     EX_StructConst import /Script/Engine->LatentActionInfo
+3353:         EX_SkipOffsetConst 3380
+3358:         EX_IntConst -1758022932
+3363:         EX_NameConst ExecuteUbergraph_ui_badSun
+3376:         EX_Self
+
+=== Block @ 2920 ===
+    Successors: 3251 (Push), 2925
+
+2920: EX_PushExecutionFlow 3251
+
+=== Block @ 3251 ===
+    Successors: 2872
+
+3251: EX_Let
+3260:     EX_LocalVariable [CallFunc_Add_IntInt_ReturnValue]
+3269:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_IntInt
+3278:         EX_LocalVariable [Temp_int_Variable_1]
+3287:         EX_IntConst 1
+3293: EX_Let
+3302:     EX_LocalVariable [Temp_int_Variable_1]
+3311:     EX_LocalVariable [CallFunc_Add_IntInt_ReturnValue]
+3320: EX_Jump 2872
+
+=== Block @ 3380 ===
+    Successors: 
+
+3380: EX_Context
+3381:     EX_ObjectConst import /Game/main/lib->Default__lib_C
+3402:     EX_LocalVirtualFunction progressAchievement
+3415:         EX_NameConst badsun_0
+3428:         EX_False
+3429:         EX_False
+3430:         EX_Self
+3432: EX_Context
+3433:     EX_Context
+3434:         EX_InstanceVariable [gamemode]
+3455:         EX_InstanceVariable [save_main]
+3476:     EX_LocalVirtualFunction save
+3490: EX_Let
+3499:     EX_LocalVariable [CallFunc_MakeTransform_ReturnValue]
+3508:     EX_CallMath import /Script/Engine->KismetMathLibrary->MakeTransform
+3517:         EX_VectorConst 0,0,0
+3530:         EX_RotationConst 0,0,0
+3543:         EX_VectorConst 1,1,1
+3557: EX_LetObj
+3558:     EX_LocalVariable [CallFunc_BeginDeferredActorSpawnFromClass_ReturnValue]
+3567:     EX_CallMath import /Script/Engine->GameplayStatics->BeginDeferredActorSpawnFromClass
+3576:         EX_Self
+3577:         EX_ObjectConst import /Game/objects/gameover->gameover_C
+3586:         EX_LocalVariable [CallFunc_MakeTransform_ReturnValue]
+3595:         EX_ByteConst 0
+3597:         EX_NoObject
+3599: EX_Let
+3608:     EX_LocalVariable [Temp_text_Variable]
+3617:     EX_TextConst
+        SourceString         = >BEGIN 
+
+LOCATION: SOLAR SYSTEM
+STATUS: UNKNOWN
+ 
+CONCLUSION: IGNORE PROTOCOLS, ANNIHILATE THE SUN, RETRIEVE ALL UNITS, CAPTURE THE REMAINING LIGHT.
+ 
+>END 
+
+[GAME OVER]
+        LocalizedKey         = 400E02E44F69DBC906DD7A92B4457ED9
+        LocalizedNamespace         = 
+3835: EX_CallMath import /Script/Engine->KismetSystemLibrary->SetTextPropertyByName
+3844:     EX_LocalVariable [CallFunc_BeginDeferredActorSpawnFromClass_ReturnValue]
+3853:     EX_NameConst text
+3866:     EX_LocalVariable [Temp_text_Variable]
+3876: EX_CallMath import /Script/Engine->KismetSystemLibrary->SetFloatPropertyByName
+3885:     EX_LocalVariable [CallFunc_BeginDeferredActorSpawnFromClass_ReturnValue]
+3894:     EX_NameConst postDelay
+3907:     EX_FloatConst 6
+3913: EX_Let
+3922:     EX_LocalVariable [CallFunc_MakeTransform_ReturnValue]
+3931:     EX_CallMath import /Script/Engine->KismetMathLibrary->MakeTransform
+3940:         EX_VectorConst 0,0,0
+3953:         EX_RotationConst 0,0,0
+3966:         EX_VectorConst 1,1,1
+3980: EX_LetObj
+3981:     EX_LocalVariable [CallFunc_FinishSpawningActor_ReturnValue]
+3990:     EX_CallMath import /Script/Engine->GameplayStatics->FinishSpawningActor
+3999:         EX_LocalVariable [CallFunc_BeginDeferredActorSpawnFromClass_ReturnValue]
+4008:         EX_LocalVariable [CallFunc_MakeTransform_ReturnValue]
+4018: EX_PopExecutionFlow
+
+=== Block @ 4252 ===
+    Successors: ExecuteUbergraph_ui_badSun:4019 (Latent), 4306
+
+4252: EX_CallMath import /Script/Engine->KismetSystemLibrary->Delay
+4261:     EX_Self
+4262:     EX_FloatConst 0
+4267:     EX_StructConst import /Script/Engine->LatentActionInfo
+4280:         EX_SkipOffsetConst 4019
+4285:         EX_IntConst 1482683311
+4290:         EX_NameConst ExecuteUbergraph_ui_badSun
+4303:         EX_Self
+
+=== Block @ 4127 ===
+    Successors: ExecuteUbergraph_ui_badSun:4182 (Latent), 4181
+
+4127: EX_CallMath import /Script/Engine->KismetSystemLibrary->Delay
+4136:     EX_Self
+4137:     EX_FloatConst 1
+4142:     EX_StructConst import /Script/Engine->LatentActionInfo
+4155:         EX_SkipOffsetConst 4182
+4160:         EX_IntConst 310737989
+4165:         EX_NameConst ExecuteUbergraph_ui_badSun
+4178:         EX_Self
+
+=== Block @ 4182 ===
+    Successors: 
+
+4182: EX_SetArray
+4183:     EX_LocalVariable [K2Node_MakeArray_Array]
+4192:     EX_Context
+4193:         EX_InstanceVariable [gamemode]
+4214:         EX_InstanceVariable [borders]
+4224: EX_Let
+4233:     EX_InstanceVariable [ignores]
+4242:     EX_LocalVariable [K2Node_MakeArray_Array]
+4251: EX_PopExecutionFlow
+
+=== Block @ 4019 ===
+    Successors: 4252 (JumpFalse), 4127 (JumpTrue)
+
+4019: EX_Context
+4020:     EX_ObjectConst import /Game/main/lib->Default__lib_C
+4041:     EX_LocalVirtualFunction getMainGamemode
+4054:         EX_Self
+4055:         EX_LocalVariable [CallFunc_getMainGamemode_AsMain_Gamemode]
+4065: EX_LetObj
+4066:     EX_InstanceVariable [gamemode]
+4075:     EX_LocalVariable [CallFunc_getMainGamemode_AsMain_Gamemode]
+4084: EX_LetBool
+4085:     EX_LocalVariable [CallFunc_IsValid_ReturnValue]
+4094:     EX_CallMath import /Script/Engine->KismetSystemLibrary->IsValid
+4103:         EX_InstanceVariable [gamemode]
+4113: EX_JumpIfNot 4252
+4118:     EX_LocalVariable [CallFunc_IsValid_ReturnValue]
+
+=== Block @ 8733 ===
+    Successors: 8743 (JumpTrue)
+
+8733: EX_PopExecutionFlowIfNot
+8734:     EX_InstanceVariable [turnCam]
+
+=== Block @ 8547 ===
+    Successors: 8557 (JumpTrue)
+
+8547: EX_PopExecutionFlowIfNot
+8548:     EX_InstanceVariable [dry]
+
+=== Block @ 4737 ===
+    Successors: 4834 (JumpTrue)
+
+4737: EX_LetBool
+4738:     EX_LocalVariable [CallFunc_GreaterEqual_IntInt_ReturnValue]
+4747:     EX_CallMath import /Script/Engine->KismetMathLibrary->GreaterEqual_IntInt
+4756:         EX_StructMemberContext [X]
+4765:             EX_Context
+4766:                 EX_Context
+4767:                     EX_InstanceVariable [gamemode]
+4788:                     EX_InstanceVariable [daynightCycle]
+4809:                 EX_InstanceVariable [timeZ]
+4818:         EX_IntConst 18
+4824: EX_PopExecutionFlowIfNot
+4825:     EX_LocalVariable [CallFunc_GreaterEqual_IntInt_ReturnValue]
+
+=== Block @ 4846 ===
+    Successors: 
+
+4846: EX_LetObj
+4847:     EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue]
+4856:     EX_CallMath import /Script/Engine->GameplayStatics->GetPlayerCameraManager
+4865:         EX_Self
+4866:         EX_IntConst 0
+4872: EX_Let
+4881:     EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+4890:     EX_Context
+4891:         EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue]
+4912:         EX_FinalFunction import /Script/Engine->Actor->K2_GetActorLocation
+4922: EX_Context
+4923:     EX_ObjectConst import /Game/main/lib_obj->Default__lib_obj_C
+4944:     EX_LocalVirtualFunction obj_static
+4957:         EX_Self
+4958:         EX_LocalVariable [CallFunc_obj_static_obj]
+4968: EX_Let
+4977:     EX_LocalVariable [CallFunc_GetForwardVector_ReturnValue]
+4986:     EX_Context
+4987:         EX_Context
+4988:             EX_Context
+4989:                 EX_InstanceVariable [gamemode]
+5010:                 EX_InstanceVariable [daynightCycle]
+5031:             EX_InstanceVariable [light_sun]
+5052:         EX_FinalFunction import /Script/Engine->SceneComponent->GetForwardVector
+5062: EX_Let
+5071:     EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue]
+5080:     EX_CallMath import /Script/Engine->KismetMathLibrary->Multiply_VectorFloat
+5089:         EX_LocalVariable [CallFunc_GetForwardVector_ReturnValue]
+5098:         EX_FloatConst -50000
+5104: EX_Let
+5113:     EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_1]
+5122:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_VectorVector
+5131:         EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue]
+5140:         EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+5150: EX_LetBool
+5151:     EX_LocalVariable [CallFunc_LineTraceSingleForObjects_ReturnValue_2]
+5160:     EX_CallMath import /Script/Engine->KismetSystemLibrary->LineTraceSingleForObjects
+5169:         EX_Self
+5170:         EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+5179:         EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_1]
+5188:         EX_LocalVariable [CallFunc_obj_static_obj]
+5197:         EX_False
+5198:         EX_InstanceVariable [ignores]
+5207:         EX_ByteConst 1
+5209:         EX_LocalVariable [CallFunc_LineTraceSingleForObjects_OutHit_2]
+5218:         EX_True
+5219:         EX_StructConst import /Script/CoreUObject->LinearColor
+5232:             EX_FloatConst 1
+5237:             EX_FloatConst 0
+5242:             EX_FloatConst 0
+5247:             EX_FloatConst 1
+5253:         EX_StructConst import /Script/CoreUObject->LinearColor
+5266:             EX_FloatConst 0
+5271:             EX_FloatConst 1
+5276:             EX_FloatConst 0
+5281:             EX_FloatConst 1
+5287:         EX_FloatConst 5
+5293: EX_CallMath import /Script/Engine->GameplayStatics->BreakHitResult
+5302:     EX_LocalVariable [CallFunc_LineTraceSingleForObjects_OutHit_2]
+5311:     EX_LocalVariable [CallFunc_BreakHitResult_bBlockingHit_2]
+5320:     EX_LocalVariable [CallFunc_BreakHitResult_bInitialOverlap_2]
+5329:     EX_LocalVariable [CallFunc_BreakHitResult_Time_2]
+5338:     EX_LocalVariable [CallFunc_BreakHitResult_Distance_2]
+5347:     EX_LocalVariable [CallFunc_BreakHitResult_Location_2]
+5356:     EX_LocalVariable [CallFunc_BreakHitResult_ImpactPoint_2]
+5365:     EX_LocalVariable [CallFunc_BreakHitResult_Normal_2]
+5374:     EX_LocalVariable [CallFunc_BreakHitResult_ImpactNormal_2]
+5383:     EX_LocalVariable [CallFunc_BreakHitResult_PhysMat_2]
+5392:     EX_LocalVariable [CallFunc_BreakHitResult_HitActor_2]
+5401:     EX_LocalVariable [CallFunc_BreakHitResult_HitComponent_2]
+5410:     EX_LocalVariable [CallFunc_BreakHitResult_HitBoneName_2]
+5419:     EX_LocalVariable [CallFunc_BreakHitResult_HitItem_2]
+5428:     EX_LocalVariable [CallFunc_BreakHitResult_ElementIndex_2]
+5437:     EX_LocalVariable [CallFunc_BreakHitResult_FaceIndex_2]
+5446:     EX_LocalVariable [CallFunc_BreakHitResult_TraceStart_2]
+5455:     EX_LocalVariable [CallFunc_BreakHitResult_TraceEnd_2]
+5465: EX_Let
+5474:     EX_LocalVariable [CallFunc_GetDisplayName_ReturnValue_2]
+5483:     EX_CallMath import /Script/Engine->KismetSystemLibrary->GetDisplayName
+5492:         EX_LocalVariable [CallFunc_BreakHitResult_HitComponent_2]
+5502: EX_Let
+5511:     EX_LocalVariable [CallFunc_Concat_StrStr_ReturnValue_2]
+5520:     EX_CallMath import /Script/Engine->KismetStringLibrary->Concat_StrStr
+5529:         EX_StringConst Bad sun hit 1-1: 
+5548:         EX_LocalVariable [CallFunc_GetDisplayName_ReturnValue_2]
+5558: EX_CallMath import /Script/Engine->KismetSystemLibrary->PrintString
+5567:     EX_Self
+5568:     EX_LocalVariable [CallFunc_Concat_StrStr_ReturnValue_2]
+5577:     EX_True
+5578:     EX_True
+5579:     EX_StructConst import /Script/CoreUObject->LinearColor
+5592:         EX_FloatConst 1
+5597:         EX_FloatConst 0.312801
+5602:         EX_FloatConst 0
+5607:         EX_FloatConst 1
+5613:     EX_FloatConst 0
+5619: EX_LetObj
+5620:     EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue]
+5629:     EX_CallMath import /Script/Engine->GameplayStatics->GetPlayerCameraManager
+5638:         EX_Self
+5639:         EX_IntConst 0
+5645: EX_Let
+5654:     EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+5663:     EX_Context
+5664:         EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue]
+5685:         EX_FinalFunction import /Script/Engine->Actor->K2_GetActorLocation
+5695: EX_Let
+5704:     EX_LocalVariable [CallFunc_GetForwardVector_ReturnValue]
+5713:     EX_Context
+5714:         EX_Context
+5715:             EX_Context
+5716:                 EX_InstanceVariable [gamemode]
+5737:                 EX_InstanceVariable [daynightCycle]
+5758:             EX_InstanceVariable [light_sun]
+5779:         EX_FinalFunction import /Script/Engine->SceneComponent->GetForwardVector
+5789: EX_Let
+5798:     EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue]
+5807:     EX_CallMath import /Script/Engine->KismetMathLibrary->Multiply_VectorFloat
+5816:         EX_LocalVariable [CallFunc_GetForwardVector_ReturnValue]
+5825:         EX_FloatConst -50000
+5831: EX_Let
+5840:     EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_1]
+5849:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_VectorVector
+5858:         EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue]
+5867:         EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+5877: EX_Context
+5878:     EX_ObjectConst import /Game/main/lib_obj->Default__lib_obj_C
+5899:     EX_LocalVirtualFunction obj_static
+5912:         EX_Self
+5913:         EX_LocalVariable [CallFunc_obj_static_obj_1]
+5923: EX_LetBool
+5924:     EX_LocalVariable [CallFunc_LineTraceSingleForObjects_ReturnValue_3]
+5933:     EX_CallMath import /Script/Engine->KismetSystemLibrary->LineTraceSingleForObjects
+5942:         EX_Self
+5943:         EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_1]
+5952:         EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+5961:         EX_LocalVariable [CallFunc_obj_static_obj_1]
+5970:         EX_False
+5971:         EX_InstanceVariable [ignores]
+5980:         EX_ByteConst 1
+5982:         EX_LocalVariable [CallFunc_LineTraceSingleForObjects_OutHit_3]
+5991:         EX_True
+5992:         EX_StructConst import /Script/CoreUObject->LinearColor
+6005:             EX_FloatConst 1
+6010:             EX_FloatConst 0
+6015:             EX_FloatConst 0
+6020:             EX_FloatConst 1
+6026:         EX_StructConst import /Script/CoreUObject->LinearColor
+6039:             EX_FloatConst 0
+6044:             EX_FloatConst 1
+6049:             EX_FloatConst 0
+6054:             EX_FloatConst 1
+6060:         EX_FloatConst 5
+6066: EX_CallMath import /Script/Engine->GameplayStatics->BreakHitResult
+6075:     EX_LocalVariable [CallFunc_LineTraceSingleForObjects_OutHit_3]
+6084:     EX_LocalVariable [CallFunc_BreakHitResult_bBlockingHit_3]
+6093:     EX_LocalVariable [CallFunc_BreakHitResult_bInitialOverlap_3]
+6102:     EX_LocalVariable [CallFunc_BreakHitResult_Time_3]
+6111:     EX_LocalVariable [CallFunc_BreakHitResult_Distance_3]
+6120:     EX_LocalVariable [CallFunc_BreakHitResult_Location_3]
+6129:     EX_LocalVariable [CallFunc_BreakHitResult_ImpactPoint_3]
+6138:     EX_LocalVariable [CallFunc_BreakHitResult_Normal_3]
+6147:     EX_LocalVariable [CallFunc_BreakHitResult_ImpactNormal_3]
+6156:     EX_LocalVariable [CallFunc_BreakHitResult_PhysMat_3]
+6165:     EX_LocalVariable [CallFunc_BreakHitResult_HitActor_3]
+6174:     EX_LocalVariable [CallFunc_BreakHitResult_HitComponent_3]
+6183:     EX_LocalVariable [CallFunc_BreakHitResult_HitBoneName_3]
+6192:     EX_LocalVariable [CallFunc_BreakHitResult_HitItem_3]
+6201:     EX_LocalVariable [CallFunc_BreakHitResult_ElementIndex_3]
+6210:     EX_LocalVariable [CallFunc_BreakHitResult_FaceIndex_3]
+6219:     EX_LocalVariable [CallFunc_BreakHitResult_TraceStart_3]
+6228:     EX_LocalVariable [CallFunc_BreakHitResult_TraceEnd_3]
+6238: EX_Let
+6247:     EX_LocalVariable [CallFunc_GetDisplayName_ReturnValue_3]
+6256:     EX_CallMath import /Script/Engine->KismetSystemLibrary->GetDisplayName
+6265:         EX_LocalVariable [CallFunc_BreakHitResult_HitComponent_3]
+6275: EX_Let
+6284:     EX_LocalVariable [CallFunc_Concat_StrStr_ReturnValue_3]
+6293:     EX_CallMath import /Script/Engine->KismetStringLibrary->Concat_StrStr
+6302:         EX_StringConst Bad sun hit 1-2: 
+6321:         EX_LocalVariable [CallFunc_GetDisplayName_ReturnValue_3]
+6331: EX_CallMath import /Script/Engine->KismetSystemLibrary->PrintString
+6340:     EX_Self
+6341:     EX_LocalVariable [CallFunc_Concat_StrStr_ReturnValue_3]
+6350:     EX_True
+6351:     EX_True
+6352:     EX_StructConst import /Script/CoreUObject->LinearColor
+6365:         EX_FloatConst 1
+6370:         EX_FloatConst 0.312801
+6375:         EX_FloatConst 0
+6380:         EX_FloatConst 1
+6386:     EX_FloatConst 0
+6392: EX_Let
+6401:     EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue]
+6410:     EX_CallMath import /Script/Engine->KismetMathLibrary->RandomFloatInRange
+6419:         EX_FloatConst 1
+6424:         EX_FloatConst 1.5
+6430: EX_Let
+6439:     EX_LocalVariable [CallFunc_Lerp_ReturnValue]
+6448:     EX_CallMath import /Script/Engine->KismetMathLibrary->Lerp
+6457:         EX_FloatConst 1
+6462:         EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue]
+6471:         EX_InstanceVariable [a]
+6481: EX_Let
+6490:     EX_Context
+6491:         EX_Context
+6492:             EX_Context
+6493:                 EX_InstanceVariable [gamemode]
+6514:                 EX_InstanceVariable [daynightCycle]
+6535:             EX_InstanceVariable [skysphere]
+6556:         EX_InstanceVariable [sunIntensityMult]
+6565:     EX_LocalVariable [CallFunc_Lerp_ReturnValue]
+6574: EX_Let
+6583:     EX_LocalVariable [CallFunc_LinearColorLerp_ReturnValue]
+6592:     EX_CallMath import /Script/Engine->KismetMathLibrary->LinearColorLerp
+6601:         EX_StructConst import /Script/CoreUObject->LinearColor
+6614:             EX_FloatConst 1
+6619:             EX_FloatConst 1
+6624:             EX_FloatConst 1
+6629:             EX_FloatConst 1
+6635:         EX_StructConst import /Script/CoreUObject->LinearColor
+6648:             EX_FloatConst 1
+6653:             EX_FloatConst 0.2775
+6658:             EX_FloatConst 0.15
+6663:             EX_FloatConst 1
+6669:         EX_InstanceVariable [a]
+6679: EX_Let
+6688:     EX_Context
+6689:         EX_Context
+6690:             EX_Context
+6691:                 EX_InstanceVariable [gamemode]
+6712:                 EX_InstanceVariable [daynightCycle]
+6733:             EX_InstanceVariable [skysphere]
+6754:         EX_InstanceVariable [suncolor]
+6763:     EX_LocalVariable [CallFunc_LinearColorLerp_ReturnValue]
+6772: EX_LetObj
+6773:     EX_LocalVariable [CallFunc_GetPlayerController_ReturnValue]
+6782:     EX_CallMath import /Script/Engine->GameplayStatics->GetPlayerController
+6791:         EX_Self
+6792:         EX_IntConst 0
+6798: EX_LetObj
+6799:     EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue]
+6808:     EX_CallMath import /Script/Engine->GameplayStatics->GetPlayerCameraManager
+6817:         EX_Self
+6818:         EX_IntConst 0
+6824: EX_Let
+6833:     EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+6842:     EX_Context
+6843:         EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue]
+6864:         EX_FinalFunction import /Script/Engine->Actor->K2_GetActorLocation
+6874: EX_Let
+6883:     EX_LocalVariable [Temp_byte_Variable]
+6892:     EX_ByteConst 1
+6894: EX_LetBool
+6895:     EX_LocalVariable [CallFunc_Greater_FloatFloat_ReturnValue]
+6904:     EX_CallMath import /Script/Engine->KismetMathLibrary->Greater_FloatFloat
+6913:         EX_Context
+6914:             EX_Context
+6915:                 EX_InstanceVariable [gamemode]
+6936:                 EX_InstanceVariable [daynightCycle]
+6957:             EX_InstanceVariable [sun_height]
+6966:         EX_FloatConst 0.5
+6972: EX_LetBool
+6973:     EX_LocalVariable [CallFunc_Not_PreBool_ReturnValue]
+6982:     EX_CallMath import /Script/Engine->KismetMathLibrary->Not_PreBool
+6991:         EX_LocalVariable [CallFunc_Greater_FloatFloat_ReturnValue]
+7001: EX_Let
+7010:     EX_LocalVariable [CallFunc_GetForwardVector_ReturnValue]
+7019:     EX_Context
+7020:         EX_Context
+7021:             EX_Context
+7022:                 EX_InstanceVariable [gamemode]
+7043:                 EX_InstanceVariable [daynightCycle]
+7064:             EX_InstanceVariable [light_sun]
+7085:         EX_FinalFunction import /Script/Engine->SceneComponent->GetForwardVector
+7095: EX_Let
+7104:     EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue_1]
+7113:     EX_CallMath import /Script/Engine->KismetMathLibrary->Multiply_VectorFloat
+7122:         EX_LocalVariable [CallFunc_GetForwardVector_ReturnValue]
+7131:         EX_FloatConst -615000
+7137: EX_Let
+7146:     EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_2]
+7155:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_VectorVector
+7164:         EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue_1]
+7173:         EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+7183: EX_LetBool
+7184:     EX_LocalVariable [CallFunc_ProjectWorldLocationToWidgetPosition_ReturnValue]
+7193:     EX_Context
+7194:         EX_ObjectConst import /Script/UMG->Default__WidgetLayoutLibrary
+7215:         EX_FinalFunction import /Script/UMG->WidgetLayoutLibrary->ProjectWorldLocationToWidgetPosition
+7224:             EX_LocalVariable [CallFunc_GetPlayerController_ReturnValue]
+7233:             EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_2]
+7242:             EX_LocalVariable [CallFunc_ProjectWorldLocationToWidgetPosition_ScreenPosition]
+7251:             EX_False
+7253: EX_LetBool
+7254:     EX_LocalVariable [CallFunc_Not_PreBool_ReturnValue_1]
+7263:     EX_CallMath import /Script/Engine->KismetMathLibrary->Not_PreBool
+7272:         EX_LocalVariable [CallFunc_ProjectWorldLocationToWidgetPosition_ReturnValue]
+7282: EX_CallMath import /Script/Engine->GameplayStatics->BreakHitResult
+7291:     EX_LocalVariable [CallFunc_LineTraceSingleForObjects_OutHit_2]
+7300:     EX_LocalVariable [CallFunc_BreakHitResult_bBlockingHit_2]
+7309:     EX_LocalVariable [CallFunc_BreakHitResult_bInitialOverlap_2]
+7318:     EX_LocalVariable [CallFunc_BreakHitResult_Time_2]
+7327:     EX_LocalVariable [CallFunc_BreakHitResult_Distance_2]
+7336:     EX_LocalVariable [CallFunc_BreakHitResult_Location_2]
+7345:     EX_LocalVariable [CallFunc_BreakHitResult_ImpactPoint_2]
+7354:     EX_LocalVariable [CallFunc_BreakHitResult_Normal_2]
+7363:     EX_LocalVariable [CallFunc_BreakHitResult_ImpactNormal_2]
+7372:     EX_LocalVariable [CallFunc_BreakHitResult_PhysMat_2]
+7381:     EX_LocalVariable [CallFunc_BreakHitResult_HitActor_2]
+7390:     EX_LocalVariable [CallFunc_BreakHitResult_HitComponent_2]
+7399:     EX_LocalVariable [CallFunc_BreakHitResult_HitBoneName_2]
+7408:     EX_LocalVariable [CallFunc_BreakHitResult_HitItem_2]
+7417:     EX_LocalVariable [CallFunc_BreakHitResult_ElementIndex_2]
+7426:     EX_LocalVariable [CallFunc_BreakHitResult_FaceIndex_2]
+7435:     EX_LocalVariable [CallFunc_BreakHitResult_TraceStart_2]
+7444:     EX_LocalVariable [CallFunc_BreakHitResult_TraceEnd_2]
+7454: EX_LetBool
+7455:     EX_LocalVariable [CallFunc_Array_Contains_ReturnValue_1]
+7464:     EX_Context
+7465:         EX_ObjectConst import /Script/Engine->Default__KismetArrayLibrary
+7486:         EX_FinalFunction import /Script/Engine->KismetArrayLibrary->Array_Contains
+7495:             EX_InstanceVariable [seeThrough]
+7504:             EX_LocalVariable [CallFunc_BreakHitResult_PhysMat_2]
+7514: EX_LetBool
+7515:     EX_LocalVariable [CallFunc_Not_PreBool_ReturnValue_3]
+7524:     EX_CallMath import /Script/Engine->KismetMathLibrary->Not_PreBool
+7533:         EX_LocalVariable [CallFunc_Array_Contains_ReturnValue_1]
+7543: EX_LetBool
+7544:     EX_LocalVariable [CallFunc_BooleanAND_ReturnValue_2]
+7553:     EX_CallMath import /Script/Engine->KismetMathLibrary->BooleanAND
+7562:         EX_LocalVariable [CallFunc_LineTraceSingleForObjects_ReturnValue_2]
+7571:         EX_LocalVariable [CallFunc_Not_PreBool_ReturnValue_3]
+7581: EX_CallMath import /Script/Engine->GameplayStatics->BreakHitResult
+7590:     EX_LocalVariable [CallFunc_LineTraceSingleForObjects_OutHit_3]
+7599:     EX_LocalVariable [CallFunc_BreakHitResult_bBlockingHit_3]
+7608:     EX_LocalVariable [CallFunc_BreakHitResult_bInitialOverlap_3]
+7617:     EX_LocalVariable [CallFunc_BreakHitResult_Time_3]
+7626:     EX_LocalVariable [CallFunc_BreakHitResult_Distance_3]
+7635:     EX_LocalVariable [CallFunc_BreakHitResult_Location_3]
+7644:     EX_LocalVariable [CallFunc_BreakHitResult_ImpactPoint_3]
+7653:     EX_LocalVariable [CallFunc_BreakHitResult_Normal_3]
+7662:     EX_LocalVariable [CallFunc_BreakHitResult_ImpactNormal_3]
+7671:     EX_LocalVariable [CallFunc_BreakHitResult_PhysMat_3]
+7680:     EX_LocalVariable [CallFunc_BreakHitResult_HitActor_3]
+7689:     EX_LocalVariable [CallFunc_BreakHitResult_HitComponent_3]
+7698:     EX_LocalVariable [CallFunc_BreakHitResult_HitBoneName_3]
+7707:     EX_LocalVariable [CallFunc_BreakHitResult_HitItem_3]
+7716:     EX_LocalVariable [CallFunc_BreakHitResult_ElementIndex_3]
+7725:     EX_LocalVariable [CallFunc_BreakHitResult_FaceIndex_3]
+7734:     EX_LocalVariable [CallFunc_BreakHitResult_TraceStart_3]
+7743:     EX_LocalVariable [CallFunc_BreakHitResult_TraceEnd_3]
+7753: EX_LetBool
+7754:     EX_LocalVariable [CallFunc_Array_Contains_ReturnValue_3]
+7763:     EX_Context
+7764:         EX_ObjectConst import /Script/Engine->Default__KismetArrayLibrary
+7785:         EX_FinalFunction import /Script/Engine->KismetArrayLibrary->Array_Contains
+7794:             EX_InstanceVariable [seeThrough]
+7803:             EX_LocalVariable [CallFunc_BreakHitResult_PhysMat_3]
+7813: EX_LetBool
+7814:     EX_LocalVariable [CallFunc_Not_PreBool_ReturnValue_5]
+7823:     EX_CallMath import /Script/Engine->KismetMathLibrary->Not_PreBool
+7832:         EX_LocalVariable [CallFunc_Array_Contains_ReturnValue_3]
+7842: EX_LetBool
+7843:     EX_LocalVariable [CallFunc_BooleanAND_ReturnValue_4]
+7852:     EX_CallMath import /Script/Engine->KismetMathLibrary->BooleanAND
+7861:         EX_LocalVariable [CallFunc_LineTraceSingleForObjects_ReturnValue_3]
+7870:         EX_LocalVariable [CallFunc_Not_PreBool_ReturnValue_5]
+7880: EX_LetBool
+7881:     EX_LocalVariable [CallFunc_BooleanOR_ReturnValue]
+7890:     EX_CallMath import /Script/Engine->KismetMathLibrary->BooleanOR
+7899:         EX_LocalVariable [CallFunc_BooleanAND_ReturnValue_2]
+7908:         EX_LocalVariable [CallFunc_BooleanAND_ReturnValue_4]
+7918: EX_LetBool
+7919:     EX_LocalVariable [CallFunc_BooleanOR_ReturnValue_1]
+7928:     EX_CallMath import /Script/Engine->KismetMathLibrary->BooleanOR
+7937:         EX_LocalVariable [CallFunc_BooleanOR_ReturnValue]
+7946:         EX_LocalVariable [CallFunc_Not_PreBool_ReturnValue_1]
+7956: EX_Let
+7965:     EX_LocalVariable [Temp_byte_Variable_1]
+7974:     EX_ByteConst 3
+7976: EX_LetBool
+7977:     EX_LocalVariable [CallFunc_BooleanOR_ReturnValue_2]
+7986:     EX_CallMath import /Script/Engine->KismetMathLibrary->BooleanOR
+7995:         EX_LocalVariable [CallFunc_BooleanOR_ReturnValue_1]
+8004:         EX_LocalVariable [CallFunc_Not_PreBool_ReturnValue]
+8014: EX_LetBool
+8015:     EX_LocalVariable [Temp_bool_Variable]
+8024:     EX_LocalVariable [CallFunc_BooleanOR_ReturnValue_2]
+8033: EX_Context
+8034:     EX_InstanceVariable [canv]
+8055:     EX_VirtualFunction SetVisibility
+8068:         EX_SwitchValue
+8075:             EX_LocalVariable [Temp_bool_Variable]
+8068:             case 0:
+8084:                 EX_False
+8089:                 EX_LocalVariable [Temp_byte_Variable_1]
+8068:             case 1:
+8098:                 EX_True
+8103:                 EX_LocalVariable [Temp_byte_Variable]
+8068:             default:
+8112:                 EX_LocalVariable [K2Node_Select_Default]
+8122: EX_LetObj
+8123:     EX_LocalVariable [CallFunc_SlotAsCanvasSlot_ReturnValue]
+8132:     EX_CallMath import /Script/UMG->WidgetLayoutLibrary->SlotAsCanvasSlot
+8141:         EX_InstanceVariable [canv]
+8151: EX_LetObj
+8152:     EX_LocalVariable [CallFunc_GetPlayerController_ReturnValue]
+8161:     EX_CallMath import /Script/Engine->GameplayStatics->GetPlayerController
+8170:         EX_Self
+8171:         EX_IntConst 0
+8177: EX_LetObj
+8178:     EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue]
+8187:     EX_CallMath import /Script/Engine->GameplayStatics->GetPlayerCameraManager
+8196:         EX_Self
+8197:         EX_IntConst 0
+8203: EX_Let
+8212:     EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+8221:     EX_Context
+8222:         EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue]
+8243:         EX_FinalFunction import /Script/Engine->Actor->K2_GetActorLocation
+8253: EX_Let
+8262:     EX_LocalVariable [CallFunc_GetForwardVector_ReturnValue]
+8271:     EX_Context
+8272:         EX_Context
+8273:             EX_Context
+8274:                 EX_InstanceVariable [gamemode]
+8295:                 EX_InstanceVariable [daynightCycle]
+8316:             EX_InstanceVariable [light_sun]
+8337:         EX_FinalFunction import /Script/Engine->SceneComponent->GetForwardVector
+8347: EX_Let
+8356:     EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue_1]
+8365:     EX_CallMath import /Script/Engine->KismetMathLibrary->Multiply_VectorFloat
+8374:         EX_LocalVariable [CallFunc_GetForwardVector_ReturnValue]
+8383:         EX_FloatConst -615000
+8389: EX_Let
+8398:     EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_2]
+8407:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_VectorVector
+8416:         EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue_1]
+8425:         EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+8435: EX_LetBool
+8436:     EX_LocalVariable [CallFunc_ProjectWorldLocationToWidgetPosition_ReturnValue]
+8445:     EX_Context
+8446:         EX_ObjectConst import /Script/UMG->Default__WidgetLayoutLibrary
+8467:         EX_FinalFunction import /Script/UMG->WidgetLayoutLibrary->ProjectWorldLocationToWidgetPosition
+8476:             EX_LocalVariable [CallFunc_GetPlayerController_ReturnValue]
+8485:             EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_2]
+8494:             EX_LocalVariable [CallFunc_ProjectWorldLocationToWidgetPosition_ScreenPosition]
+8503:             EX_False
+8505: EX_Context
+8506:     EX_LocalVariable [CallFunc_SlotAsCanvasSlot_ReturnValue]
+8527:     EX_FinalFunction import /Script/UMG->CanvasPanelSlot->SetPosition
+8536:         EX_LocalVariable [CallFunc_ProjectWorldLocationToWidgetPosition_ScreenPosition]
+8546: EX_PopExecutionFlow
+
+=== Block @ 9376 ===
+    Successors: 9573 (JumpFalse), 9572 (JumpTrue)
+
+9376: EX_Let
+9385:     EX_LocalVariable [CallFunc_GetWorldDeltaSeconds_ReturnValue]
+9394:     EX_CallMath import /Script/Engine->GameplayStatics->GetWorldDeltaSeconds
+9403:         EX_Self
+9405: EX_Let
+9414:     EX_LocalVariable [CallFunc_Divide_FloatFloat_ReturnValue_1]
+9423:     EX_CallMath import /Script/Engine->KismetMathLibrary->Divide_FloatFloat
+9432:         EX_LocalVariable [CallFunc_GetWorldDeltaSeconds_ReturnValue]
+9441:         EX_FloatConst 60
+9447: EX_CallMath import /Script/VictoryBPLibrary->VictoryBPFunctionLibrary->VictoryFloatPlusEquals
+9456:     EX_InstanceVariable [a]
+9465:     EX_LocalVariable [CallFunc_Divide_FloatFloat_ReturnValue_1]
+9474:     EX_LocalVariable [CallFunc_VictoryFloatPlusEquals_FloatOut]
+9484: EX_Let
+9493:     EX_LocalVariable [CallFunc_FClamp_ReturnValue]
+9502:     EX_CallMath import /Script/Engine->KismetMathLibrary->FClamp
+9511:         EX_LocalVariable [CallFunc_VictoryFloatPlusEquals_FloatOut]
+9520:         EX_FloatConst 0
+9525:         EX_FloatConst 1
+9531: EX_Let
+9540:     EX_InstanceVariable [a]
+9549:     EX_LocalVariable [CallFunc_FClamp_ReturnValue]
+9558: EX_JumpIfNot 9573
+9563:     EX_InstanceVariable [d]
+
+=== Block @ 4341 ===
+    Successors: 4493 (JumpTrue)
+
+4341: EX_Let
+4350:     EX_LocalVariable [CallFunc_GetWorldDeltaSeconds_ReturnValue]
+4359:     EX_CallMath import /Script/Engine->GameplayStatics->GetWorldDeltaSeconds
+4368:         EX_Self
+4370: EX_Let
+4379:     EX_LocalVariable [CallFunc_Divide_FloatFloat_ReturnValue_1]
+4388:     EX_CallMath import /Script/Engine->KismetMathLibrary->Divide_FloatFloat
+4397:         EX_LocalVariable [CallFunc_GetWorldDeltaSeconds_ReturnValue]
+4406:         EX_FloatConst 60
+4412: EX_CallMath import /Script/VictoryBPLibrary->VictoryBPFunctionLibrary->VictoryFloatMinusEquals
+4421:     EX_InstanceVariable [a]
+4430:     EX_LocalVariable [CallFunc_Divide_FloatFloat_ReturnValue_1]
+4439:     EX_LocalVariable [CallFunc_VictoryFloatMinusEquals_FloatOut]
+4449: EX_LetBool
+4450:     EX_LocalVariable [CallFunc_LessEqual_FloatFloat_ReturnValue_1]
+4459:     EX_CallMath import /Script/Engine->KismetMathLibrary->LessEqual_FloatFloat
+4468:         EX_LocalVariable [CallFunc_VictoryFloatMinusEquals_FloatOut]
+4477:         EX_FloatConst 0
+4483: EX_PopExecutionFlowIfNot
+4484:     EX_LocalVariable [CallFunc_LessEqual_FloatFloat_ReturnValue_1]
+
+=== Block @ 4493 ===
+    Successors: 
+
+4493: EX_Let
+4502:     EX_Context
+4503:         EX_Context
+4504:             EX_Context
+4505:                 EX_InstanceVariable [gamemode]
+4526:                 EX_InstanceVariable [daynightCycle]
+4547:             EX_InstanceVariable [skysphere]
+4568:         EX_InstanceVariable [sunIntensityMult]
+4577:     EX_FloatConst 1
+4582: EX_Let
+4591:     EX_Context
+4592:         EX_Context
+4593:             EX_Context
+4594:                 EX_InstanceVariable [gamemode]
+4615:                 EX_InstanceVariable [daynightCycle]
+4636:             EX_InstanceVariable [skysphere]
+4657:         EX_InstanceVariable [suncolor]
+4666:     EX_StructConst import /Script/CoreUObject->LinearColor
+4679:         EX_FloatConst 1
+4684:         EX_FloatConst 1
+4689:         EX_FloatConst 1
+4694:         EX_FloatConst 1
+4700: EX_Context
+4701:     EX_InstanceVariable [sunObj]
+4722:     EX_LocalVirtualFunction remove
+4736: EX_PopExecutionFlow
+
+=== Block @ 4834 ===
+    Successors: 
+
+4834: EX_LetBool
+4835:     EX_InstanceVariable [hide]
+4844:     EX_True
+4845: EX_PopExecutionFlow
+
+=== Block @ 8557 ===
+    Successors: 8645 (JumpTrue)
+
+8557: EX_LetBool
+8558:     EX_LocalVariable [CallFunc_GreaterEqual_FloatFloat_ReturnValue_2]
+8567:     EX_CallMath import /Script/Engine->KismetMathLibrary->GreaterEqual_FloatFloat
+8576:         EX_Context
+8577:             EX_Context
+8578:                 EX_InstanceVariable [gamemode]
+8599:                 EX_InstanceVariable [daynightCycle]
+8620:             EX_InstanceVariable [sun_height]
+8629:         EX_FloatConst 0.5
+8635: EX_PopExecutionFlowIfNot
+8636:     EX_LocalVariable [CallFunc_GreaterEqual_FloatFloat_ReturnValue_2]
+
+=== Block @ 8645 ===
+    Successors: 
+
+8645: EX_Let
+8654:     EX_LocalVariable [CallFunc_Divide_FloatFloat_ReturnValue]
+8663:     EX_CallMath import /Script/Engine->KismetMathLibrary->Divide_FloatFloat
+8672:         EX_LocalVariable [K2Node_Event_InDeltaTime]
+8681:         EX_FloatConst 300
+8687: EX_Context
+8688:     EX_InstanceVariable [gamemode]
+8709:     EX_LocalVirtualFunction setDryness
+8722:         EX_LocalVariable [CallFunc_Divide_FloatFloat_ReturnValue]
+8732: EX_PopExecutionFlow
+
+=== Block @ 8743 ===
+    Successors: 
+
+8743: EX_LetObj
+8744:     EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue]
+8753:     EX_CallMath import /Script/Engine->GameplayStatics->GetPlayerCameraManager
+8762:         EX_Self
+8763:         EX_IntConst 0
+8769: EX_Let
+8778:     EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+8787:     EX_Context
+8788:         EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue]
+8809:         EX_FinalFunction import /Script/Engine->Actor->K2_GetActorLocation
+8819: EX_Let
+8828:     EX_LocalVariable [CallFunc_GetForwardVector_ReturnValue]
+8837:     EX_Context
+8838:         EX_Context
+8839:             EX_Context
+8840:                 EX_InstanceVariable [gamemode]
+8861:                 EX_InstanceVariable [daynightCycle]
+8882:             EX_InstanceVariable [light_sun]
+8903:         EX_FinalFunction import /Script/Engine->SceneComponent->GetForwardVector
+8913: EX_Let
+8922:     EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue]
+8931:     EX_CallMath import /Script/Engine->KismetMathLibrary->Multiply_VectorFloat
+8940:         EX_LocalVariable [CallFunc_GetForwardVector_ReturnValue]
+8949:         EX_FloatConst -50000
+8955: EX_Let
+8964:     EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_1]
+8973:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_VectorVector
+8982:         EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue]
+8991:         EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+9001: EX_LetObj
+9002:     EX_LocalVariable [CallFunc_GetPlayerController_ReturnValue_1]
+9011:     EX_CallMath import /Script/Engine->GameplayStatics->GetPlayerController
+9020:         EX_Self
+9021:         EX_IntConst 0
+9027: EX_Let
+9036:     EX_LocalVariable [CallFunc_GetControlRotation_ReturnValue]
+9045:     EX_Context
+9046:         EX_LocalVariable [CallFunc_GetPlayerController_ReturnValue_1]
+9067:         EX_VirtualFunction GetControlRotation
+9081: EX_LetObj
+9082:     EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue_2]
+9091:     EX_CallMath import /Script/Engine->GameplayStatics->GetPlayerCameraManager
+9100:         EX_Self
+9101:         EX_IntConst 0
+9107: EX_Let
+9116:     EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue_3]
+9125:     EX_Context
+9126:         EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue_2]
+9147:         EX_FinalFunction import /Script/Engine->Actor->K2_GetActorLocation
+9157: EX_Let
+9166:     EX_LocalVariable [CallFunc_FindLookAtRotation_ReturnValue]
+9175:     EX_CallMath import /Script/Engine->KismetMathLibrary->FindLookAtRotation
+9184:         EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue_3]
+9193:         EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_1]
+9203: EX_Let
+9212:     EX_LocalVariable [CallFunc_GetWorldDeltaSeconds_ReturnValue_1]
+9221:     EX_CallMath import /Script/Engine->GameplayStatics->GetWorldDeltaSeconds
+9230:         EX_Self
+9232: EX_Let
+9241:     EX_LocalVariable [CallFunc_Multiply_FloatFloat_ReturnValue]
+9250:     EX_CallMath import /Script/Engine->KismetMathLibrary->Multiply_FloatFloat
+9259:         EX_LocalVariable [CallFunc_GetWorldDeltaSeconds_ReturnValue_1]
+9268:         EX_FloatConst 2
+9274: EX_Let
+9283:     EX_LocalVariable [CallFunc_RLerp_ReturnValue]
+9292:     EX_CallMath import /Script/Engine->KismetMathLibrary->RLerp
+9301:         EX_LocalVariable [CallFunc_GetControlRotation_ReturnValue]
+9310:         EX_LocalVariable [CallFunc_FindLookAtRotation_ReturnValue]
+9319:         EX_LocalVariable [CallFunc_Multiply_FloatFloat_ReturnValue]
+9328:         EX_True
+9330: EX_Context
+9331:     EX_LocalVariable [CallFunc_GetPlayerController_ReturnValue_1]
+9352:     EX_VirtualFunction SetControlRotation
+9365:         EX_LocalVariable [CallFunc_RLerp_ReturnValue]
+9375: EX_PopExecutionFlow
+
+=== Block @ 9573 ===
+    Successors: 9617 (JumpTrue)
+
+9573: EX_LetBool
+9574:     EX_LocalVariable [CallFunc_GreaterEqual_FloatFloat_ReturnValue_1]
+9583:     EX_CallMath import /Script/Engine->KismetMathLibrary->GreaterEqual_FloatFloat
+9592:         EX_InstanceVariable [a]
+9601:         EX_FloatConst 1
+9607: EX_PopExecutionFlowIfNot
+9608:     EX_LocalVariable [CallFunc_GreaterEqual_FloatFloat_ReturnValue_1]
+
+=== Block @ 9572 ===
+    Successors: 
+
+9572: EX_PopExecutionFlow
+
+=== Block @ 9617 ===
+    Successors: 
+
+9617: EX_LetBool
+9618:     EX_InstanceVariable [d]
+9627:     EX_True
+9628: EX_Context
+9629:     EX_InstanceVariable [sunObj]
+9650:     EX_LocalVirtualFunction siren
+9664: EX_LetBool
+9665:     EX_InstanceVariable [dry]
+9674:     EX_True
+9675: EX_Let
+9684:     EX_LocalVariable [CallFunc_Add_IntInt_ReturnValue_2]
+9693:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_IntInt
+9702:         EX_Context
+9703:             EX_Context
+9704:                 EX_InstanceVariable [gamemode]
+9725:                 EX_InstanceVariable [birber]
+9746:             EX_InstanceVariable [deactivate]
+9755:         EX_IntConst 1
+9761: EX_Let
+9770:     EX_LocalVariable [Temp_int_Variable_2]
+9779:     EX_LocalVariable [CallFunc_Add_IntInt_ReturnValue_2]
+9788: EX_Let
+9797:     EX_Context
+9798:         EX_Context
+9799:             EX_InstanceVariable [gamemode]
+9820:             EX_InstanceVariable [birber]
+9841:         EX_InstanceVariable [deactivate]
+9850:     EX_LocalVariable [Temp_int_Variable_2]
+9859: EX_PopExecutionFlow
+
+=== Block @ 9870 ===
+    Successors: 51
+
+9870: EX_Let
+9879:     EX_LocalVariable [CallFunc_Add_IntInt_ReturnValue_1]
+9888:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_IntInt
+9897:         EX_Context
+9898:             EX_Context
+9899:                 EX_InstanceVariable [gamemode]
+9920:                 EX_InstanceVariable [birber]
+9941:             EX_InstanceVariable [deactivate]
+9950:         EX_IntConst 1
+9956: EX_Let
+9965:     EX_LocalVariable [Temp_int_Variable]
+9974:     EX_LocalVariable [CallFunc_Add_IntInt_ReturnValue_1]
+9983: EX_Let
+9992:     EX_Context
+9993:         EX_Context
+9994:             EX_InstanceVariable [gamemode]
+10015:             EX_InstanceVariable [birber]
+10036:         EX_InstanceVariable [deactivate]
+10045:     EX_LocalVariable [Temp_int_Variable]
+10054: EX_Jump 51
+
+=== Block @ 9860 ===
+    Successors: 9870 (Push), 9865
+
+9860: EX_PushExecutionFlow 9870
+
+=== Block @ 4307 ===
+    Successors: 8733 (Push), 4312
+
+4307: EX_PushExecutionFlow 8733
+
+=== Block @ 5 ===
+    Successors: 
+
+5: EX_ComputedJump
+6:     EX_LocalVariable [EntryPoint]
+
+=== Block @ 56 ===
+    Successors: 216 (JumpTrue)
+
+56: EX_LetBool
+57:     EX_LocalVariable [CallFunc_GreaterEqual_FloatFloat_ReturnValue]
+66:     EX_CallMath import /Script/Engine->KismetMathLibrary->GreaterEqual_FloatFloat
+75:         EX_InstanceVariable [a]
+84:         EX_FloatConst 1
+90: EX_LetBool
+91:     EX_LocalVariable [CallFunc_Greater_FloatFloat_ReturnValue]
+100:     EX_CallMath import /Script/Engine->KismetMathLibrary->Greater_FloatFloat
+109:         EX_Context
+110:             EX_Context
+111:                 EX_InstanceVariable [gamemode]
+132:                 EX_InstanceVariable [daynightCycle]
+153:             EX_InstanceVariable [sun_height]
+162:         EX_FloatConst 0.5
+168: EX_LetBool
+169:     EX_LocalVariable [CallFunc_BooleanAND_ReturnValue]
+178:     EX_CallMath import /Script/Engine->KismetMathLibrary->BooleanAND
+187:         EX_LocalVariable [CallFunc_GreaterEqual_FloatFloat_ReturnValue]
+196:         EX_LocalVariable [CallFunc_Greater_FloatFloat_ReturnValue]
+206: EX_PopExecutionFlowIfNot
+207:     EX_LocalVariable [CallFunc_BooleanAND_ReturnValue]
+
+=== Block @ 1322 ===
+    Successors: 
+
+1322: EX_PopExecutionFlow
+
+=== Block @ 3379 ===
+    Successors: 
+
+3379: EX_PopExecutionFlow
+
+=== Block @ 2925 ===
+    Successors: 
+
+2925: EX_Context
+2926:     EX_ObjectConst import /Game/main/lib->Default__lib_C
+2947:     EX_LocalVirtualFunction getMainPlayer
+2960:         EX_Self
+2961:         EX_LocalVariable [CallFunc_getMainPlayer_AsMain_Player_1]
+2971: EX_Let
+2980:     EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue_2]
+2989:     EX_Context
+2990:         EX_LocalVariable [CallFunc_getMainPlayer_AsMain_Player_1]
+3011:         EX_FinalFunction import /Script/Engine->Actor->K2_GetActorLocation
+3021: EX_Let
+3030:     EX_LocalVariable [CallFunc_RandomPointInBoundingBox_ReturnValue]
+3039:     EX_CallMath import /Script/Engine->KismetMathLibrary->RandomPointInBoundingBox
+3048:         EX_VectorConst 0,0,0
+3061:         EX_VectorConst 25,25,170
+3075: EX_Let
+3084:     EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue]
+3093:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_VectorVector
+3102:         EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue_2]
+3111:         EX_LocalVariable [CallFunc_RandomPointInBoundingBox_ReturnValue]
+3121: EX_LetObj
+3122:     EX_LocalVariable [CallFunc_SpawnEmitterAtLocation_ReturnValue_1]
+3131:     EX_CallMath import /Script/Engine->GameplayStatics->SpawnEmitterAtLocation
+3140:         EX_Self
+3141:         EX_ObjectConst import /Game/particles/eff_bloodLimbDetach->eff_bloodLimbDetach
+3150:         EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue]
+3159:         EX_RotationConst 0,0,0
+3172:         EX_VectorConst 1,1,1
+3185:         EX_True
+3186:         EX_ByteConst 0
+3188:         EX_True
+3190: EX_Context
+3191:     EX_ObjectConst import /Script/Engine->Default__GameplayStatics
+3212:     EX_FinalFunction import /Script/Engine->GameplayStatics->PlaySound2D
+3221:         EX_Self
+3222:         EX_ObjectConst import /Game/audio/effects/physics/impact/flesh_impact_Cue->flesh_impact_Cue
+3231:         EX_FloatConst 1
+3236:         EX_FloatConst 1
+3241:         EX_FloatConst 0
+3246:         EX_NoObject
+3247:         EX_NoObject
+3248:         EX_True
+3250: EX_PopExecutionFlow
+
+=== Block @ 4306 ===
+    Successors: 
+
+4306: EX_PopExecutionFlow
+
+=== Block @ 4181 ===
+    Successors: 
+
+4181: EX_PopExecutionFlow
+
+=== Block @ 9865 ===
+    Successors: 4019
+
+9865: EX_Jump 4019
+
+=== Block @ 4312 ===
+    Successors: 8547 (Push), 4317
+
+4312: EX_PushExecutionFlow 8547
+
+=== Block @ 4317 ===
+    Successors: 4737 (Push), 4322
+
+4317: EX_PushExecutionFlow 4737
+
+=== Block @ 4322 ===
+    Successors: 4846 (Push), 4327
+
+4322: EX_PushExecutionFlow 4846
+
+=== Block @ 4327 ===
+    Successors: 9376 (JumpFalse), 4341 (JumpTrue)
+
+4327: EX_JumpIfNot 9376
+4332:     EX_InstanceVariable [hide]
+
+FunctionExport Construct
+=== Block @ 0 ===
+    Successors: ExecuteUbergraph_ui_badSun:9860 (Function)
+
+0: EX_LocalFinalFunction ExecuteUbergraph_ui_badSun
+9:     EX_IntConst 9860
+15: EX_Return
+16:     EX_Nothing
+
+FunctionExport Tick
+=== Block @ 0 ===
+    Successors: ExecuteUbergraph_ui_badSun:4307 (Function)
+
+0: EX_LetValueOnPersistentFrame [K2Node_Event_MyGeometry]
+9:     EX_LocalVariable [MyGeometry]
+18: EX_LetValueOnPersistentFrame [K2Node_Event_InDeltaTime]
+27:     EX_LocalVariable [InDeltaTime]
+36: EX_LocalFinalFunction ExecuteUbergraph_ui_badSun
+45:     EX_IntConst 4307
+51: EX_Return
+52:     EX_Nothing
+

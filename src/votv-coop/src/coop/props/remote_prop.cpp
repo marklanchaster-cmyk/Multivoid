@@ -27,6 +27,7 @@
 #include "ue_wrap/actors/prop.h"
 #include "ue_wrap/core/reflection.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -776,9 +777,12 @@ void* ResolveLiveActorByEid(uint32_t eid) {
 
 void ClearAnyDriveFor(void* actor) {
     // Clear every slot's kinematic-drive cache entry for `actor` so nothing
-    // drives a destroyed actor next tick. Extracted from OnDestroy (Fork B
-    // 2e, 2026-06-10) because the adoption sweep destroys actors through the
-    // same teardown contract; one implementation (RULE 2).
+    // drives a destroyed/re-owned actor next tick. Also retire the old
+    // release handback: after a desk slot takes ownership, its frozen slot
+    // transform must not be re-expressed later as a loose-world rest pose.
+    // Extracted from OnDestroy (Fork B 2e, 2026-06-10) because the adoption
+    // sweep destroys actors through the same teardown contract; one
+    // implementation (RULE 2).
     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::ClearAnyDriveFor)");
     if (!actor) return;
     for (auto& d : g_drives) {
@@ -787,6 +791,15 @@ void ClearAnyDriveFor(void* actor) {
                     actor, std::distance(&g_drives[0], &d));
             ResetDriveState(d);
         }
+    }
+    const size_t oldSettleSize = g_hostSettle.size();
+    g_hostSettle.erase(
+        std::remove_if(g_hostSettle.begin(), g_hostSettle.end(),
+                       [actor](const HostSettleCorrection& p) { return p.actor == actor; }),
+        g_hostSettle.end());
+    if (g_hostSettle.size() != oldSettleSize) {
+        UE_LOGI("remote_prop[worldauth]: actor %p changed logical owner -- cancelled host "
+                "rest-pose correction", actor);
     }
 }
 

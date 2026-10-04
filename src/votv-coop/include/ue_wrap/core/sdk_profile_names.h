@@ -232,6 +232,7 @@ inline constexpr const wchar_t* kWorldActorAllowlist[] = {
                                    // it. `prop_coingun_C` is in kExSpawnSourceClasses so the Func-thunk
                                    // drain reaches world_actor_sync::HostEnrollExSpawn -- that is what
                                    // allocates the eid and broadcasts WorldActorSpawn.
+    L"screamingCorpse_C",          // typed token + remaining lifespan before/after FinishSpawning
     // Host-selected story/ambient actors whose cooked classes are plain AActor
     // (not ACharacter/Aprop). The generic WA lane owns exact birth transform,
     // full-rotation pose, destruction and join snapshots; client-local selectors

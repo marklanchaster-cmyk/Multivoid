@@ -166,10 +166,12 @@ void OnDestroy(const coop::net::PropDestroyPayload& payload, void* localPlayer);
 // not loaded, keep queued. NEVER re-arms. Game thread. [[feedback-one-owner-order-axis]]
 bool TryApplyDestroy(const coop::net::PropDestroyPayload& payload);
 
-// Clear every slot's kinematic-drive cache entry for `actor` (so nothing
-// drives a destroyed actor next tick). Extracted from OnDestroy (Fork B 2e,
-// 2026-06-10): the adoption sweep destroys actors through the same teardown
-// contract -- one implementation. Game thread only; no-op for null.
+// Clear every slot's kinematic-drive cache entry and any queued host rest-pose
+// correction for `actor`. A new logical owner (destroy, stick, desk slot) must
+// not be overwritten on a later tick by the old held-prop handback. Extracted
+// from OnDestroy (Fork B 2e, 2026-06-10): the adoption sweep destroys actors
+// through the same teardown contract -- one implementation. Game thread only;
+// no-op for null.
 void ClearAnyDriveFor(void* actor);
 
 // v81 MORPH V2: handle an incoming PropConvert -- the bind-model pile-morph re-skin of eid E in

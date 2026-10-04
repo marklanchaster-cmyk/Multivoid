@@ -1,0 +1,920 @@
+FunctionExport ExecuteUbergraph_blackFog
+=== Block @ 0 ===
+    Successors: 3963 (Push), 5
+
+0: EX_PushExecutionFlow 3963
+
+=== Block @ 3963 ===
+    Successors: 
+
+3963: EX_Return
+3964:     EX_Nothing
+
+=== Block @ 35 ===
+    Successors: 50 (JumpFalse), 49 (JumpTrue)
+
+35: EX_JumpIfNot 50
+40:     EX_LocalVariable [Temp_bool_IsClosed_Variable]
+
+=== Block @ 149 ===
+    Successors: 162 (JumpTrue)
+
+149: EX_LetBool
+150:     EX_LocalVariable [Temp_bool_Has_Been_Initd_Variable_1]
+159:     EX_True
+160: EX_PopExecutionFlowIfNot
+161:     EX_False
+
+=== Block @ 34 ===
+    Successors: 
+
+34: EX_PopExecutionFlow
+
+=== Block @ 50 ===
+    Successors: 
+
+50: EX_LetBool
+51:     EX_LocalVariable [Temp_bool_IsClosed_Variable]
+60:     EX_True
+61: EX_CallMath import /Script/Engine->GameplayStatics->ActivateReverbEffect
+70:     EX_Self
+71:     EX_ObjectConst import /Game/audio/misc/noreverb->noreverb
+80:     EX_NameConst blackfog
+93:     EX_FloatConst 10
+98:     EX_FloatConst 1
+103:     EX_FloatConst 10
+109: EX_Context
+110:     EX_ObjectConst import /Game/main/lib->Default__lib_C
+131:     EX_LocalVirtualFunction setEvent
+144:         EX_True
+145:         EX_False
+146:         EX_Self
+148: EX_PopExecutionFlow
+
+=== Block @ 49 ===
+    Successors: 
+
+49: EX_PopExecutionFlow
+
+=== Block @ 162 ===
+    Successors: 
+
+162: EX_LetBool
+163:     EX_LocalVariable [Temp_bool_IsClosed_Variable]
+172:     EX_True
+173: EX_PopExecutionFlow
+
+=== Block @ 871 ===
+    Successors: ExecuteUbergraph_blackFog:174 (Latent), 925
+
+871: EX_CallMath import /Script/Engine->KismetSystemLibrary->Delay
+880:     EX_Self
+881:     EX_FloatConst 0
+886:     EX_StructConst import /Script/Engine->LatentActionInfo
+899:         EX_SkipOffsetConst 174
+904:         EX_IntConst 556138502
+909:         EX_NameConst ExecuteUbergraph_blackFog
+922:         EX_Self
+
+=== Block @ 348 ===
+    Successors: 811 (JumpFalse), 485 (JumpTrue)
+
+348: EX_Let
+357:     EX_InstanceVariable [a]
+366:     EX_FloatConst 180
+371: EX_Let
+380:     EX_LocalVariable [CallFunc_GetWorldDeltaSeconds_ReturnValue_2]
+389:     EX_CallMath import /Script/Engine->GameplayStatics->GetWorldDeltaSeconds
+398:         EX_Self
+400: EX_CallMath import /Script/VictoryBPLibrary->VictoryBPFunctionLibrary->VictoryFloatMinusEquals
+409:     EX_InstanceVariable [a]
+418:     EX_LocalVariable [CallFunc_GetWorldDeltaSeconds_ReturnValue_2]
+427:     EX_LocalVariable [CallFunc_VictoryFloatMinusEquals_FloatOut_1]
+437: EX_LetBool
+438:     EX_LocalVariable [CallFunc_LessEqual_FloatFloat_ReturnValue_1]
+447:     EX_CallMath import /Script/Engine->KismetMathLibrary->LessEqual_FloatFloat
+456:         EX_LocalVariable [CallFunc_VictoryFloatMinusEquals_FloatOut_1]
+465:         EX_FloatConst 0
+471: EX_JumpIfNot 811
+476:     EX_LocalVariable [CallFunc_LessEqual_FloatFloat_ReturnValue_1]
+
+=== Block @ 811 ===
+    Successors: ExecuteUbergraph_blackFog:866 (Latent), 865
+
+811: EX_CallMath import /Script/Engine->KismetSystemLibrary->Delay
+820:     EX_Self
+821:     EX_FloatConst 0
+826:     EX_StructConst import /Script/Engine->LatentActionInfo
+839:         EX_SkipOffsetConst 866
+844:         EX_IntConst -206879552
+849:         EX_NameConst ExecuteUbergraph_blackFog
+862:         EX_Self
+
+=== Block @ 485 ===
+    Successors: 926 (JumpFalse), 642 (JumpTrue)
+
+485: EX_Let
+494:     EX_InstanceVariable [a]
+503:     EX_FloatConst 1
+508: EX_Let
+517:     EX_LocalVariable [Temp_int_Variable]
+526:     EX_IntConst 0
+531: EX_Let
+540:     EX_LocalVariable [CallFunc_Array_Length_ReturnValue]
+549:     EX_Context
+550:         EX_ObjectConst import /Script/Engine->Default__KismetArrayLibrary
+571:         EX_FinalFunction import /Script/Engine->KismetArrayLibrary->Array_Length
+580:             EX_InstanceVariable [eyes]
+590: EX_LetBool
+591:     EX_LocalVariable [CallFunc_Less_IntInt_ReturnValue]
+600:     EX_CallMath import /Script/Engine->KismetMathLibrary->Less_IntInt
+609:         EX_LocalVariable [Temp_int_Variable]
+618:         EX_LocalVariable [CallFunc_Array_Length_ReturnValue]
+628: EX_JumpIfNot 926
+633:     EX_LocalVariable [CallFunc_Less_IntInt_ReturnValue]
+
+=== Block @ 926 ===
+    Successors: 1111 (JumpFalse), 1096 (JumpTrue)
+
+926: EX_Let
+935:     EX_LocalVariable [CallFunc_GetWorldDeltaSeconds_ReturnValue_1]
+944:     EX_CallMath import /Script/Engine->GameplayStatics->GetWorldDeltaSeconds
+953:         EX_Self
+955: EX_Let
+964:     EX_LocalVariable [CallFunc_Divide_FloatFloat_ReturnValue]
+973:     EX_CallMath import /Script/Engine->KismetMathLibrary->Divide_FloatFloat
+982:         EX_LocalVariable [CallFunc_GetWorldDeltaSeconds_ReturnValue_1]
+991:         EX_FloatConst 1
+997: EX_CallMath import /Script/VictoryBPLibrary->VictoryBPFunctionLibrary->VictoryFloatMinusEquals
+1006:     EX_InstanceVariable [a]
+1015:     EX_LocalVariable [CallFunc_Divide_FloatFloat_ReturnValue]
+1024:     EX_LocalVariable [CallFunc_VictoryFloatMinusEquals_FloatOut]
+1034: EX_LocalVirtualFunction set
+1048: EX_LetBool
+1049:     EX_LocalVariable [CallFunc_LessEqual_FloatFloat_ReturnValue]
+1058:     EX_CallMath import /Script/Engine->KismetMathLibrary->LessEqual_FloatFloat
+1067:         EX_LocalVariable [CallFunc_VictoryFloatMinusEquals_FloatOut]
+1076:         EX_FloatConst 0
+1082: EX_JumpIfNot 1111
+1087:     EX_LocalVariable [CallFunc_LessEqual_FloatFloat_ReturnValue]
+
+=== Block @ 642 ===
+    Successors: 531
+
+642: EX_Context
+643:     EX_ObjectConst import /Script/Engine->Default__KismetArrayLibrary
+664:     EX_FinalFunction import /Script/Engine->KismetArrayLibrary->Array_Get
+673:         EX_InstanceVariable [eyes]
+682:         EX_LocalVariable [Temp_int_Variable]
+691:         EX_LocalVariable [CallFunc_Array_Get_Item]
+701: EX_Context
+702:     EX_LocalVariable [CallFunc_Array_Get_Item]
+723:     EX_VirtualFunction K2_DestroyActor
+737: EX_Let
+746:     EX_LocalVariable [CallFunc_Add_IntInt_ReturnValue]
+755:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_IntInt
+764:         EX_LocalVariable [Temp_int_Variable]
+773:         EX_IntConst 1
+779: EX_Let
+788:     EX_LocalVariable [Temp_int_Variable]
+797:     EX_LocalVariable [CallFunc_Add_IntInt_ReturnValue]
+806: EX_Jump 531
+
+=== Block @ 866 ===
+    Successors: 371
+
+866: EX_Jump 371
+
+=== Block @ 174 ===
+    Successors: 871 (JumpFalse), 348 (JumpTrue)
+
+174: EX_Let
+183:     EX_LocalVariable [CallFunc_GetWorldDeltaSeconds_ReturnValue]
+192:     EX_CallMath import /Script/Engine->GameplayStatics->GetWorldDeltaSeconds
+201:         EX_Self
+203: EX_Let
+212:     EX_LocalVariable [CallFunc_Divide_FloatFloat_ReturnValue_1]
+221:     EX_CallMath import /Script/Engine->KismetMathLibrary->Divide_FloatFloat
+230:         EX_LocalVariable [CallFunc_GetWorldDeltaSeconds_ReturnValue]
+239:         EX_InstanceVariable [spd]
+249: EX_CallMath import /Script/VictoryBPLibrary->VictoryBPFunctionLibrary->VictoryFloatPlusEquals
+258:     EX_InstanceVariable [a]
+267:     EX_LocalVariable [CallFunc_Divide_FloatFloat_ReturnValue_1]
+276:     EX_LocalVariable [CallFunc_VictoryFloatPlusEquals_FloatOut]
+286: EX_LocalVirtualFunction set
+300: EX_LetBool
+301:     EX_LocalVariable [CallFunc_GreaterEqual_FloatFloat_ReturnValue]
+310:     EX_CallMath import /Script/Engine->KismetMathLibrary->GreaterEqual_FloatFloat
+319:         EX_LocalVariable [CallFunc_VictoryFloatPlusEquals_FloatOut]
+328:         EX_FloatConst 1
+334: EX_JumpIfNot 871
+339:     EX_LocalVariable [CallFunc_GreaterEqual_FloatFloat_ReturnValue]
+
+=== Block @ 1111 ===
+    Successors: ExecuteUbergraph_blackFog:1166 (Latent), 1165
+
+1111: EX_CallMath import /Script/Engine->KismetSystemLibrary->Delay
+1120:     EX_Self
+1121:     EX_FloatConst 0
+1126:     EX_StructConst import /Script/Engine->LatentActionInfo
+1139:         EX_SkipOffsetConst 1166
+1144:         EX_IntConst 1913840398
+1149:         EX_NameConst ExecuteUbergraph_blackFog
+1162:         EX_Self
+
+=== Block @ 1096 ===
+    Successors: 
+
+1096: EX_VirtualFunction K2_DestroyActor
+1110: EX_PopExecutionFlow
+
+=== Block @ 1166 ===
+    Successors: 926
+
+1166: EX_Jump 926
+
+=== Block @ 1761 ===
+    Successors: ExecuteUbergraph_blackFog:1171 (Latent), 1857
+
+1761: EX_Let
+1770:     EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue_3]
+1779:     EX_CallMath import /Script/Engine->KismetMathLibrary->RandomFloatInRange
+1788:         EX_FloatConst 5
+1793:         EX_FloatConst 30
+1799: EX_CallMath import /Script/Engine->KismetSystemLibrary->Delay
+1808:     EX_Self
+1809:     EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue_3]
+1818:     EX_StructConst import /Script/Engine->LatentActionInfo
+1831:         EX_SkipOffsetConst 1171
+1836:         EX_IntConst -750943255
+1841:         EX_NameConst ExecuteUbergraph_blackFog
+1854:         EX_Self
+
+=== Block @ 1171 ===
+    Successors: 1761 (Push), 1176
+
+1171: EX_PushExecutionFlow 1761
+
+=== Block @ 2126 ===
+    Successors: ExecuteUbergraph_blackFog:1858 (Latent), 2180
+
+2126: EX_CallMath import /Script/Engine->KismetSystemLibrary->Delay
+2135:     EX_Self
+2136:     EX_FloatConst 5
+2141:     EX_StructConst import /Script/Engine->LatentActionInfo
+2154:         EX_SkipOffsetConst 1858
+2159:         EX_IntConst -2101303325
+2164:         EX_NameConst ExecuteUbergraph_blackFog
+2177:         EX_Self
+
+=== Block @ 1858 ===
+    Successors: 2126 (Push), 1863
+
+1858: EX_PushExecutionFlow 2126
+
+=== Block @ 2290 ===
+    Successors: ExecuteUbergraph_blackFog:2181 (Latent), 2344
+
+2290: EX_CallMath import /Script/Engine->KismetSystemLibrary->Delay
+2299:     EX_Self
+2300:     EX_FloatConst 0
+2305:     EX_StructConst import /Script/Engine->LatentActionInfo
+2318:         EX_SkipOffsetConst 2181
+2323:         EX_IntConst -130753003
+2328:         EX_NameConst ExecuteUbergraph_blackFog
+2341:         EX_Self
+
+=== Block @ 2289 ===
+    Successors: 
+
+2289: EX_PopExecutionFlow
+
+=== Block @ 2181 ===
+    Successors: 2290 (JumpFalse), 2289 (JumpTrue)
+
+2181: EX_Context
+2182:     EX_ObjectConst import /Game/main/lib->Default__lib_C
+2203:     EX_LocalVirtualFunction getMainGamemode
+2216:         EX_Self
+2217:         EX_LocalVariable [CallFunc_getMainGamemode_AsMain_Gamemode_1]
+2227: EX_LetObj
+2228:     EX_InstanceVariable [gamemode]
+2237:     EX_LocalVariable [CallFunc_getMainGamemode_AsMain_Gamemode_1]
+2246: EX_LetBool
+2247:     EX_LocalVariable [CallFunc_IsValid_ReturnValue]
+2256:     EX_CallMath import /Script/Engine->KismetSystemLibrary->IsValid
+2265:         EX_InstanceVariable [gamemode]
+2275: EX_JumpIfNot 2290
+2280:     EX_LocalVariable [CallFunc_IsValid_ReturnValue]
+
+=== Block @ 2358 ===
+    Successors: 
+
+2358: EX_LetBool
+2359:     EX_LocalVariable [Temp_bool_IsClosed_Variable_1]
+2368:     EX_True
+2369: EX_PopExecutionFlow
+
+=== Block @ 2345 ===
+    Successors: 2358 (JumpTrue)
+
+2345: EX_LetBool
+2346:     EX_LocalVariable [Temp_bool_Has_Been_Initd_Variable]
+2355:     EX_True
+2356: EX_PopExecutionFlowIfNot
+2357:     EX_False
+
+=== Block @ 2384 ===
+    Successors: 
+
+2384: EX_PopExecutionFlow
+
+=== Block @ 2395 ===
+    Successors: 2410 (JumpFalse), 2409 (JumpTrue)
+
+2395: EX_JumpIfNot 2410
+2400:     EX_LocalVariable [Temp_bool_IsClosed_Variable_1]
+
+=== Block @ 2410 ===
+    Successors: 
+
+2410: EX_LetBool
+2411:     EX_LocalVariable [Temp_bool_IsClosed_Variable_1]
+2420:     EX_True
+2421: EX_CallMath import /Script/Engine->GameplayStatics->DeactivateReverbEffect
+2430:     EX_Self
+2431:     EX_NameConst blackfog
+2445: EX_PopExecutionFlow
+
+=== Block @ 2409 ===
+    Successors: 
+
+2409: EX_PopExecutionFlow
+
+=== Block @ 2533 ===
+    Successors: 2691 (Push), 2676
+
+2533: EX_LetObj
+2534:     EX_LocalVariable [CallFunc_CreateDynamicMaterialInstance_ReturnValue]
+2543:     EX_CallMath import /Script/Engine->KismetMaterialLibrary->CreateDynamicMaterialInstance
+2552:         EX_Self
+2553:         EX_ObjectConst import /Game/materials/unsorted/Inst_pp_blackFog->Inst_pp_blackFog
+2562:         EX_NameConst None
+2575:         EX_ByteConst 0
+2578: EX_LetObj
+2579:     EX_InstanceVariable [dynmat]
+2588:     EX_LocalVariable [CallFunc_CreateDynamicMaterialInstance_ReturnValue]
+2597: EX_LetObj
+2598:     EX_StructMemberContext [Object]
+2607:         EX_ArrayGetByRef
+2608:             EX_StructMemberContext [Array]
+2617:                 EX_StructMemberContext [WeightedBlendables]
+2626:                     EX_Context
+2627:                         EX_InstanceVariable [PostProcess]
+2648:                         EX_InstanceVariable [Settings]
+2657:             EX_IntConst 0
+2662:     EX_InstanceVariable [dynmat]
+2671: EX_PushExecutionFlow 2691
+
+=== Block @ 2691 ===
+    Successors: 2800 (JumpTrue)
+
+2691: EX_Context
+2692:     EX_ObjectConst import /Game/main/lib->Default__lib_C
+2713:     EX_LocalVirtualFunction getMainGameInstance
+2726:         EX_Self
+2727:         EX_LocalVariable [CallFunc_getMainGameInstance_AsGame_Inst]
+2737: EX_LetBool
+2738:     EX_LocalVariable [CallFunc_NotEqual_ByteByte_ReturnValue]
+2747:     EX_CallMath import /Script/Engine->KismetMathLibrary->NotEqual_ByteByte
+2756:         EX_Context
+2757:             EX_LocalVariable [CallFunc_getMainGameInstance_AsGame_Inst]
+2778:             EX_InstanceVariable [gamemode]
+2787:         EX_ByteConst 6
+2790: EX_PopExecutionFlowIfNot
+2791:     EX_LocalVariable [CallFunc_NotEqual_ByteByte_ReturnValue]
+
+=== Block @ 2800 ===
+    Successors: 
+
+2800: EX_Jump 2446
+2446: EX_BindDelegate spawnGhost
+2459:     EX_LocalVariable [K2Node_CreateDelegate_OutputDelegate]
+2468:     EX_Self
+2469: EX_Let
+2478:     EX_LocalVariable [CallFunc_K2_SetTimerDelegate_ReturnValue]
+2487:     EX_CallMath import /Script/Engine->KismetSystemLibrary->K2_SetTimerDelegate
+2496:         EX_LocalVariable [K2Node_CreateDelegate_OutputDelegate]
+2505:         EX_FloatConst 40
+2510:         EX_True
+2511:         EX_FloatConst 0
+2516:         EX_FloatConst 0
+2522: EX_PopExecutionFlow
+
+=== Block @ 2385 ===
+    Successors: 2395 (Push), 2390
+
+2385: EX_PushExecutionFlow 2395
+
+=== Block @ 2991 ===
+    Successors: 35 (Push), 20
+
+2991: EX_Jump 15
+15: EX_PushExecutionFlow 35
+
+=== Block @ 2924 ===
+    Successors: 2385 (JumpFalse), 2991 (JumpTrue)
+
+2924: EX_LetBool
+2925:     EX_LocalVariable [CallFunc_GreaterEqual_FloatFloat_ReturnValue_1]
+2934:     EX_CallMath import /Script/Engine->KismetMathLibrary->GreaterEqual_FloatFloat
+2943:         EX_InstanceVariable [a]
+2952:         EX_FloatConst 0.9
+2958: EX_LetBool
+2959:     EX_InstanceVariable [m]
+2968:     EX_LocalVariable [CallFunc_GreaterEqual_FloatFloat_ReturnValue_1]
+2977: EX_JumpIfNot 2385
+2982:     EX_InstanceVariable [m]
+
+=== Block @ 3082 ===
+    Successors: 
+
+3082: EX_PopExecutionFlow
+
+=== Block @ 3132 ===
+    Successors: 3443 (JumpTrue)
+
+3132: EX_Let
+3141:     EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue_4]
+3150:     EX_CallMath import /Script/Engine->KismetMathLibrary->RandomFloatInRange
+3159:         EX_FloatConst 0
+3164:         EX_FloatConst 360
+3170: EX_Let
+3179:     EX_LocalVariable [CallFunc_RotateAngleAxis_ReturnValue_1]
+3188:     EX_CallMath import /Script/Engine->KismetMathLibrary->RotateAngleAxis
+3197:         EX_VectorConst 20000,0,0
+3210:         EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue_4]
+3219:         EX_VectorConst 0,0,1
+3233: EX_Let
+3242:     EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_1]
+3251:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_VectorVector
+3260:         EX_LocalVariable [CallFunc_RotateAngleAxis_ReturnValue_1]
+3269:         EX_VectorConst 0,0,0
+3283: EX_Let
+3292:     EX_LocalVariable [K2Node_LowEntry_LocalVariable_Value__Object]
+3301:     EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_1]
+3310: EX_LetBool
+3311:     EX_LocalVariable [CallFunc_K2_ProjectPointToNavigation_ReturnValue]
+3320:     EX_CallMath import /Script/NavigationSystem->NavigationSystemV1->K2_ProjectPointToNavigation
+3329:         EX_Self
+3330:         EX_LocalVariable [K2Node_LowEntry_LocalVariable_Value__Object]
+3339:         EX_LocalVariable [CallFunc_K2_ProjectPointToNavigation_ProjectedLocation]
+3348:         EX_NoObject
+3349:         EX_NoObject
+3350:         EX_VectorConst 1000,1000,100000
+3364: EX_Let
+3373:     EX_LocalVariable [K2Node_LowEntry_LocalVariable_Value__1_Object]
+3382:     EX_LocalVariable [CallFunc_K2_ProjectPointToNavigation_ProjectedLocation]
+3391: EX_LetBool
+3392:     EX_LocalVariable [CallFunc_NotEqualExactly_VectorVector_ReturnValue]
+3401:     EX_CallMath import /Script/Engine->KismetMathLibrary->NotEqualExactly_VectorVector
+3410:         EX_LocalVariable [K2Node_LowEntry_LocalVariable_Value__1_Object]
+3419:         EX_VectorConst 0,0,0
+3433: EX_PopExecutionFlowIfNot
+3434:     EX_LocalVariable [CallFunc_NotEqualExactly_VectorVector_ReturnValue]
+
+=== Block @ 3443 ===
+    Successors: 
+
+3443: EX_Let
+3452:     EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_2]
+3461:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_VectorVector
+3470:         EX_LocalVariable [K2Node_LowEntry_LocalVariable_Value__1_Object]
+3479:         EX_VectorConst 0,0,100
+3493: EX_Let
+3502:     EX_LocalVariable [CallFunc_MakeTransform_ReturnValue]
+3511:     EX_CallMath import /Script/Engine->KismetMathLibrary->MakeTransform
+3520:         EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_2]
+3529:         EX_RotationConst 0,0,0
+3542:         EX_VectorConst 1,1,1
+3556: EX_LetObj
+3557:     EX_LocalVariable [CallFunc_BeginDeferredActorSpawnFromClass_ReturnValue]
+3566:     EX_CallMath import /Script/Engine->GameplayStatics->BeginDeferredActorSpawnFromClass
+3575:         EX_Self
+3576:         EX_ObjectConst import /Game/objects/eyer->eyer_C
+3585:         EX_LocalVariable [CallFunc_MakeTransform_ReturnValue]
+3594:         EX_ByteConst 0
+3596:         EX_NoObject
+3598: EX_Let
+3607:     EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue_5]
+3616:     EX_CallMath import /Script/Engine->KismetMathLibrary->RandomFloatInRange
+3625:         EX_FloatConst 2500
+3630:         EX_FloatConst 5000
+3636: EX_CallMath import /Script/Engine->KismetSystemLibrary->SetFloatPropertyByName
+3645:     EX_LocalVariable [CallFunc_BeginDeferredActorSpawnFromClass_ReturnValue]
+3654:     EX_NameConst distance
+3667:     EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue_5]
+3677: EX_CallMath import /Script/Engine->KismetSystemLibrary->SetBoolPropertyByName
+3686:     EX_LocalVariable [CallFunc_BeginDeferredActorSpawnFromClass_ReturnValue]
+3695:     EX_NameConst ignoreDaySpawn
+3708:     EX_True
+3710: EX_CallMath import /Script/Engine->KismetSystemLibrary->SetBoolPropertyByName
+3719:     EX_LocalVariable [CallFunc_BeginDeferredActorSpawnFromClass_ReturnValue]
+3728:     EX_NameConst fog
+3741:     EX_True
+3743: EX_Let
+3752:     EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_2]
+3761:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_VectorVector
+3770:         EX_LocalVariable [K2Node_LowEntry_LocalVariable_Value__1_Object]
+3779:         EX_VectorConst 0,0,100
+3793: EX_Let
+3802:     EX_LocalVariable [CallFunc_MakeTransform_ReturnValue]
+3811:     EX_CallMath import /Script/Engine->KismetMathLibrary->MakeTransform
+3820:         EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_2]
+3829:         EX_RotationConst 0,0,0
+3842:         EX_VectorConst 1,1,1
+3856: EX_LetObj
+3857:     EX_LocalVariable [CallFunc_FinishSpawningActor_ReturnValue]
+3866:     EX_CallMath import /Script/Engine->GameplayStatics->FinishSpawningActor
+3875:         EX_LocalVariable [CallFunc_BeginDeferredActorSpawnFromClass_ReturnValue]
+3884:         EX_LocalVariable [CallFunc_MakeTransform_ReturnValue]
+3894: EX_Let
+3903:     EX_LocalVariable [CallFunc_Array_Add_ReturnValue]
+3912:     EX_Context
+3913:         EX_ObjectConst import /Script/Engine->Default__KismetArrayLibrary
+3934:         EX_FinalFunction import /Script/Engine->KismetArrayLibrary->Array_Add
+3943:             EX_InstanceVariable [eyes]
+3952:             EX_LocalVariable [CallFunc_FinishSpawningActor_ReturnValue]
+3962: EX_PopExecutionFlow
+
+=== Block @ 3088 ===
+    Successors: 3132 (JumpTrue)
+
+3088: EX_LetBool
+3089:     EX_LocalVariable [CallFunc_GreaterEqual_FloatFloat_ReturnValue_2]
+3098:     EX_CallMath import /Script/Engine->KismetMathLibrary->GreaterEqual_FloatFloat
+3107:         EX_InstanceVariable [a]
+3116:         EX_FloatConst 1
+3122: EX_PopExecutionFlowIfNot
+3123:     EX_LocalVariable [CallFunc_GreaterEqual_FloatFloat_ReturnValue_2]
+
+=== Block @ 3083 ===
+    Successors: 2924 (JumpFalse), 3082 (JumpTrue)
+
+3083: EX_Jump 2996
+2996: EX_LetBool
+2997:     EX_LocalVariable [CallFunc_GreaterEqual_FloatFloat_ReturnValue_1]
+3006:     EX_CallMath import /Script/Engine->KismetMathLibrary->GreaterEqual_FloatFloat
+3015:         EX_InstanceVariable [a]
+3024:         EX_FloatConst 0.9
+3030: EX_LetBool
+3031:     EX_LocalVariable [CallFunc_EqualEqual_BoolBool_ReturnValue]
+3040:     EX_CallMath import /Script/Engine->KismetMathLibrary->EqualEqual_BoolBool
+3049:         EX_InstanceVariable [m]
+3058:         EX_LocalVariable [CallFunc_GreaterEqual_FloatFloat_ReturnValue_1]
+3068: EX_JumpIfNot 2924
+3073:     EX_LocalVariable [CallFunc_EqualEqual_BoolBool_ReturnValue]
+
+=== Block @ 2805 ===
+    Successors: 
+
+2805: EX_Context
+2806:     EX_ObjectConst import /Game/main/lib->Default__lib_C
+2827:     EX_LocalVirtualFunction getMainGamemode
+2840:         EX_Self
+2841:         EX_LocalVariable [CallFunc_getMainGamemode_AsMain_Gamemode]
+2851: EX_LetObj
+2852:     EX_Context
+2853:         EX_LocalVariable [CallFunc_getMainGamemode_AsMain_Gamemode]
+2874:         EX_InstanceVariable [blackFog]
+2883:     EX_NoObject
+2884: EX_Context
+2885:     EX_ObjectConst import /Game/main/lib->Default__lib_C
+2906:     EX_LocalVirtualFunction setEvent
+2919:         EX_False
+2920:         EX_False
+2921:         EX_Self
+2923: EX_PopExecutionFlow
+
+=== Block @ 2523 ===
+    Successors: 2533 (Push), 2528
+
+2523: EX_PushExecutionFlow 2533
+
+=== Block @ 5 ===
+    Successors: 
+
+5: EX_ComputedJump
+6:     EX_LocalVariable [EntryPoint]
+
+=== Block @ 925 ===
+    Successors: 
+
+925: EX_PopExecutionFlow
+
+=== Block @ 865 ===
+    Successors: 
+
+865: EX_PopExecutionFlow
+
+=== Block @ 1165 ===
+    Successors: 
+
+1165: EX_PopExecutionFlow
+
+=== Block @ 1857 ===
+    Successors: 
+
+1857: EX_PopExecutionFlow
+
+=== Block @ 1176 ===
+    Successors: 
+
+1176: EX_Let
+1185:     EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue]
+1194:     EX_CallMath import /Script/Engine->KismetMathLibrary->RandomFloatInRange
+1203:         EX_FloatConst 0
+1208:         EX_FloatConst 360
+1214: EX_LetObj
+1215:     EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue]
+1224:     EX_CallMath import /Script/Engine->GameplayStatics->GetPlayerCameraManager
+1233:         EX_Self
+1234:         EX_IntConst 0
+1240: EX_Let
+1249:     EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue_1]
+1258:     EX_CallMath import /Script/Engine->KismetMathLibrary->RandomFloatInRange
+1267:         EX_FloatConst 10000
+1272:         EX_FloatConst 40000
+1278: EX_Let
+1287:     EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+1296:     EX_Context
+1297:         EX_LocalVariable [CallFunc_GetPlayerCameraManager_ReturnValue]
+1318:         EX_FinalFunction import /Script/Engine->Actor->K2_GetActorLocation
+1328: EX_Let
+1337:     EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue_2]
+1346:     EX_CallMath import /Script/Engine->KismetMathLibrary->RandomFloatInRange
+1355:         EX_FloatConst -1000
+1360:         EX_FloatConst 1000
+1366: EX_Let
+1375:     EX_LocalVariable [CallFunc_MakeVector_ReturnValue]
+1384:     EX_CallMath import /Script/Engine->KismetMathLibrary->MakeVector
+1393:         EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue_1]
+1402:         EX_FloatConst 0
+1407:         EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue_2]
+1417: EX_Let
+1426:     EX_LocalVariable [CallFunc_RotateAngleAxis_ReturnValue]
+1435:     EX_CallMath import /Script/Engine->KismetMathLibrary->RotateAngleAxis
+1444:         EX_LocalVariable [CallFunc_MakeVector_ReturnValue]
+1453:         EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue]
+1462:         EX_VectorConst 0,0,1
+1476: EX_Let
+1485:     EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue]
+1494:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_VectorVector
+1503:         EX_LocalVariable [CallFunc_RotateAngleAxis_ReturnValue]
+1512:         EX_LocalVariable [CallFunc_K2_GetActorLocation_ReturnValue]
+1522: EX_Let
+1531:     EX_LocalVariable [CallFunc_FMin_ReturnValue_1]
+1540:     EX_CallMath import /Script/Engine->KismetMathLibrary->FMin
+1549:         EX_InstanceVariable [a]
+1558:         EX_FloatConst 3
+1564: EX_Let
+1573:     EX_LocalVariable [CallFunc_GetGlobalTimeDilation_ReturnValue_1]
+1582:     EX_CallMath import /Script/Engine->GameplayStatics->GetGlobalTimeDilation
+1591:         EX_Self
+1593: EX_LetBool
+1594:     EX_LocalVariable [CallFunc_Greater_FloatFloat_ReturnValue_1]
+1603:     EX_CallMath import /Script/Engine->KismetMathLibrary->Greater_FloatFloat
+1612:         EX_LocalVariable [CallFunc_GetGlobalTimeDilation_ReturnValue_1]
+1621:         EX_FloatConst 2
+1627: EX_Let
+1636:     EX_LocalVariable [CallFunc_SelectFloat_ReturnValue_1]
+1645:     EX_CallMath import /Script/Engine->KismetMathLibrary->SelectFloat
+1654:         EX_FloatConst 0
+1659:         EX_LocalVariable [CallFunc_FMin_ReturnValue_1]
+1668:         EX_LocalVariable [CallFunc_Greater_FloatFloat_ReturnValue_1]
+1678: EX_LetObj
+1679:     EX_LocalVariable [CallFunc_SpawnSoundAtLocation_ReturnValue]
+1688:     EX_CallMath import /Script/Engine->GameplayStatics->SpawnSoundAtLocation
+1697:         EX_Self
+1698:         EX_ObjectConst import /Game/audio/effects/blackFog_whispers_Cue->blackFog_whispers_Cue
+1707:         EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue]
+1716:         EX_RotationConst 0,0,0
+1729:         EX_LocalVariable [CallFunc_SelectFloat_ReturnValue_1]
+1738:         EX_FloatConst 1
+1743:         EX_FloatConst 0
+1748:         EX_ObjectConst import /Game/audio/misc/att_sfar->att_sfar
+1757:         EX_NoObject
+1758:         EX_True
+1760: EX_PopExecutionFlow
+
+=== Block @ 2180 ===
+    Successors: 
+
+2180: EX_PopExecutionFlow
+
+=== Block @ 1863 ===
+    Successors: 
+
+1863: EX_Let
+1872:     EX_LocalVariable [CallFunc_GetGlobalTimeDilation_ReturnValue]
+1881:     EX_CallMath import /Script/Engine->GameplayStatics->GetGlobalTimeDilation
+1890:         EX_Self
+1892: EX_Let
+1901:     EX_LocalVariable [CallFunc_FMin_ReturnValue]
+1910:     EX_CallMath import /Script/Engine->KismetMathLibrary->FMin
+1919:         EX_InstanceVariable [a]
+1928:         EX_FloatConst 1
+1934: EX_LetBool
+1935:     EX_LocalVariable [CallFunc_Greater_FloatFloat_ReturnValue]
+1944:     EX_CallMath import /Script/Engine->KismetMathLibrary->Greater_FloatFloat
+1953:         EX_LocalVariable [CallFunc_GetGlobalTimeDilation_ReturnValue]
+1962:         EX_FloatConst 2
+1968: EX_Let
+1977:     EX_LocalVariable [CallFunc_MultiplyMultiply_FloatFloat_ReturnValue]
+1986:     EX_CallMath import /Script/Engine->KismetMathLibrary->MultiplyMultiply_FloatFloat
+1995:         EX_LocalVariable [CallFunc_FMin_ReturnValue]
+2004:         EX_FloatConst 16
+2010: EX_Let
+2019:     EX_LocalVariable [CallFunc_SelectFloat_ReturnValue]
+2028:     EX_CallMath import /Script/Engine->KismetMathLibrary->SelectFloat
+2037:         EX_FloatConst 0
+2042:         EX_LocalVariable [CallFunc_MultiplyMultiply_FloatFloat_ReturnValue]
+2051:         EX_LocalVariable [CallFunc_Greater_FloatFloat_ReturnValue]
+2061: EX_Context
+2062:     EX_ObjectConst import /Script/Engine->Default__GameplayStatics
+2083:     EX_FinalFunction import /Script/Engine->GameplayStatics->PlaySound2D
+2092:         EX_Self
+2093:         EX_ObjectConst import /Game/audio/effects/blackFog_thump->blackFog_thump
+2102:         EX_LocalVariable [CallFunc_SelectFloat_ReturnValue]
+2111:         EX_FloatConst 1
+2116:         EX_FloatConst 0
+2121:         EX_NoObject
+2122:         EX_NoObject
+2123:         EX_True
+2125: EX_PopExecutionFlow
+
+=== Block @ 2344 ===
+    Successors: 
+
+2344: EX_PopExecutionFlow
+
+=== Block @ 2676 ===
+    Successors: 1858 (Push), 2681
+
+2676: EX_PushExecutionFlow 1858
+
+=== Block @ 2390 ===
+    Successors: 2345 (JumpFalse), 2384 (JumpTrue)
+
+2390: EX_Jump 2370
+2370: EX_JumpIfNot 2345
+2375:     EX_LocalVariable [Temp_bool_Has_Been_Initd_Variable]
+
+=== Block @ 20 ===
+    Successors: 149 (JumpFalse), 34 (JumpTrue)
+
+20: EX_JumpIfNot 149
+25:     EX_LocalVariable [Temp_bool_Has_Been_Initd_Variable_1]
+
+=== Block @ 2528 ===
+    Successors: 2181
+
+2528: EX_Jump 2181
+
+=== Block @ 2681 ===
+    Successors: 1171 (Push), 2686
+
+2681: EX_PushExecutionFlow 1171
+
+=== Block @ 2686 ===
+    Successors: 174
+
+2686: EX_Jump 174
+
+FunctionExport spawnGhost
+=== Block @ 0 ===
+    Successors: ExecuteUbergraph_blackFog:3088 (Function)
+
+0: EX_LocalFinalFunction ExecuteUbergraph_blackFog
+9:     EX_IntConst 3088
+15: EX_Return
+16:     EX_Nothing
+
+FunctionExport ReceiveTick
+=== Block @ 0 ===
+    Successors: ExecuteUbergraph_blackFog:3083 (Function)
+
+0: EX_LetValueOnPersistentFrame [K2Node_Event_DeltaSeconds]
+9:     EX_LocalVariable [DeltaSeconds]
+18: EX_LocalFinalFunction ExecuteUbergraph_blackFog
+27:     EX_IntConst 3083
+33: EX_Return
+34:     EX_Nothing
+
+FunctionExport ReceiveDestroyed
+=== Block @ 0 ===
+    Successors: ExecuteUbergraph_blackFog:2805 (Function)
+
+0: EX_LocalFinalFunction ExecuteUbergraph_blackFog
+9:     EX_IntConst 2805
+15: EX_Return
+16:     EX_Nothing
+
+FunctionExport ReceiveBeginPlay
+=== Block @ 0 ===
+    Successors: ExecuteUbergraph_blackFog:2523 (Function)
+
+0: EX_LocalFinalFunction ExecuteUbergraph_blackFog
+9:     EX_IntConst 2523
+15: EX_Return
+16:     EX_Nothing
+
+FunctionExport set
+=== Block @ 0 ===
+    Successors: 667 (JumpFalse), 403 (JumpTrue)
+
+0: EX_Let
+9:     EX_LocalVariable [CallFunc_FClamp_ReturnValue]
+18:     EX_CallMath import /Script/Engine->KismetMathLibrary->FClamp
+27:         EX_InstanceVariable [a]
+36:         EX_FloatConst 0
+41:         EX_FloatConst 1
+47: EX_Let
+56:     EX_InstanceVariable [a]
+65:     EX_LocalVariable [CallFunc_FClamp_ReturnValue]
+74: EX_Context
+75:     EX_InstanceVariable [dynmat]
+96:     EX_FinalFunction import /Script/Engine->MaterialInstanceDynamic->SetScalarParameterValue
+105:         EX_NameConst alpha
+118:         EX_InstanceVariable [a]
+128: EX_LetBool
+129:     EX_LocalVariable [CallFunc_Greater_FloatFloat_ReturnValue]
+138:     EX_CallMath import /Script/Engine->KismetMathLibrary->Greater_FloatFloat
+147:         EX_InstanceVariable [a]
+156:         EX_FloatConst 0.5
+162: EX_LetBool
+163:     EX_Context
+164:         EX_Context
+165:             EX_InstanceVariable [gamemode]
+186:             EX_InstanceVariable [birber]
+207:         EX_InstanceVariable [noBirb]
+216:     EX_LocalVariable [CallFunc_Greater_FloatFloat_ReturnValue]
+225: EX_Let
+234:     EX_LocalVariable [Temp_int_Variable]
+243:     EX_IntConst 0
+248: EX_Let
+257:     EX_LocalVariable [CallFunc_Array_Length_ReturnValue]
+266:     EX_Context
+267:         EX_ObjectConst import /Script/Engine->Default__KismetArrayLibrary
+288:         EX_FinalFunction import /Script/Engine->KismetArrayLibrary->Array_Length
+297:             EX_Context
+298:                 EX_Context
+299:                     EX_InstanceVariable [gamemode]
+320:                     EX_InstanceVariable [ambMaster]
+341:                 EX_InstanceVariable [ambience_triggers]
+351: EX_LetBool
+352:     EX_LocalVariable [CallFunc_Less_IntInt_ReturnValue]
+361:     EX_CallMath import /Script/Engine->KismetMathLibrary->Less_IntInt
+370:         EX_LocalVariable [Temp_int_Variable]
+379:         EX_LocalVariable [CallFunc_Array_Length_ReturnValue]
+389: EX_JumpIfNot 667
+394:     EX_LocalVariable [CallFunc_Less_IntInt_ReturnValue]
+
+=== Block @ 667 ===
+    Successors: 
+
+667: EX_Return
+668:     EX_Nothing
+
+=== Block @ 403 ===
+    Successors: 248
+
+403: EX_Context
+404:     EX_ObjectConst import /Script/Engine->Default__KismetArrayLibrary
+425:     EX_FinalFunction import /Script/Engine->KismetArrayLibrary->Array_Get
+434:         EX_Context
+435:             EX_Context
+436:                 EX_InstanceVariable [gamemode]
+457:                 EX_InstanceVariable [ambMaster]
+478:             EX_InstanceVariable [ambience_triggers]
+487:         EX_LocalVariable [Temp_int_Variable]
+496:         EX_LocalVariable [CallFunc_Array_Get_Item]
+506: EX_Let
+515:     EX_LocalVariable [CallFunc_Subtract_FloatFloat_ReturnValue]
+524:     EX_CallMath import /Script/Engine->KismetMathLibrary->Subtract_FloatFloat
+533:         EX_FloatConst 1
+538:         EX_InstanceVariable [a]
+548: EX_Context
+549:     EX_LocalVariable [CallFunc_Array_Get_Item]
+570:     EX_LocalVirtualFunction setVol2
+583:         EX_LocalVariable [CallFunc_Subtract_FloatFloat_ReturnValue]
+593: EX_Let
+602:     EX_LocalVariable [CallFunc_Add_IntInt_ReturnValue]
+611:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_IntInt
+620:         EX_LocalVariable [Temp_int_Variable]
+629:         EX_IntConst 1
+635: EX_Let
+644:     EX_LocalVariable [Temp_int_Variable]
+653:     EX_LocalVariable [CallFunc_Add_IntInt_ReturnValue]
+662: EX_Jump 248
+

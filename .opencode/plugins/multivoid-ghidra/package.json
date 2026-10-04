@@ -1,0 +1,6 @@
+{
+  "name": "multivoid-ghidra",
+  "private": true,
+  "type": "module",
+  "main": "index.js"
+}

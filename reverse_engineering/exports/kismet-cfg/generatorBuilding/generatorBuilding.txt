@@ -1,0 +1,1164 @@
+FunctionExport ExecuteUbergraph_generatorBuilding
+=== Block @ 0 ===
+    Successors: 5900 (Push), 5
+
+0: EX_PushExecutionFlow 5900
+
+=== Block @ 5900 ===
+    Successors: 
+
+5900: EX_Return
+5901:     EX_Nothing
+
+=== Block @ 785 ===
+    Successors: 
+
+785: EX_BindDelegate trUpdated
+798:     EX_LocalVariable [K2Node_CreateDelegate_OutputDelegate]
+807:     EX_Self
+808: EX_AddMulticastDelegate
+809:     EX_Context
+810:         EX_InstanceVariable [transformer]
+831:         EX_InstanceVariable [updated]
+840:     EX_LocalVariable [K2Node_CreateDelegate_OutputDelegate]
+849: EX_Let
+858:     EX_LocalVariable [Temp_byte_Variable]
+867:     EX_ByteConst 1
+869: EX_Let
+878:     EX_LocalVariable [Temp_byte_Variable_1]
+887:     EX_ByteConst 0
+889: EX_LetBool
+890:     EX_LocalVariable [Temp_bool_Variable]
+899:     EX_InstanceVariable [noPower]
+908: EX_Context
+909:     EX_InstanceVariable [zapper]
+930:     EX_VirtualFunction SetCollisionEnabled
+943:         EX_SwitchValue
+950:             EX_LocalVariable [Temp_bool_Variable]
+943:             case 0:
+959:                 EX_False
+964:                 EX_LocalVariable [Temp_byte_Variable]
+943:             case 1:
+973:                 EX_True
+978:                 EX_LocalVariable [Temp_byte_Variable_1]
+943:             default:
+987:                 EX_LocalVariable [K2Node_Select_Default]
+997: EX_PopExecutionFlow
+
+=== Block @ 117 ===
+    Successors: 214 (JumpTrue)
+
+117: EX_Let
+126:     EX_LocalVariable [K2Node_DynamicCast_AsCeiling_Lamp]
+135:     EX_DynamicCast import /Game/objects/ceilingLamp->ceilingLamp_C
+144:         EX_Context
+145:             EX_InstanceVariable [light]
+166:             EX_InstanceVariable [ChildActor]
+175: EX_Let
+184:     EX_LocalVariable [K2Node_DynamicCast_bSuccess]
+193:     EX_PrimitiveCast ObjectToBool
+195:         EX_LocalVariable [K2Node_DynamicCast_AsCeiling_Lamp]
+204: EX_PopExecutionFlowIfNot
+205:     EX_LocalVariable [K2Node_DynamicCast_bSuccess]
+
+=== Block @ 214 ===
+    Successors: 311 (JumpTrue)
+
+214: EX_Let
+223:     EX_LocalVariable [K2Node_DynamicCast_AsTrigger_Light_Root]
+232:     EX_DynamicCast import /Game/objects/triggers/trigger_lightRoot->trigger_lightRoot_C
+241:         EX_Context
+242:             EX_InstanceVariable [lightroot]
+263:             EX_InstanceVariable [ChildActor]
+272: EX_Let
+281:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_1]
+290:     EX_PrimitiveCast ObjectToBool
+292:         EX_LocalVariable [K2Node_DynamicCast_AsTrigger_Light_Root]
+301: EX_PopExecutionFlowIfNot
+302:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_1]
+
+=== Block @ 311 ===
+    Successors: 678 (JumpTrue)
+
+311: EX_Let
+320:     EX_LocalVariable [CallFunc_Array_Add_ReturnValue_1]
+329:     EX_Context
+330:         EX_ObjectConst import /Script/Engine->Default__KismetArrayLibrary
+351:         EX_FinalFunction import /Script/Engine->KismetArrayLibrary->Array_Add
+360:             EX_Context
+361:                 EX_LocalVariable [K2Node_DynamicCast_AsLightswitch]
+382:                 EX_InstanceVariable [objects]
+391:             EX_LocalVariable [K2Node_DynamicCast_AsTrigger_Light_Root]
+401: EX_Let
+410:     EX_LocalVariable [CallFunc_Array_Add_ReturnValue_2]
+419:     EX_Context
+420:         EX_ObjectConst import /Script/Engine->Default__KismetArrayLibrary
+441:         EX_FinalFunction import /Script/Engine->KismetArrayLibrary->Array_Add
+450:             EX_Context
+451:                 EX_LocalVariable [K2Node_DynamicCast_AsLightswitch]
+472:                 EX_InstanceVariable [ids]
+481:             EX_LocalVariable [Temp_int_Variable]
+491: EX_Let
+500:     EX_LocalVariable [CallFunc_Array_Add_ReturnValue]
+509:     EX_Context
+510:         EX_ObjectConst import /Script/Engine->Default__KismetArrayLibrary
+531:         EX_FinalFunction import /Script/Engine->KismetArrayLibrary->Array_Add
+540:             EX_Context
+541:                 EX_LocalVariable [K2Node_DynamicCast_AsTrigger_Light_Root]
+562:                 EX_InstanceVariable [lights]
+571:             EX_LocalVariable [K2Node_DynamicCast_AsCeiling_Lamp]
+581: EX_Let
+590:     EX_LocalVariable [K2Node_DynamicCast_AsLight_Out_Floor]
+599:     EX_DynamicCast import /Game/objects/lightOut_floor->lightOut_floor_C
+608:         EX_Context
+609:             EX_InstanceVariable [light1]
+630:             EX_InstanceVariable [ChildActor]
+639: EX_Let
+648:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_2]
+657:     EX_PrimitiveCast ObjectToBool
+659:         EX_LocalVariable [K2Node_DynamicCast_AsLight_Out_Floor]
+668: EX_PopExecutionFlowIfNot
+669:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_2]
+
+=== Block @ 678 ===
+    Successors: 
+
+678: EX_LetBool
+679:     EX_LocalVariable [CallFunc_Not_PreBool_ReturnValue]
+688:     EX_CallMath import /Script/Engine->KismetMathLibrary->Not_PreBool
+697:         EX_InstanceVariable [enterLightDeactivate]
+707: EX_LetBool
+708:     EX_Context
+709:         EX_LocalVariable [K2Node_DynamicCast_AsLight_Out_Floor]
+730:         EX_InstanceVariable [isActive]
+739:     EX_LocalVariable [CallFunc_Not_PreBool_ReturnValue]
+748: EX_Context
+749:     EX_LocalVariable [K2Node_DynamicCast_AsLight_Out_Floor]
+770:     EX_LocalVirtualFunction setVis
+784: EX_PopExecutionFlow
+
+=== Block @ 15 ===
+    Successors: 785 (Push), 20
+
+15: EX_PushExecutionFlow 785
+
+=== Block @ 1101 ===
+    Successors: 3247 (Push), 1106
+
+1101: EX_PushExecutionFlow 3247
+
+=== Block @ 3247 ===
+    Successors: 3322 (JumpTrue)
+
+3247: EX_Let
+3256:     EX_LocalVariable [K2Node_DynamicCast_AsInt_Objects]
+3265:     EX_ObjToInterfaceCast import /Game/main/interfaces/int_objects->int_objects_C
+3274:         EX_LocalVariable [K2Node_ComponentBoundEvent_OtherActor_2]
+3283: EX_Let
+3292:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_3]
+3301:     EX_PrimitiveCast InterfaceToBool
+3303:         EX_LocalVariable [K2Node_DynamicCast_AsInt_Objects]
+3312: EX_PopExecutionFlowIfNot
+3313:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_3]
+
+=== Block @ 2577 ===
+    Successors: 2616 (JumpTrue)
+
+2577: EX_LetBool
+2578:     EX_LocalVariable [CallFunc_IsValid_ReturnValue]
+2587:     EX_CallMath import /Script/Engine->KismetSystemLibrary->IsValid
+2596:         EX_InstanceVariable [playerInZone]
+2606: EX_PopExecutionFlowIfNot
+2607:     EX_LocalVariable [CallFunc_IsValid_ReturnValue]
+
+=== Block @ 2382 ===
+    Successors: 2417 (JumpTrue)
+
+2382: EX_LetBool
+2383:     EX_LocalVariable [CallFunc_RandomBoolWithWeight_ReturnValue]
+2392:     EX_CallMath import /Script/Engine->KismetMathLibrary->RandomBoolWithWeight
+2401:         EX_FloatConst 0.1
+2407: EX_PopExecutionFlowIfNot
+2408:     EX_LocalVariable [CallFunc_RandomBoolWithWeight_ReturnValue]
+
+=== Block @ 3626 ===
+    Successors: 3743 (JumpTrue)
+
+3626: EX_LetObj
+3627:     EX_LocalVariable [CallFunc_K2_GetRootComponent_ReturnValue]
+3636:     EX_Context
+3637:         EX_LocalVariable [K2Node_ComponentBoundEvent_OtherActor_2]
+3658:         EX_FinalFunction import /Script/Engine->Actor->K2_GetRootComponent
+3668: EX_Let
+3677:     EX_LocalVariable [K2Node_DynamicCast_AsPrimitive_Component]
+3686:     EX_DynamicCast import /Script/Engine->PrimitiveComponent
+3695:         EX_LocalVariable [CallFunc_K2_GetRootComponent_ReturnValue]
+3704: EX_Let
+3713:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_4]
+3722:     EX_PrimitiveCast ObjectToBool
+3724:         EX_LocalVariable [K2Node_DynamicCast_AsPrimitive_Component]
+3733: EX_PopExecutionFlowIfNot
+3734:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_4]
+
+=== Block @ 4170 ===
+    Successors: 4347 (JumpFalse), 4249 (JumpTrue)
+
+4170: EX_Let
+4179:     EX_LocalVariable [K2Node_DynamicCast_AsProp_Food]
+4188:     EX_DynamicCast import /Game/objects/prop_food->prop_food_C
+4197:         EX_LocalVariable [K2Node_ComponentBoundEvent_OtherActor_2]
+4206: EX_Let
+4215:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_7]
+4224:     EX_PrimitiveCast ObjectToBool
+4226:         EX_LocalVariable [K2Node_DynamicCast_AsProp_Food]
+4235: EX_JumpIfNot 4347
+4240:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_7]
+
+=== Block @ 1919 ===
+    Successors: 4645 (JumpFalse), 1998 (JumpTrue)
+
+1919: EX_Let
+1928:     EX_LocalVariable [K2Node_DynamicCast_AsMain_Player]
+1937:     EX_DynamicCast import /Game/main/mainPlayer->mainPlayer_C
+1946:         EX_LocalVariable [K2Node_DynamicCast_AsCharacter]
+1955: EX_Let
+1964:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_9]
+1973:     EX_PrimitiveCast ObjectToBool
+1975:         EX_LocalVariable [K2Node_DynamicCast_AsMain_Player]
+1984: EX_JumpIfNot 4645
+1989:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_9]
+
+=== Block @ 4645 ===
+    Successors: 
+
+4645: EX_LetObj
+4646:     EX_LocalVariable [CallFunc_K2_GetRootComponent_ReturnValue]
+4655:     EX_Context
+4656:         EX_LocalVariable [K2Node_ComponentBoundEvent_OtherActor_2]
+4677:         EX_FinalFunction import /Script/Engine->Actor->K2_GetRootComponent
+4687: EX_CallMath import /Script/Engine->KismetSystemLibrary->GetComponentBounds
+4696:     EX_LocalVariable [CallFunc_K2_GetRootComponent_ReturnValue]
+4705:     EX_LocalVariable [CallFunc_GetComponentBounds_Origin]
+4714:     EX_LocalVariable [CallFunc_GetComponentBounds_BoxExtent]
+4723:     EX_LocalVariable [CallFunc_GetComponentBounds_SphereRadius]
+4733: EX_Let
+4742:     EX_LocalVariable [CallFunc_projectPointOnZapper_ReturnValue]
+4751:     EX_LocalVirtualFunction projectPointOnZapper
+4764:         EX_LocalVariable [CallFunc_GetComponentBounds_Origin]
+4774: EX_Let
+4783:     EX_LocalVariable [CallFunc_GetClosestPointOnCollision_ReturnValue]
+4792:     EX_Context
+4793:         EX_InstanceVariable [zapper]
+4814:         EX_FinalFunction import /Script/Engine->PrimitiveComponent->GetClosestPointOnCollision
+4823:             EX_LocalVariable [CallFunc_GetComponentBounds_Origin]
+4832:             EX_LocalVariable [CallFunc_GetClosestPointOnCollision_OutPointOnBody]
+4841:             EX_NameConst None
+4855: EX_Let
+4864:     EX_LocalVariable [CallFunc_Subtract_VectorVector_ReturnValue]
+4873:     EX_CallMath import /Script/Engine->KismetMathLibrary->Subtract_VectorVector
+4882:         EX_LocalVariable [CallFunc_GetClosestPointOnCollision_OutPointOnBody]
+4891:         EX_LocalVariable [CallFunc_projectPointOnZapper_ReturnValue]
+4901: EX_Let
+4910:     EX_LocalVariable [CallFunc_SetVectorLength_ReturnValue]
+4919:     EX_CallMath import /Script/VictoryBPLibrary->TKMathFunctionLibrary->SetVectorLength
+4928:         EX_LocalVariable [CallFunc_Subtract_VectorVector_ReturnValue]
+4937:         EX_FloatConst 1500
+4943: EX_Context
+4944:     EX_LocalVariable [K2Node_DynamicCast_AsCharacter]
+4965:     EX_VirtualFunction LaunchCharacter
+4978:         EX_LocalVariable [CallFunc_SetVectorLength_ReturnValue]
+4987:         EX_False
+4988:         EX_False
+4990: EX_PopExecutionFlow
+
+=== Block @ 1998 ===
+    Successors: 
+
+1998: EX_LetObj
+1999:     EX_LocalVariable [CallFunc_K2_GetRootComponent_ReturnValue]
+2008:     EX_Context
+2009:         EX_LocalVariable [K2Node_ComponentBoundEvent_OtherActor_2]
+2030:         EX_FinalFunction import /Script/Engine->Actor->K2_GetRootComponent
+2040: EX_CallMath import /Script/Engine->KismetSystemLibrary->GetComponentBounds
+2049:     EX_LocalVariable [CallFunc_K2_GetRootComponent_ReturnValue]
+2058:     EX_LocalVariable [CallFunc_GetComponentBounds_Origin]
+2067:     EX_LocalVariable [CallFunc_GetComponentBounds_BoxExtent]
+2076:     EX_LocalVariable [CallFunc_GetComponentBounds_SphereRadius]
+2086: EX_Let
+2095:     EX_LocalVariable [CallFunc_projectPointOnZapper_ReturnValue]
+2104:     EX_LocalVirtualFunction projectPointOnZapper
+2117:         EX_LocalVariable [CallFunc_GetComponentBounds_Origin]
+2127: EX_Let
+2136:     EX_LocalVariable [CallFunc_GetClosestPointOnCollision_ReturnValue]
+2145:     EX_Context
+2146:         EX_InstanceVariable [zapper]
+2167:         EX_FinalFunction import /Script/Engine->PrimitiveComponent->GetClosestPointOnCollision
+2176:             EX_LocalVariable [CallFunc_GetComponentBounds_Origin]
+2185:             EX_LocalVariable [CallFunc_GetClosestPointOnCollision_OutPointOnBody]
+2194:             EX_NameConst None
+2208: EX_Let
+2217:     EX_LocalVariable [CallFunc_Subtract_VectorVector_ReturnValue]
+2226:     EX_CallMath import /Script/Engine->KismetMathLibrary->Subtract_VectorVector
+2235:         EX_LocalVariable [CallFunc_GetClosestPointOnCollision_OutPointOnBody]
+2244:         EX_LocalVariable [CallFunc_projectPointOnZapper_ReturnValue]
+2254: EX_Let
+2263:     EX_LocalVariable [CallFunc_SetVectorLength_ReturnValue]
+2272:     EX_CallMath import /Script/VictoryBPLibrary->TKMathFunctionLibrary->SetVectorLength
+2281:         EX_LocalVariable [CallFunc_Subtract_VectorVector_ReturnValue]
+2290:         EX_FloatConst 1500
+2296: EX_Context
+2297:     EX_LocalVariable [K2Node_DynamicCast_AsMain_Player]
+2318:     EX_LocalVirtualFunction punch
+2331:         EX_LocalVariable [CallFunc_SetVectorLength_ReturnValue]
+2340:         EX_LocalVariable [CallFunc_SetVectorLength_ReturnValue]
+2349:         EX_NameConst pelvis
+2362:         EX_FloatConst 20
+2367:         EX_VectorConst 0,0,0
+2381: EX_PopExecutionFlow
+
+=== Block @ 2417 ===
+    Successors: 2492 (JumpTrue)
+
+2417: EX_Let
+2426:     EX_LocalVariable [K2Node_DynamicCast_AsInt_Objects_1]
+2435:     EX_ObjToInterfaceCast import /Game/main/interfaces/int_objects->int_objects_C
+2444:         EX_LocalVariable [K2Node_ComponentBoundEvent_OtherActor_2]
+2453: EX_Let
+2462:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_5]
+2471:     EX_PrimitiveCast InterfaceToBool
+2473:         EX_LocalVariable [K2Node_DynamicCast_AsInt_Objects_1]
+2482: EX_PopExecutionFlowIfNot
+2483:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_5]
+
+=== Block @ 2492 ===
+    Successors: 
+
+2492: EX_Let
+2501:     EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue_2]
+2510:     EX_CallMath import /Script/Engine->KismetMathLibrary->RandomFloatInRange
+2519:         EX_FloatConst 1
+2524:         EX_FloatConst 2
+2530: EX_Context
+2531:     EX_InterfaceContext
+2532:         EX_LocalVariable [K2Node_DynamicCast_AsInt_Objects_1]
+2553:     EX_LocalVirtualFunction ignite
+2566:         EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue_2]
+2576: EX_PopExecutionFlow
+
+=== Block @ 2616 ===
+    Successors: 2677 (JumpTrue)
+
+2616: EX_LetBool
+2617:     EX_LocalVariable [CallFunc_IsValid_ReturnValue_1]
+2626:     EX_CallMath import /Script/Engine->KismetSystemLibrary->IsValid
+2635:         EX_Context
+2636:             EX_InstanceVariable [playerInZone]
+2657:             EX_InstanceVariable [grabbing_actor]
+2667: EX_PopExecutionFlowIfNot
+2668:     EX_LocalVariable [CallFunc_IsValid_ReturnValue_1]
+
+=== Block @ 2677 ===
+    Successors: 2747 (JumpTrue)
+
+2677: EX_LetBool
+2678:     EX_LocalVariable [CallFunc_EqualEqual_ObjectObject_ReturnValue]
+2687:     EX_CallMath import /Script/Engine->KismetMathLibrary->EqualEqual_ObjectObject
+2696:         EX_LocalVariable [K2Node_ComponentBoundEvent_OtherActor_2]
+2705:         EX_Context
+2706:             EX_InstanceVariable [playerInZone]
+2727:             EX_InstanceVariable [grabbing_actor]
+2737: EX_PopExecutionFlowIfNot
+2738:     EX_LocalVariable [CallFunc_EqualEqual_ObjectObject_ReturnValue]
+
+=== Block @ 2747 ===
+    Successors: 2821 (JumpFalse), 2820 (JumpTrue)
+
+2747: EX_Context
+2748:     EX_ObjectConst import /Game/main/lib->Default__lib_C
+2769:     EX_LocalVirtualFunction hasEquipment
+2782:         EX_NameConst mittens
+2795:         EX_Self
+2796:         EX_LocalVariable [CallFunc_hasEquipment_return]
+2806: EX_JumpIfNot 2821
+2811:     EX_LocalVariable [CallFunc_hasEquipment_return]
+
+=== Block @ 2821 ===
+    Successors: 
+
+2821: EX_LetObj
+2822:     EX_LocalVariable [CallFunc_K2_GetRootComponent_ReturnValue]
+2831:     EX_Context
+2832:         EX_LocalVariable [K2Node_ComponentBoundEvent_OtherActor_2]
+2853:         EX_FinalFunction import /Script/Engine->Actor->K2_GetRootComponent
+2863: EX_CallMath import /Script/Engine->KismetSystemLibrary->GetComponentBounds
+2872:     EX_LocalVariable [CallFunc_K2_GetRootComponent_ReturnValue]
+2881:     EX_LocalVariable [CallFunc_GetComponentBounds_Origin]
+2890:     EX_LocalVariable [CallFunc_GetComponentBounds_BoxExtent]
+2899:     EX_LocalVariable [CallFunc_GetComponentBounds_SphereRadius]
+2909: EX_Let
+2918:     EX_LocalVariable [CallFunc_projectPointOnZapper_ReturnValue]
+2927:     EX_LocalVirtualFunction projectPointOnZapper
+2940:         EX_LocalVariable [CallFunc_GetComponentBounds_Origin]
+2950: EX_Let
+2959:     EX_LocalVariable [CallFunc_GetClosestPointOnCollision_ReturnValue]
+2968:     EX_Context
+2969:         EX_InstanceVariable [zapper]
+2990:         EX_FinalFunction import /Script/Engine->PrimitiveComponent->GetClosestPointOnCollision
+2999:             EX_LocalVariable [CallFunc_GetComponentBounds_Origin]
+3008:             EX_LocalVariable [CallFunc_GetClosestPointOnCollision_OutPointOnBody]
+3017:             EX_NameConst None
+3031: EX_Let
+3040:     EX_LocalVariable [CallFunc_Subtract_VectorVector_ReturnValue]
+3049:     EX_CallMath import /Script/Engine->KismetMathLibrary->Subtract_VectorVector
+3058:         EX_LocalVariable [CallFunc_GetClosestPointOnCollision_OutPointOnBody]
+3067:         EX_LocalVariable [CallFunc_projectPointOnZapper_ReturnValue]
+3077: EX_Let
+3086:     EX_LocalVariable [CallFunc_SetVectorLength_ReturnValue]
+3095:     EX_CallMath import /Script/VictoryBPLibrary->TKMathFunctionLibrary->SetVectorLength
+3104:         EX_LocalVariable [CallFunc_Subtract_VectorVector_ReturnValue]
+3113:         EX_FloatConst 1500
+3119: EX_Let
+3128:     EX_LocalVariable [CallFunc_Divide_VectorFloat_ReturnValue]
+3137:     EX_CallMath import /Script/Engine->KismetMathLibrary->Divide_VectorFloat
+3146:         EX_LocalVariable [CallFunc_SetVectorLength_ReturnValue]
+3155:         EX_FloatConst 2
+3161: EX_Context
+3162:     EX_InstanceVariable [playerInZone]
+3183:     EX_LocalVirtualFunction punch
+3196:         EX_LocalVariable [CallFunc_Divide_VectorFloat_ReturnValue]
+3205:         EX_LocalVariable [CallFunc_Divide_VectorFloat_ReturnValue]
+3214:         EX_NameConst pelvis
+3227:         EX_FloatConst 10
+3232:         EX_VectorConst 0,0,0
+3246: EX_PopExecutionFlow
+
+=== Block @ 2820 ===
+    Successors: 
+
+2820: EX_PopExecutionFlow
+
+=== Block @ 3322 ===
+    Successors: 
+
+3322: EX_Context
+3323:     EX_InterfaceContext
+3324:         EX_LocalVariable [K2Node_DynamicCast_AsInt_Objects]
+3345:     EX_LocalVirtualFunction addDamage
+3358:         EX_Self
+3359:         EX_FloatConst 20
+3364:         EX_StructConst import /Script/Engine->HitResult
+3377:             EX_IntConst 0
+3382:             EX_FloatConst 1
+3387:             EX_FloatConst 0
+3392:             EX_StructConst import /Script/Engine->Vector_NetQuantize
+3405:                 EX_FloatConst 0
+3410:                 EX_FloatConst 0
+3415:                 EX_FloatConst 0
+3421:             EX_StructConst import /Script/Engine->Vector_NetQuantize
+3434:                 EX_FloatConst 0
+3439:                 EX_FloatConst 0
+3444:                 EX_FloatConst 0
+3450:             EX_StructConst import /Script/Engine->Vector_NetQuantizeNormal
+3463:                 EX_FloatConst 0
+3468:                 EX_FloatConst 0
+3473:                 EX_FloatConst 0
+3479:             EX_StructConst import /Script/Engine->Vector_NetQuantizeNormal
+3492:                 EX_FloatConst 0
+3497:                 EX_FloatConst 0
+3502:                 EX_FloatConst 0
+3508:             EX_StructConst import /Script/Engine->Vector_NetQuantize
+3521:                 EX_FloatConst 0
+3526:                 EX_FloatConst 0
+3531:                 EX_FloatConst 0
+3537:             EX_StructConst import /Script/Engine->Vector_NetQuantize
+3550:                 EX_FloatConst 0
+3555:                 EX_FloatConst 0
+3560:                 EX_FloatConst 0
+3566:             EX_FloatConst 0
+3571:             EX_IntConst 0
+3576:             EX_ByteConst 0
+3578:             EX_False
+3579:             EX_False
+3580:             EX_NoObject
+3581:             EX_NoObject
+3582:             EX_NoObject
+3583:             EX_NameConst None
+3596:             EX_NameConst None
+3610:         EX_VectorConst 0,0,0
+3623:         EX_False
+3625: EX_PopExecutionFlow
+
+=== Block @ 3743 ===
+    Successors: 3812 (JumpTrue)
+
+3743: EX_LetBool
+3744:     EX_LocalVariable [CallFunc_IsSimulatingPhysics_ReturnValue]
+3753:     EX_Context
+3754:         EX_LocalVariable [K2Node_DynamicCast_AsPrimitive_Component]
+3775:         EX_VirtualFunction IsSimulatingPhysics
+3788:             EX_NameConst None
+3802: EX_PopExecutionFlowIfNot
+3803:     EX_LocalVariable [CallFunc_IsSimulatingPhysics_ReturnValue]
+
+=== Block @ 3812 ===
+    Successors: 
+
+3812: EX_LetObj
+3813:     EX_LocalVariable [CallFunc_K2_GetRootComponent_ReturnValue]
+3822:     EX_Context
+3823:         EX_LocalVariable [K2Node_ComponentBoundEvent_OtherActor_2]
+3844:         EX_FinalFunction import /Script/Engine->Actor->K2_GetRootComponent
+3854: EX_CallMath import /Script/Engine->KismetSystemLibrary->GetComponentBounds
+3863:     EX_LocalVariable [CallFunc_K2_GetRootComponent_ReturnValue]
+3872:     EX_LocalVariable [CallFunc_GetComponentBounds_Origin]
+3881:     EX_LocalVariable [CallFunc_GetComponentBounds_BoxExtent]
+3890:     EX_LocalVariable [CallFunc_GetComponentBounds_SphereRadius]
+3900: EX_Let
+3909:     EX_LocalVariable [CallFunc_projectPointOnZapper_ReturnValue]
+3918:     EX_LocalVirtualFunction projectPointOnZapper
+3931:         EX_LocalVariable [CallFunc_GetComponentBounds_Origin]
+3941: EX_Let
+3950:     EX_LocalVariable [CallFunc_GetClosestPointOnCollision_ReturnValue]
+3959:     EX_Context
+3960:         EX_InstanceVariable [zapper]
+3981:         EX_FinalFunction import /Script/Engine->PrimitiveComponent->GetClosestPointOnCollision
+3990:             EX_LocalVariable [CallFunc_GetComponentBounds_Origin]
+3999:             EX_LocalVariable [CallFunc_GetClosestPointOnCollision_OutPointOnBody]
+4008:             EX_NameConst None
+4022: EX_Let
+4031:     EX_LocalVariable [CallFunc_Subtract_VectorVector_ReturnValue]
+4040:     EX_CallMath import /Script/Engine->KismetMathLibrary->Subtract_VectorVector
+4049:         EX_LocalVariable [CallFunc_GetClosestPointOnCollision_OutPointOnBody]
+4058:         EX_LocalVariable [CallFunc_projectPointOnZapper_ReturnValue]
+4068: EX_Let
+4077:     EX_LocalVariable [CallFunc_SetVectorLength_ReturnValue]
+4086:     EX_CallMath import /Script/VictoryBPLibrary->TKMathFunctionLibrary->SetVectorLength
+4095:         EX_LocalVariable [CallFunc_Subtract_VectorVector_ReturnValue]
+4104:         EX_FloatConst 1500
+4110: EX_Context
+4111:     EX_LocalVariable [K2Node_DynamicCast_AsPrimitive_Component]
+4132:     EX_VirtualFunction SetPhysicsLinearVelocity
+4145:         EX_LocalVariable [CallFunc_SetVectorLength_ReturnValue]
+4154:         EX_True
+4155:         EX_NameConst None
+4169: EX_PopExecutionFlow
+
+=== Block @ 4347 ===
+    Successors: 4422 (JumpTrue)
+
+4347: EX_Let
+4356:     EX_LocalVariable [K2Node_DynamicCast_AsProp_Atvcarbattery]
+4365:     EX_DynamicCast import /Game/objects/prop_atvcarbattery->prop_atvcarbattery_C
+4374:         EX_LocalVariable [K2Node_ComponentBoundEvent_OtherActor_2]
+4383: EX_Let
+4392:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_6]
+4401:     EX_PrimitiveCast ObjectToBool
+4403:         EX_LocalVariable [K2Node_DynamicCast_AsProp_Atvcarbattery]
+4412: EX_PopExecutionFlowIfNot
+4413:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_6]
+
+=== Block @ 4249 ===
+    Successors: 
+
+4249: EX_Let
+4258:     EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue_1]
+4267:     EX_CallMath import /Script/Engine->KismetMathLibrary->RandomFloatInRange
+4276:         EX_FloatConst 1
+4281:         EX_FloatConst 15
+4287: EX_CallMath import /Script/VictoryBPLibrary->VictoryBPFunctionLibrary->VictoryFloatPlusEquals
+4296:     EX_Context
+4297:         EX_LocalVariable [K2Node_DynamicCast_AsProp_Food]
+4318:         EX_InstanceVariable [temperature]
+4327:     EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue_1]
+4336:     EX_LocalVariable [CallFunc_VictoryFloatPlusEquals_FloatOut]
+4346: EX_PopExecutionFlow
+
+=== Block @ 4422 ===
+    Successors: 4488 (JumpTrue)
+
+4422: EX_LetBool
+4423:     EX_LocalVariable [CallFunc_Less_FloatFloat_ReturnValue]
+4432:     EX_CallMath import /Script/Engine->KismetMathLibrary->Less_FloatFloat
+4441:         EX_Context
+4442:             EX_LocalVariable [K2Node_DynamicCast_AsProp_Atvcarbattery]
+4463:             EX_InstanceVariable [battery]
+4472:         EX_FloatConst 100
+4478: EX_PopExecutionFlowIfNot
+4479:     EX_LocalVariable [CallFunc_Less_FloatFloat_ReturnValue]
+
+=== Block @ 4488 ===
+    Successors: 
+
+4488: EX_Let
+4497:     EX_LocalVariable [CallFunc_GetWorldDeltaSeconds_ReturnValue]
+4506:     EX_CallMath import /Script/Engine->GameplayStatics->GetWorldDeltaSeconds
+4515:         EX_Self
+4517: EX_Let
+4526:     EX_LocalVariable [CallFunc_FInterpTo_ReturnValue]
+4535:     EX_CallMath import /Script/Engine->KismetMathLibrary->FInterpTo
+4544:         EX_Context
+4545:             EX_LocalVariable [K2Node_DynamicCast_AsProp_Atvcarbattery]
+4566:             EX_InstanceVariable [battery]
+4575:         EX_FloatConst 100
+4580:         EX_LocalVariable [CallFunc_GetWorldDeltaSeconds_ReturnValue]
+4589:         EX_FloatConst 0.05
+4595: EX_Let
+4604:     EX_Context
+4605:         EX_LocalVariable [K2Node_DynamicCast_AsProp_Atvcarbattery]
+4626:         EX_InstanceVariable [battery]
+4635:     EX_LocalVariable [CallFunc_FInterpTo_ReturnValue]
+4644: EX_PopExecutionFlow
+
+=== Block @ 5001 ===
+    Successors: 
+
+5001: EX_LocalVirtualFunction zapEffect
+5015: EX_PopExecutionFlow
+
+=== Block @ 5149 ===
+    Successors: 
+
+5149: EX_Let
+5158:     EX_LocalVariable [CallFunc_K2_GetComponentLocation_ReturnValue]
+5167:     EX_Context
+5168:         EX_InstanceVariable [zapper]
+5189:         EX_FinalFunction import /Script/Engine->SceneComponent->K2_GetComponentLocation
+5199: EX_Let
+5208:     EX_LocalVariable [CallFunc_GetUpVector_ReturnValue]
+5217:     EX_Context
+5218:         EX_InstanceVariable [zapper]
+5239:         EX_FinalFunction import /Script/Engine->SceneComponent->GetUpVector
+5249: EX_Let
+5258:     EX_LocalVariable [CallFunc_RandomFloat_ReturnValue]
+5267:     EX_CallMath import /Script/Engine->KismetMathLibrary->RandomFloat
+5277: EX_Let
+5286:     EX_LocalVariable [CallFunc_Multiply_FloatFloat_ReturnValue]
+5295:     EX_CallMath import /Script/Engine->KismetMathLibrary->Multiply_FloatFloat
+5304:         EX_Context
+5305:             EX_InstanceVariable [zapper]
+5326:             EX_InstanceVariable [CapsuleHalfHeight]
+5335:         EX_FloatConst -1
+5341: EX_Let
+5350:     EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue]
+5359:     EX_CallMath import /Script/Engine->KismetMathLibrary->Multiply_VectorFloat
+5368:         EX_LocalVariable [CallFunc_GetUpVector_ReturnValue]
+5377:         EX_Context
+5378:             EX_InstanceVariable [zapper]
+5399:             EX_InstanceVariable [CapsuleHalfHeight]
+5409: EX_Let
+5418:     EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue_1]
+5427:     EX_CallMath import /Script/Engine->KismetMathLibrary->Multiply_VectorFloat
+5436:         EX_LocalVariable [CallFunc_GetUpVector_ReturnValue]
+5445:         EX_LocalVariable [CallFunc_Multiply_FloatFloat_ReturnValue]
+5455: EX_Let
+5464:     EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue]
+5473:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_VectorVector
+5482:         EX_LocalVariable [CallFunc_K2_GetComponentLocation_ReturnValue]
+5491:         EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue]
+5501: EX_Let
+5510:     EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_1]
+5519:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_VectorVector
+5528:         EX_LocalVariable [CallFunc_K2_GetComponentLocation_ReturnValue]
+5537:         EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue_1]
+5547: EX_Let
+5556:     EX_LocalVariable [CallFunc_VLerp_ReturnValue]
+5565:     EX_CallMath import /Script/Engine->KismetMathLibrary->VLerp
+5574:         EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_1]
+5583:         EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue]
+5592:         EX_LocalVariable [CallFunc_RandomFloat_ReturnValue]
+5602: EX_LetObj
+5603:     EX_LocalVariable [CallFunc_SpawnEmitterAtLocation_ReturnValue]
+5612:     EX_CallMath import /Script/Engine->GameplayStatics->SpawnEmitterAtLocation
+5621:         EX_Self
+5622:         EX_ObjectConst import /Game/particles/eff_spark_small->eff_spark_small
+5631:         EX_LocalVariable [CallFunc_VLerp_ReturnValue]
+5640:         EX_RotationConst 0,0,0
+5653:         EX_VectorConst 1,1,1
+5666:         EX_True
+5667:         EX_ByteConst 0
+5669:         EX_True
+5671: EX_PopExecutionFlow
+
+=== Block @ 5148 ===
+    Successors: 
+
+5148: EX_PopExecutionFlow
+
+=== Block @ 5747 ===
+    Successors: 
+
+5747: EX_LetObj
+5748:     EX_InstanceVariable [playerInZone]
+5757:     EX_LocalVariable [K2Node_DynamicCast_AsMain_Player_1]
+5766: EX_PopExecutionFlow
+
+=== Block @ 5842 ===
+    Successors: 
+
+5842: EX_LetObj
+5843:     EX_InstanceVariable [playerInZone]
+5852:     EX_NoObject
+5853: EX_PopExecutionFlow
+
+=== Block @ 5854 ===
+    Successors: 849
+
+5854: EX_LetBool
+5855:     EX_InstanceVariable [noPower]
+5864:     EX_Context
+5865:         EX_InstanceVariable [transformer]
+5886:         EX_InstanceVariable [isBroken]
+5895: EX_Jump 849
+
+=== Block @ 5767 ===
+    Successors: 5842 (JumpTrue)
+
+5767: EX_Let
+5776:     EX_LocalVariable [K2Node_DynamicCast_AsMain_Player_2]
+5785:     EX_DynamicCast import /Game/main/mainPlayer->mainPlayer_C
+5794:         EX_LocalVariable [K2Node_ComponentBoundEvent_OtherActor]
+5803: EX_Let
+5812:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_12]
+5821:     EX_PrimitiveCast ObjectToBool
+5823:         EX_LocalVariable [K2Node_DynamicCast_AsMain_Player_2]
+5832: EX_PopExecutionFlowIfNot
+5833:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_12]
+
+=== Block @ 5672 ===
+    Successors: 5747 (JumpTrue)
+
+5672: EX_Let
+5681:     EX_LocalVariable [K2Node_DynamicCast_AsMain_Player_1]
+5690:     EX_DynamicCast import /Game/main/mainPlayer->mainPlayer_C
+5699:         EX_LocalVariable [K2Node_ComponentBoundEvent_OtherActor_1]
+5708: EX_Let
+5717:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_11]
+5726:     EX_PrimitiveCast ObjectToBool
+5728:         EX_LocalVariable [K2Node_DynamicCast_AsMain_Player_1]
+5737: EX_PopExecutionFlowIfNot
+5738:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_11]
+
+=== Block @ 5016 ===
+    Successors: 5149 (JumpFalse), 5148 (JumpTrue)
+
+5016: EX_Let
+5025:     EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue]
+5034:     EX_CallMath import /Script/Engine->KismetMathLibrary->RandomFloatInRange
+5043:         EX_FloatConst 0.1
+5048:         EX_FloatConst 10
+5054: EX_BindDelegate zapEffect
+5067:     EX_LocalVariable [K2Node_CreateDelegate_OutputDelegate_1]
+5076:     EX_Self
+5077: EX_Let
+5086:     EX_LocalVariable [CallFunc_K2_SetTimerDelegate_ReturnValue]
+5095:     EX_CallMath import /Script/Engine->KismetSystemLibrary->K2_SetTimerDelegate
+5104:         EX_LocalVariable [K2Node_CreateDelegate_OutputDelegate_1]
+5113:         EX_LocalVariable [CallFunc_RandomFloatInRange_ReturnValue]
+5122:         EX_False
+5123:         EX_FloatConst 0
+5128:         EX_FloatConst 0
+5134: EX_JumpIfNot 5149
+5139:     EX_InstanceVariable [noPower]
+
+=== Block @ 1053 ===
+    Successors: 1101 (JumpTrue)
+
+1053: EX_LetBool
+1054:     EX_LocalVariable [CallFunc_DoesImplementInterface_ReturnValue]
+1063:     EX_CallMath import /Script/Engine->KismetSystemLibrary->DoesImplementInterface
+1072:         EX_LocalVariable [K2Node_ComponentBoundEvent_OtherActor_2]
+1081:         EX_ObjectConst import /Game/main/interfaces/int_objects->int_objects_C
+1091: EX_PopExecutionFlowIfNot
+1092:     EX_LocalVariable [CallFunc_DoesImplementInterface_ReturnValue]
+
+=== Block @ 4991 ===
+    Successors: 5001 (Push), 4996
+
+4991: EX_PushExecutionFlow 5001
+
+=== Block @ 5 ===
+    Successors: 
+
+5: EX_ComputedJump
+6:     EX_LocalVariable [EntryPoint]
+
+=== Block @ 20 ===
+    Successors: 117 (JumpTrue)
+
+20: EX_Let
+29:     EX_LocalVariable [K2Node_DynamicCast_AsLightswitch]
+38:     EX_DynamicCast import /Game/objects/lightswitch->lightswitch_C
+47:         EX_Context
+48:             EX_InstanceVariable [lightswitch]
+69:             EX_InstanceVariable [ChildActor]
+78: EX_Let
+87:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_10]
+96:     EX_PrimitiveCast ObjectToBool
+98:         EX_LocalVariable [K2Node_DynamicCast_AsLightswitch]
+107: EX_PopExecutionFlowIfNot
+108:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_10]
+
+=== Block @ 1106 ===
+    Successors: 2577 (Push), 1111
+
+1106: EX_PushExecutionFlow 2577
+
+=== Block @ 4996 ===
+    Successors: ExecuteUbergraph_generatorBuilding:15 (Latent), 1052
+
+4996: EX_Jump 998
+998: EX_CallMath import /Script/Engine->KismetSystemLibrary->Delay
+1007:     EX_Self
+1008:     EX_FloatConst 0.2
+1013:     EX_StructConst import /Script/Engine->LatentActionInfo
+1026:         EX_SkipOffsetConst 15
+1031:         EX_IntConst 894953389
+1036:         EX_NameConst ExecuteUbergraph_generatorBuilding
+1049:         EX_Self
+
+=== Block @ 1111 ===
+    Successors: 2382 (Push), 1116
+
+1111: EX_PushExecutionFlow 2382
+
+=== Block @ 1052 ===
+    Successors: 
+
+1052: EX_PopExecutionFlow
+
+=== Block @ 1116 ===
+    Successors: 3626 (Push), 1840
+
+1116: EX_LetObj
+1117:     EX_LocalVariable [CallFunc_K2_GetRootComponent_ReturnValue]
+1126:     EX_Context
+1127:         EX_LocalVariable [K2Node_ComponentBoundEvent_OtherActor_2]
+1148:         EX_FinalFunction import /Script/Engine->Actor->K2_GetRootComponent
+1158: EX_CallMath import /Script/Engine->KismetSystemLibrary->GetComponentBounds
+1167:     EX_LocalVariable [CallFunc_K2_GetRootComponent_ReturnValue]
+1176:     EX_LocalVariable [CallFunc_GetComponentBounds_Origin]
+1185:     EX_LocalVariable [CallFunc_GetComponentBounds_BoxExtent]
+1194:     EX_LocalVariable [CallFunc_GetComponentBounds_SphereRadius]
+1204: EX_CallMath import /Script/Engine->GameplayStatics->PlaySoundAtLocation
+1213:     EX_Self
+1214:     EX_ObjectConst import /Game/audio/effects/sparkLong_Cue->sparkLong_Cue
+1223:     EX_LocalVariable [CallFunc_GetComponentBounds_Origin]
+1232:     EX_RotationConst 0,0,0
+1245:     EX_FloatConst 2
+1250:     EX_FloatConst 1
+1255:     EX_FloatConst 0
+1260:     EX_ObjectConst import /Game/audio/misc/att_default->att_default
+1269:     EX_NoObject
+1270:     EX_NoObject
+1272: EX_LetObj
+1273:     EX_LocalVariable [CallFunc_K2_GetRootComponent_ReturnValue]
+1282:     EX_Context
+1283:         EX_LocalVariable [K2Node_ComponentBoundEvent_OtherActor_2]
+1304:         EX_FinalFunction import /Script/Engine->Actor->K2_GetRootComponent
+1314: EX_CallMath import /Script/Engine->KismetSystemLibrary->GetComponentBounds
+1323:     EX_LocalVariable [CallFunc_K2_GetRootComponent_ReturnValue]
+1332:     EX_LocalVariable [CallFunc_GetComponentBounds_Origin]
+1341:     EX_LocalVariable [CallFunc_GetComponentBounds_BoxExtent]
+1350:     EX_LocalVariable [CallFunc_GetComponentBounds_SphereRadius]
+1360: EX_Let
+1369:     EX_LocalVariable [CallFunc_GetClosestPointOnCollision_ReturnValue]
+1378:     EX_Context
+1379:         EX_InstanceVariable [zapper]
+1400:         EX_FinalFunction import /Script/Engine->PrimitiveComponent->GetClosestPointOnCollision
+1409:             EX_LocalVariable [CallFunc_GetComponentBounds_Origin]
+1418:             EX_LocalVariable [CallFunc_GetClosestPointOnCollision_OutPointOnBody]
+1427:             EX_NameConst None
+1441: EX_CallMath import /Script/Engine->KismetSystemLibrary->DrawDebugPoint
+1450:     EX_Self
+1451:     EX_LocalVariable [CallFunc_GetClosestPointOnCollision_OutPointOnBody]
+1460:     EX_FloatConst 15
+1465:     EX_StructConst import /Script/CoreUObject->LinearColor
+1478:         EX_FloatConst 1
+1483:         EX_FloatConst 0.060549
+1488:         EX_FloatConst 0
+1493:         EX_FloatConst 1
+1499:     EX_FloatConst 1
+1505: EX_LetObj
+1506:     EX_LocalVariable [CallFunc_K2_GetRootComponent_ReturnValue]
+1515:     EX_Context
+1516:         EX_LocalVariable [K2Node_ComponentBoundEvent_OtherActor_2]
+1537:         EX_FinalFunction import /Script/Engine->Actor->K2_GetRootComponent
+1547: EX_CallMath import /Script/Engine->KismetSystemLibrary->GetComponentBounds
+1556:     EX_LocalVariable [CallFunc_K2_GetRootComponent_ReturnValue]
+1565:     EX_LocalVariable [CallFunc_GetComponentBounds_Origin]
+1574:     EX_LocalVariable [CallFunc_GetComponentBounds_BoxExtent]
+1583:     EX_LocalVariable [CallFunc_GetComponentBounds_SphereRadius]
+1593: EX_Let
+1602:     EX_LocalVariable [CallFunc_projectPointOnZapper_ReturnValue]
+1611:     EX_LocalVirtualFunction projectPointOnZapper
+1624:         EX_LocalVariable [CallFunc_GetComponentBounds_Origin]
+1634: EX_Let
+1643:     EX_LocalVariable [CallFunc_GetClosestPointOnCollision_ReturnValue]
+1652:     EX_Context
+1653:         EX_InstanceVariable [zapper]
+1674:         EX_FinalFunction import /Script/Engine->PrimitiveComponent->GetClosestPointOnCollision
+1683:             EX_LocalVariable [CallFunc_GetComponentBounds_Origin]
+1692:             EX_LocalVariable [CallFunc_GetClosestPointOnCollision_OutPointOnBody]
+1701:             EX_NameConst None
+1715: EX_Let
+1724:     EX_LocalVariable [CallFunc_VLerp_ReturnValue_1]
+1733:     EX_CallMath import /Script/Engine->KismetMathLibrary->VLerp
+1742:         EX_LocalVariable [CallFunc_GetClosestPointOnCollision_OutPointOnBody]
+1751:         EX_LocalVariable [CallFunc_projectPointOnZapper_ReturnValue]
+1760:         EX_FloatConst 0.5
+1766: EX_LetObj
+1767:     EX_LocalVariable [CallFunc_SpawnEmitterAtLocation_ReturnValue_1]
+1776:     EX_CallMath import /Script/Engine->GameplayStatics->SpawnEmitterAtLocation
+1785:         EX_Self
+1786:         EX_ObjectConst import /Game/particles/eff_spark->eff_spark
+1795:         EX_LocalVariable [CallFunc_VLerp_ReturnValue_1]
+1804:         EX_RotationConst 0,0,0
+1817:         EX_VectorConst 2,2,2
+1830:         EX_True
+1831:         EX_ByteConst 0
+1833:         EX_True
+1835: EX_PushExecutionFlow 3626
+
+=== Block @ 1840 ===
+    Successors: 4170 (JumpFalse), 1919 (JumpTrue)
+
+1840: EX_Let
+1849:     EX_LocalVariable [K2Node_DynamicCast_AsCharacter]
+1858:     EX_DynamicCast import /Script/Engine->Character
+1867:         EX_LocalVariable [K2Node_ComponentBoundEvent_OtherActor_2]
+1876: EX_Let
+1885:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_8]
+1894:     EX_PrimitiveCast ObjectToBool
+1896:         EX_LocalVariable [K2Node_DynamicCast_AsCharacter]
+1905: EX_JumpIfNot 4170
+1910:     EX_LocalVariable [K2Node_DynamicCast_bSuccess_8]
+
+FunctionExport trUpdated
+=== Block @ 0 ===
+    Successors: ExecuteUbergraph_generatorBuilding:5854 (Function)
+
+0: EX_LocalFinalFunction ExecuteUbergraph_generatorBuilding
+9:     EX_IntConst 5854
+15: EX_Return
+16:     EX_Nothing
+
+FunctionExport BndEvt__generatorBuilding_playerArea_K2Node_ComponentBoundEvent_2_ComponentEndOverlapSignature__DelegateSignature
+=== Block @ 0 ===
+    Successors: ExecuteUbergraph_generatorBuilding:5767 (Function)
+
+0: EX_LetValueOnPersistentFrame [K2Node_ComponentBoundEvent_OverlappedComponent]
+9:     EX_LocalVariable [OverlappedComponent]
+18: EX_LetValueOnPersistentFrame [K2Node_ComponentBoundEvent_OtherActor]
+27:     EX_LocalVariable [OtherActor]
+36: EX_LetValueOnPersistentFrame [K2Node_ComponentBoundEvent_OtherComp]
+45:     EX_LocalVariable [OtherComp]
+54: EX_LetValueOnPersistentFrame [K2Node_ComponentBoundEvent_OtherBodyIndex]
+63:     EX_LocalVariable [OtherBodyIndex]
+72: EX_LocalFinalFunction ExecuteUbergraph_generatorBuilding
+81:     EX_IntConst 5767
+87: EX_Return
+88:     EX_Nothing
+
+FunctionExport BndEvt__generatorBuilding_playerArea_K2Node_ComponentBoundEvent_1_ComponentBeginOverlapSignature__DelegateSignature
+=== Block @ 0 ===
+    Successors: ExecuteUbergraph_generatorBuilding:5672 (Function)
+
+0: EX_LetValueOnPersistentFrame [K2Node_ComponentBoundEvent_OverlappedComponent_1]
+9:     EX_LocalVariable [OverlappedComponent]
+18: EX_LetValueOnPersistentFrame [K2Node_ComponentBoundEvent_OtherActor_1]
+27:     EX_LocalVariable [OtherActor]
+36: EX_LetValueOnPersistentFrame [K2Node_ComponentBoundEvent_OtherComp_1]
+45:     EX_LocalVariable [OtherComp]
+54: EX_LetValueOnPersistentFrame [K2Node_ComponentBoundEvent_OtherBodyIndex_1]
+63:     EX_LocalVariable [OtherBodyIndex]
+72: EX_LetValueOnPersistentFrame [K2Node_ComponentBoundEvent_bFromSweep]
+81:     EX_LocalVariable [bFromSweep]
+90: EX_LetValueOnPersistentFrame [K2Node_ComponentBoundEvent_SweepResult]
+99:     EX_LocalOutVariable [SweepResult]
+108: EX_LocalFinalFunction ExecuteUbergraph_generatorBuilding
+117:     EX_IntConst 5672
+123: EX_Return
+124:     EX_Nothing
+
+FunctionExport zapEffect
+=== Block @ 0 ===
+    Successors: ExecuteUbergraph_generatorBuilding:5016 (Function)
+
+0: EX_LocalFinalFunction ExecuteUbergraph_generatorBuilding
+9:     EX_IntConst 5016
+15: EX_Return
+16:     EX_Nothing
+
+FunctionExport BndEvt__generatorBuilding_zapper_K2Node_ComponentBoundEvent_0_ComponentBeginOverlapSignature__DelegateSignature
+=== Block @ 0 ===
+    Successors: ExecuteUbergraph_generatorBuilding:1053 (Function)
+
+0: EX_LetValueOnPersistentFrame [K2Node_ComponentBoundEvent_OverlappedComponent_2]
+9:     EX_LocalVariable [OverlappedComponent]
+18: EX_LetValueOnPersistentFrame [K2Node_ComponentBoundEvent_OtherActor_2]
+27:     EX_LocalVariable [OtherActor]
+36: EX_LetValueOnPersistentFrame [K2Node_ComponentBoundEvent_OtherComp_2]
+45:     EX_LocalVariable [OtherComp]
+54: EX_LetValueOnPersistentFrame [K2Node_ComponentBoundEvent_OtherBodyIndex_2]
+63:     EX_LocalVariable [OtherBodyIndex]
+72: EX_LetValueOnPersistentFrame [K2Node_ComponentBoundEvent_bFromSweep_1]
+81:     EX_LocalVariable [bFromSweep]
+90: EX_LetValueOnPersistentFrame [K2Node_ComponentBoundEvent_SweepResult_1]
+99:     EX_LocalOutVariable [SweepResult]
+108: EX_LocalFinalFunction ExecuteUbergraph_generatorBuilding
+117:     EX_IntConst 1053
+123: EX_Return
+124:     EX_Nothing
+
+FunctionExport ReceiveBeginPlay
+=== Block @ 0 ===
+    Successors: ExecuteUbergraph_generatorBuilding:4991 (Function)
+
+0: EX_LocalFinalFunction ExecuteUbergraph_generatorBuilding
+9:     EX_IntConst 4991
+15: EX_Return
+16:     EX_Nothing
+
+FunctionExport UserConstructionScript
+=== Block @ 0 ===
+    Successors: 
+
+0: EX_Let
+9:     EX_LocalVariable [CallFunc_K2_GetComponentToWorld_ReturnValue]
+18:     EX_Context
+19:         EX_InstanceVariable [tr]
+40:         EX_FinalFunction import /Script/Engine->SceneComponent->K2_GetComponentToWorld
+50: EX_LetBool
+51:     EX_LocalVariable [CallFunc_K2_SetActorTransform_ReturnValue]
+60:     EX_Context
+61:         EX_InstanceVariable [transformer]
+82:         EX_FinalFunction import /Script/Engine->Actor->K2_SetActorTransform
+91:             EX_LocalVariable [CallFunc_K2_GetComponentToWorld_ReturnValue]
+100:             EX_False
+101:             EX_LocalVariable [CallFunc_K2_SetActorTransform_SweepHitResult]
+110:             EX_False
+112: EX_LetObj
+113:     EX_LocalVariable [Temp_object_Variable_2]
+122:     EX_ObjectConst import /Game/meshes/generatorBuilding/generatorBuildingSigns_sign_tr3->generatorBuildingSigns_sign_tr3
+131: EX_LetObj
+132:     EX_LocalVariable [Temp_object_Variable_3]
+141:     EX_ObjectConst import /Game/meshes/generatorBuilding/generatorBuildingSigns_sign_tr2->generatorBuildingSigns_sign_tr2
+150: EX_LetObj
+151:     EX_LocalVariable [Temp_object_Variable_4]
+160:     EX_ObjectConst import /Game/meshes/generatorBuilding/generatorBuildingSigns_sign_tr1->generatorBuildingSigns_sign_tr1
+169: EX_Let
+178:     EX_LocalVariable [Temp_int_Variable]
+187:     EX_InstanceVariable [trNum]
+196: EX_LetBool
+197:     EX_LocalVariable [CallFunc_SetStaticMesh_ReturnValue]
+206:     EX_Context
+207:         EX_InstanceVariable [generatorBuildingSigns_sign_light]
+228:         EX_VirtualFunction SetStaticMesh
+241:             EX_SwitchValue
+248:                 EX_LocalVariable [Temp_int_Variable]
+241:                 case 0:
+257:                     EX_IntConst 0
+266:                     EX_LocalVariable [Temp_object_Variable_4]
+241:                 case 1:
+275:                     EX_IntConst 1
+284:                     EX_LocalVariable [Temp_object_Variable_3]
+241:                 case 2:
+293:                     EX_IntConst 2
+302:                     EX_LocalVariable [Temp_object_Variable_2]
+241:                 default:
+311:                     EX_LocalVariable [K2Node_Select_Default_1]
+321: EX_LetBool
+322:     EX_LocalVariable [CallFunc_Not_PreBool_ReturnValue]
+331:     EX_CallMath import /Script/Engine->KismetMathLibrary->Not_PreBool
+340:         EX_InstanceVariable [enterLightDeactivate]
+350: EX_Context
+351:     EX_InstanceVariable [signLight]
+372:     EX_FinalFunction import /Script/Engine->SceneComponent->SetVisibility
+381:         EX_LocalVariable [CallFunc_Not_PreBool_ReturnValue]
+390:         EX_False
+392: EX_LetObj
+393:     EX_LocalVariable [Temp_object_Variable]
+402:     EX_ObjectConst import /Game/meshes/generatorBuilding/inst_generator_powerSign_off->inst_generator_powerSign_off
+411: EX_LetObj
+412:     EX_LocalVariable [Temp_object_Variable_1]
+421:     EX_ObjectConst import /Game/meshes/generatorBuilding/inst_generator_powerSigns->inst_generator_powerSigns
+430: EX_LetBool
+431:     EX_LocalVariable [Temp_bool_Variable]
+440:     EX_InstanceVariable [enterLightDeactivate]
+449: EX_Context
+450:     EX_InstanceVariable [sign]
+471:     EX_VirtualFunction SetMaterial
+484:         EX_IntConst 0
+489:         EX_SwitchValue
+496:             EX_LocalVariable [Temp_bool_Variable]
+489:             case 0:
+505:                 EX_False
+510:                 EX_LocalVariable [Temp_object_Variable_1]
+489:             case 1:
+519:                 EX_True
+524:                 EX_LocalVariable [Temp_object_Variable]
+489:             default:
+533:                 EX_LocalVariable [K2Node_Select_Default]
+543: EX_Return
+544:     EX_Nothing
+
+FunctionExport projectPointOnZapper
+=== Block @ 0 ===
+    Successors: 
+
+0: EX_Let
+9:     EX_LocalVariable [CallFunc_K2_GetComponentLocation_ReturnValue]
+18:     EX_Context
+19:         EX_InstanceVariable [zapper]
+40:         EX_FinalFunction import /Script/Engine->SceneComponent->K2_GetComponentLocation
+50: EX_Let
+59:     EX_LocalVariable [CallFunc_Subtract_FloatFloat_ReturnValue]
+68:     EX_CallMath import /Script/Engine->KismetMathLibrary->Subtract_FloatFloat
+77:         EX_Context
+78:             EX_InstanceVariable [zapper]
+99:             EX_InstanceVariable [CapsuleHalfHeight]
+108:         EX_Context
+109:             EX_InstanceVariable [zapper]
+130:             EX_InstanceVariable [CapsuleRadius]
+140: EX_Let
+149:     EX_LocalVariable [CallFunc_GetUpVector_ReturnValue]
+158:     EX_Context
+159:         EX_InstanceVariable [zapper]
+180:         EX_FinalFunction import /Script/Engine->SceneComponent->GetUpVector
+190: EX_Let
+199:     EX_LocalVariable [CallFunc_Multiply_FloatFloat_ReturnValue]
+208:     EX_CallMath import /Script/Engine->KismetMathLibrary->Multiply_FloatFloat
+217:         EX_LocalVariable [CallFunc_Subtract_FloatFloat_ReturnValue]
+226:         EX_FloatConst -1
+232: EX_Let
+241:     EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue]
+250:     EX_CallMath import /Script/Engine->KismetMathLibrary->Multiply_VectorFloat
+259:         EX_LocalVariable [CallFunc_GetUpVector_ReturnValue]
+268:         EX_LocalVariable [CallFunc_Subtract_FloatFloat_ReturnValue]
+278: EX_Let
+287:     EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue_1]
+296:     EX_CallMath import /Script/Engine->KismetMathLibrary->Multiply_VectorFloat
+305:         EX_LocalVariable [CallFunc_GetUpVector_ReturnValue]
+314:         EX_LocalVariable [CallFunc_Multiply_FloatFloat_ReturnValue]
+324: EX_Let
+333:     EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue]
+342:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_VectorVector
+351:         EX_LocalVariable [CallFunc_K2_GetComponentLocation_ReturnValue]
+360:         EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue]
+370: EX_Let
+379:     EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_1]
+388:     EX_CallMath import /Script/Engine->KismetMathLibrary->Add_VectorVector
+397:         EX_LocalVariable [CallFunc_K2_GetComponentLocation_ReturnValue]
+406:         EX_LocalVariable [CallFunc_Multiply_VectorFloat_ReturnValue_1]
+416: EX_Let
+425:     EX_LocalVariable [CallFunc_FindClosestPointOnSegment_ReturnValue]
+434:     EX_CallMath import /Script/Engine->KismetMathLibrary->FindClosestPointOnSegment
+443:         EX_LocalVariable [Point]
+452:         EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue_1]
+461:         EX_LocalVariable [CallFunc_Add_VectorVector_ReturnValue]
+471: EX_Let
+480:     EX_LocalOutVariable [ReturnValue]
+489:     EX_LocalVariable [CallFunc_FindClosestPointOnSegment_ReturnValue]
+498: EX_Return
+499:     EX_LocalOutVariable [ReturnValue]
+

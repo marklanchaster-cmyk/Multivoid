@@ -5,6 +5,7 @@
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
+#include "ue_wrap/core/types.h"
 #include "ue_wrap/desk/console_desk.h"
 
 #include <chrono>
@@ -28,6 +29,7 @@ void*   g_primCompCls = nullptr;  // PrimitiveComponent (IsOverlappingActor owne
 int32_t g_offSlotDrive = -1;        // driveSlot_C::drive
 int32_t g_offSlotDetached = -1;     // driveSlot_C::isRecentlyDetached (plain EX_Let bool)
 int32_t g_offSlotPort = -1;         // driveSlot_C::drivePort (component ptr)
+int32_t g_offDriveSlot = -1;        // prop_drive_C::slot (reverse ownership ptr)
 int32_t g_offDriveData = -1;        // prop_drive_C::data_0 (@0x550, Fstruct_signalDataDynamic)
 int32_t g_offDeskSlotPlay = -1;     // analogDScreenTest_C::obj_driveSlot_play (@0x0648)
 int32_t g_offDeskSlotComp = -1;     // analogDScreenTest_C::obj_driveSlot_comp (@0x0A88)
@@ -37,6 +39,7 @@ int32_t g_offRackHas = -1;          // prop_driveRack_C::has  (TArray<bool>)
 
 void* g_putDriveInFn = nullptr;     // driveSlot_C::putDriveIn(overlapped)
 void* g_pulledOutFn = nullptr;      // driveSlot_C::drivePulledOut()
+void* g_addLocalOffsetFn = nullptr; // Actor::K2_AddActorLocalOffset (native eject +8 Z)
 void* g_driveUpdFn = nullptr;       // prop_drive_C::upd()
 void* g_rackGenFn = nullptr;        // prop_driveRack_C::gen()
 void* g_isOverlappingFn = nullptr;  // PrimitiveComponent::IsOverlappingActor(Other)
@@ -90,6 +93,7 @@ bool EnsureResolved() {
     if (g_offSlotDrive < 0)    g_offSlotDrive = R::FindPropertyOffset(g_slotCls, L"drive");
     if (g_offSlotDetached < 0) g_offSlotDetached = R::FindPropertyOffset(g_slotCls, L"isRecentlyDetached");
     if (g_offSlotPort < 0)     g_offSlotPort = R::FindPropertyOffset(g_slotCls, L"drivePort");
+    if (g_offDriveSlot < 0)    g_offDriveSlot = R::FindPropertyOffset(g_driveCls, L"slot");
     if (g_offDriveData < 0)    g_offDriveData = R::FindPropertyOffset(g_driveCls, L"data_0");
     if (g_offEraserSlot < 0 && g_eraserCls)
         g_offEraserSlot = R::FindPropertyOffset(g_eraserCls, L"driveSLot_obj");
@@ -103,31 +107,35 @@ bool EnsureResolved() {
 
     if (!g_putDriveInFn) g_putDriveInFn = R::FindFunction(g_slotCls, L"putDriveIn");
     if (!g_pulledOutFn)  g_pulledOutFn = R::FindFunction(g_slotCls, L"drivePulledOut");
+    if (!g_addLocalOffsetFn)
+        g_addLocalOffsetFn = R::FindFunction(g_driveCls, L"K2_AddActorLocalOffset");
     if (!g_driveUpdFn)   g_driveUpdFn = R::FindFunction(g_driveCls, L"upd");
     if (!g_rackGenFn && g_rackCls) g_rackGenFn = R::FindFunction(g_rackCls, L"gen");
     if (!g_isOverlappingFn && g_primCompCls)
         g_isOverlappingFn = R::FindFunction(g_primCompCls, L"IsOverlappingActor");
 
     const bool core = g_offSlotDrive >= 0 && g_offSlotDetached >= 0 && g_offSlotPort >= 0 &&
+                      g_offDriveSlot >= 0 &&
                       g_offDriveData >= 0 && g_offDeskSlotPlay >= 0 && g_offDeskSlotComp >= 0 &&
-                      g_putDriveInFn && g_pulledOutFn && g_driveUpdFn;
+                      g_putDriveInFn && g_pulledOutFn && g_addLocalOffsetFn && g_driveUpdFn;
     if (!core) {
         static bool s_warned = false;
         if (!s_warned) {
             s_warned = true;
-            UE_LOGW("drive_chain: resolve incomplete (drive=%d det=%d port=%d data=%d "
-                    "deskP=%d deskC=%d putIn=%d pull=%d upd=%d) -- backoff retry (log-once)",
-                    g_offSlotDrive, g_offSlotDetached, g_offSlotPort, g_offDriveData,
+            UE_LOGW("drive_chain: resolve incomplete (drive=%d det=%d port=%d reverse=%d data=%d "
+                    "deskP=%d deskC=%d putIn=%d pull=%d nudge=%d upd=%d) -- backoff retry (log-once)",
+                    g_offSlotDrive, g_offSlotDetached, g_offSlotPort, g_offDriveSlot, g_offDriveData,
                     g_offDeskSlotPlay, g_offDeskSlotComp, g_putDriveInFn ? 1 : 0,
-                    g_pulledOutFn ? 1 : 0, g_driveUpdFn ? 1 : 0);
+                    g_pulledOutFn ? 1 : 0, g_addLocalOffsetFn ? 1 : 0,
+                    g_driveUpdFn ? 1 : 0);
         }
         return false;
     }
     g_resolved = true;
-    UE_LOGI("drive_chain: resolved (slot.drive=0x%X det=0x%X port=0x%X data_0=0x%X "
+    UE_LOGI("drive_chain: resolved (slot.drive=0x%X det=0x%X port=0x%X drive.slot=0x%X data_0=0x%X "
             "deskPlay=0x%X deskComp=0x%X eraserSlot=0x%X rackData=0x%X rackHas=0x%X "
             "overlapFn=%d rackGen=%d)",
-            g_offSlotDrive, g_offSlotDetached, g_offSlotPort, g_offDriveData,
+            g_offSlotDrive, g_offSlotDetached, g_offSlotPort, g_offDriveSlot, g_offDriveData,
             g_offDeskSlotPlay, g_offDeskSlotComp, g_offEraserSlot, g_offRackData,
             g_offRackHas, g_isOverlappingFn ? 1 : 0, g_rackGenFn ? 1 : 0);
     return true;
@@ -212,6 +220,25 @@ bool CallDrivePulledOut(void* slotActor) {
     if (!slotActor || !g_pulledOutFn) return false;
     ue_wrap::ParamFrame f(g_pulledOutFn);
     return f.valid() && ue_wrap::Call(slotActor, f);
+}
+
+bool NudgeDriveOut(void* driveActor) {
+    if (!driveActor || !g_addLocalOffsetFn) return false;
+    ue_wrap::ParamFrame f(g_addLocalOffsetFn);
+    if (!f.valid()) return false;
+    f.Set<FVector>(L"DeltaLocation", FVector{0.0f, 0.0f, 8.0f});
+    f.Set<bool>(L"bSweep", false);
+    f.Set<bool>(L"bTeleport", true);
+    return ue_wrap::Call(driveActor, f);
+}
+
+bool ClearDriveSlot(void* driveActor, void* expectedSlotActor) {
+    if (!driveActor || !expectedSlotActor || g_offDriveSlot < 0) return false;
+    auto** owner = reinterpret_cast<void**>(
+        reinterpret_cast<uint8_t*>(driveActor) + g_offDriveSlot);
+    if (*owner && *owner != expectedSlotActor) return false;
+    *owner = nullptr;
+    return true;
 }
 
 void CompleteEjectLatch(void* slotActor, void* driveActor) {

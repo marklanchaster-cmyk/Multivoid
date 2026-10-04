@@ -73,6 +73,10 @@ void OnWorldActorSpawn(const coop::net::WorldActorSpawnPayload& payload);
 // CLIENT receiver: tear down the mirror for a host WorldActorDestroy. Game thread.
 void OnWorldActorDestroy(const coop::net::EntityDestroyPayload& payload);
 
+// Explicit console diagnostic: bounded manager/reverse-map sizes plus lifecycle
+// counters. No world scan or reflection; call on the game thread.
+void LogDiagnostics();
+
 // HOST off-interceptor enroll for an ALREADY-SPAWNED allowlisted WA the PE interceptor could
 // not see (an EX_CallMath BeginDeferred -- e.g. piramidSpawner_C's runTrigger outputs, caught
 // by npc_world_enum's source-gated Func-thunk and drained here next pump tick, post-Finish so

@@ -2,8 +2,13 @@
 
 #include "ui/console.h"
 
+#include "coop/creatures/npc_world_enum.h"
 #include "coop/session/join_progress.h"
+#include "coop/world/event_active_sync.h"
+#include "coop/world/event_output_sync.h"
+#include "coop/world/world_actor_sync.h"
 #include "ui/scale.h"
+#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 
 #include "imgui.h"
@@ -13,6 +18,8 @@
 #include <deque>
 #include <mutex>
 #include <string>
+
+namespace coop::event_feed { void LogEntitySpawnDiagnostics(); }
 
 namespace ui::console {
 namespace {
@@ -60,7 +67,7 @@ ImVec4 ColorFor(Level l) {
 }
 
 // Minimal LOCAL command handling. Echoes + dispatches a typed line. Networked host/client
-// commands arrive with the command subsystem; for now: help, clear. Logs via UE_LOGI so the
+// commands arrive with the command subsystem. Logs via UE_LOGI so the
 // echo flows back through the sink into the log view (and the file log).
 void RunCommand(const char* cmd) {
     while (*cmd == ' ') ++cmd;
@@ -72,7 +79,21 @@ void RunCommand(const char* cmd) {
         return;
     }
     if (std::strcmp(cmd, "help") == 0) {
-        UE_LOGI("console: commands -- help, clear. (host/client game commands coming soon)");
+        UE_LOGI("console: commands -- help, clear, event_sync_status");
+        return;
+    }
+    if (std::strcmp(cmd, "event_sync_status") == 0) {
+        // Render owns command input, while the registries below are game-thread
+        // state. The posted task performs only module-owned O(1) snapshots.
+        ue_wrap::game_thread::Post([] {
+            UE_LOGI("event_sync_status: BEGIN");
+            coop::world_actor_sync::LogDiagnostics();
+            coop::npc_world_enum::LogDiagnostics();
+            coop::event_active_sync::LogDiagnostics();
+            coop::event_output_sync::LogDiagnostics();
+            coop::event_feed::LogEntitySpawnDiagnostics();
+            UE_LOGI("event_sync_status: END");
+        });
         return;
     }
     UE_LOGI("console: unknown command '%s' (try 'help')", cmd);

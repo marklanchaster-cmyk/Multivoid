@@ -653,3 +653,76 @@ is not inflated by every named variant), the current matrix is:
 These counts measure meaningful output coverage, not merely selection safety
 or actor birth. `grayBoarSpawner_C::ReceiveTick` remains a producer-authority
 UNKNOWN outside the 22 Table B output groups.
+
+## 2026-10-04 continuation: integration gate and narrowed output findings
+
+The 65011 integration gate found one concrete receive-boundary defect and fixed
+it: `EntitySpawn` now requires exactly the asserted 124-byte payload. The old
+short-only check accepted an oversized frame and copied its prefix. All
+producers still send `sizeof(EntitySpawnPayload)`.
+
+The event-output registry is consistently capped at 1024 on its host, client,
+and tombstone collections. Its identity remains `(eventInstanceId, outputId)`;
+actor pointers are only liveness/reverse-association data. Flesh Rain sends one
+reliable Normal-lane state frame per host-created clump, with no aggregate u8
+count. A 400-clump snapshot is finite and lossless rather than truncated, and
+EventOutput binds the existing backing eid instead of materializing a second
+Prop.
+
+### Deferred-birth actors
+
+Cooked-bytecode confirmation:
+
+- `/Game/objects/NewBlueprint5` is born with `NewVar_0=true`; its complete
+  resumable presentation state is that bool plus the live `ime` countdown.
+- `screamingCorpse_C` is born with the exact validated `NewVar_0` token and
+  chooses a 1--5 second lifespan in `ReceiveBeginPlay`. A wrong token reaches
+  `QuitGame`, so default-born mirroring is not merely cosmetic.
+- `NewBlueprint17_C` is born with `Condition=true` and a string token, then runs
+  a multi-delay global ambience/time sequence.
+- `NewBlueprint19_C` is born with `Condition=true`, then runs a multi-phase
+  Tick/delay controller and creates `/Game/objects/misc/NewBlueprint5` with
+  `NewVar_3=true`, `NewVar_4=0.01`.
+
+The first two now use a typed opaque WorldActor birth adapter. Their wire class
+keys are package-qualified because the cook contains multiple unrelated classes
+named `NewBlueprint5_C`. The host captures after Finish for live enrollment and
+JIP; the client writes BeginPlay inputs before Finish. The corpse's remaining
+engine lifespan is restored immediately after Finish. Both are player-relative
+presentation actors, so they retain native Tick and are excluded from the
+generic host-pose batch. Unreadable or malformed required birth state fails
+closed instead of materializing a dangerous default actor.
+
+`NewBlueprint17_C` and `NewBlueprint19_C` remain deliberately unadmitted. Their
+birth fields alone do not identify the current phase for JIP, and replaying
+BeginPlay from phase zero would reapply global effects. They need a typed phase,
+remaining-delay, and cleanup state.
+
+### Remaining families (confirmed classification)
+
+- Hexahive is a chain: `ticker_hexahiveSpawner` creates
+  `hexahiveSPawner_C`; `gen` creates `susDirtHole_C` after procedural
+  generation. Mirroring only either controller birth omits generated persistent
+  state.
+- Bush/beehive products are persistent growing actors. They require stable
+  host-issued identity plus growth/save state; selector replay is not a
+  substitute.
+- `rockThrow`, `hillRoller`, and `alienJump` create controllers which create
+  physics props and apply impulses/typed food data. `trashBase` creates its
+  gameplay actor; `alienSounds` creates timed `noiser_C` sound actors. These
+  split into authoritative prop/actor results and explicit transient cues; the
+  controllers are not safe generic replays.
+- `triggerTimer.newMinute` calls `runTrigger` on entries from its configured
+  `objects` array. The target set is level data and target-dependent; no generic
+  network `runTrigger` executor is justified. Each admitted target needs an
+  exact class/function row and its own output owner.
+- Falling Sky creates `skyFallingEvent_C`, which owns presentation plus spawned
+  `prop_skypiece_C`, an explosion with force/damage/shake birth fields, sound,
+  and player/UI effects. A correct lane needs typed current phase/duration and
+  separate authoritative damage/prop results; actor transform alone is unsafe.
+- `grayBoarSpawner.ReceiveTick` is mixed: it maintains `combat`, cleans a nearby
+  entry from `allGrayboars`, chooses encounter timing/location, and creates
+  either `grayboar_C` or `grayboar_overcharged_C` while decrementing
+  `spawnCount`. Both products derive from `prop_C`. The whole Tick therefore
+  remains enabled; the future seam must suppress only the client spawn-result
+  branch while preserving bookkeeping and cleanup.

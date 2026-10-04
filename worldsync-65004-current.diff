@@ -1,0 +1,935 @@
+diff --git a/src/votv-coop/include/coop/interactables/interactable_channel.h b/src/votv-coop/include/coop/interactables/interactable_channel.h
+index 7360a009..6c10b779 100644
+--- a/src/votv-coop/include/coop/interactables/interactable_channel.h
++++ b/src/votv-coop/include/coop/interactables/interactable_channel.h
+@@ -149,8 +149,9 @@ public:
+     // BP-internal verb the way a POST observer does (the doors `sent=0` bug, IDA-proven
+     // 2026-06-04: doorOpen / SetActive / Open all dispatch via CallFunction ->
+     // ProcessInternal, bypassing our ProcessEvent detour). It is the weather-style
+-    // host-authoritative flag poll, generalized + made SYMMETRIC (each peer is
+-    // authoritative over the changes it causes; the host relays client edges). The first
++    // host-authoritative flag poll, generalized + made SYMMETRIC at the input edge.
++    // b65004 changes the network topology: a client edge terminates at the host,
++    // the host applies it, then authors the canonical result to all clients. The first
+     // sighting of a key primes the baseline SILENTLY -- initial divergence is the
+     // connect-snapshot's job, so a fresh peer does not broadcast its whole world; only
+     // genuine LIVE changes hit the wire. Echo is impossible: ApplyResolved updates
+@@ -219,9 +220,11 @@ public:
+             p.action = cur ? 1 : 0;
+             if (s->SendReliable(a_.kind, &p, sizeof(p))) {
+                 { std::lock_guard<std::mutex> lk(stateMutex_); lastKnown_[r.first] = cur; }
+-                UE_LOGI("%s: sent %s key='%ls'", a_.name, cur ? "ON" : "OFF", r.first.c_str());
++                UE_LOGI("%s[worldauth]: TX local-state key='%ls' want=%s",
++                        a_.name, r.first.c_str(), cur ? "ON" : "OFF");
+             } else {
+-                UE_LOGW("%s: SendReliable failed key='%ls'", a_.name, r.first.c_str());
++                UE_LOGW("%s[worldauth]: TX FAILED key='%ls' want=%s",
++                        a_.name, r.first.c_str(), cur ? "ON" : "OFF");
+             }
+         }
+     }
+@@ -236,17 +239,39 @@ public:
+         std::wstring key = StringFromWireKey(p.key);
+         if (key.empty()) { UE_LOGW("%s: OnReliable empty key -- dropping", a_.name); return; }
+         const bool want = (p.action != 0);
++        UE_LOGI("%s[worldauth]: RX state key='%ls' want=%s from slot %u",
++                a_.name, key.c_str(), want ? "ON" : "OFF", senderSlot);
+         if (!a_.EnsureResolved()) {
+             UE_LOGW("%s: apply -- class not resolved, dropping key='%ls'", a_.name, key.c_str());
+             return;
+         }
+         void* actor = ResolveFast(key);
+-        if (actor) { ApplyResolved(actor, key, want, senderSlot); return; }
+-        // Not streamed in yet -- defer + retry on the throttled tick.
+-        pending_[key] = Pending{ want, std::chrono::steady_clock::now() + kPendingTTL };
+-        if (ProbeLog())
+-            UE_LOGI("%s: '%ls' not present yet -- deferring %s (slot %u)",
+-                    a_.name, key.c_str(), want ? "ON" : "OFF", senderSlot);
++        if (actor) {
++            ApplyResolved(actor, key, want, senderSlot);
++
++            // b65004: client-authored shared state terminates at the host.
++            // The host applies first, reads back reality, then authors the result.
++            auto* s = session_.load(std::memory_order_acquire);
++            if (mode_ == Mode::Symmetric && s &&
++                s->role() == coop::net::Role::Host &&
++                senderSlot > 0 && senderSlot < coop::players::kMaxPeers) {
++                bool canonical = want;
++                if (a_.ReadState(actor, canonical)) {
++                    BroadcastAndPrime(key, canonical, s);
++                    UE_LOGI("%s[worldauth]: host COMMIT key='%ls' -> %s from slot %u",
++                            a_.name, key.c_str(), canonical ? "ON" : "OFF", senderSlot);
++                } else {
++                    UE_LOGW("%s[worldauth]: host READBACK FAILED key='%ls' after apply from slot %u",
++                            a_.name, key.c_str(), senderSlot);
++                }
++            }
++            return;
++        }
++        // Preserve the origin so a delayed apply can still become a host commit.
++        pending_[key] = Pending{ want, std::chrono::steady_clock::now() + kPendingTTL,
++                                 senderSlot };
++        UE_LOGI("%s[worldauth]: DEFER key='%ls' want=%s from slot %u -- actor not indexed yet",
++                a_.name, key.c_str(), want ? "ON" : "OFF", senderSlot);
+     }
+ 
+     // HOST-only (HostAuth channels): a client asked to open/close this door. This is the
+@@ -265,9 +290,23 @@ public:
+         auto* s = session_.load(std::memory_order_acquire);
+         if (!s || s->role() != coop::net::Role::Host) return;  // host applies requests
+         std::wstring key = StringFromWireKey(p.key);
+-        if (key.empty() || !a_.EnsureResolved()) return;
++        UE_LOGI("%s[worldauth]: RX request key='%ls' action=%u from slot %u",
++                a_.name, key.c_str(), static_cast<unsigned>(p.action), senderSlot);
++        if (key.empty()) {
++            UE_LOGW("%s[worldauth]: DROP request with empty key from slot %u", a_.name, senderSlot);
++            return;
++        }
++        if (!a_.EnsureResolved()) {
++            UE_LOGW("%s[worldauth]: DROP request key='%ls' -- class unresolved (slot %u)",
++                    a_.name, key.c_str(), senderSlot);
++            return;
++        }
+         void* actor = ResolveFast(key);
+-        if (!actor) return;  // the door must exist host-side (it is authoritative there)
++        if (!actor) {
++            UE_LOGW("%s[worldauth]: DROP request key='%ls' -- host actor unresolved (slot %u)",
++                    a_.name, key.c_str(), senderSlot);
++            return;
++        }
+         // No hold register for this feature: a client request is simply the host performing
+         // the action under its own guards, and the resulting state goes out on the next poll.
+         // (Doors need the register because their own autoclose fights an applied state; a
+@@ -278,6 +317,9 @@ public:
+                 return;
+             }
+             a_.RequestApply(actor, p.action != 0);
++            UE_LOGI("%s[worldauth]: host REQUEST-APPLY key='%ls' action=%u from slot %u "
++                    "(canonical state will be emitted by poll)",
++                    a_.name, key.c_str(), static_cast<unsigned>(p.action), senderSlot);
+             return;
+         }
+         // holdOpen_[key] is a BITMASK of the peer slots currently holding this door open
+@@ -461,15 +503,33 @@ public:
+                 for (auto it = pending_.begin(); it != pending_.end();) {
+                     void* actor = ResolveFast(it->first);
+                     if (actor) {
+-                        ApplyResolved(actor, it->first, it->second.want, 0xFF);
++                        const unsigned origin = it->second.senderSlot;
++                        const bool want = it->second.want;
++                        const std::wstring key = it->first;
++                        ApplyResolved(actor, key, want, origin);
++
++                        auto* s = session_.load(std::memory_order_acquire);
++                        if (mode_ == Mode::Symmetric && s &&
++                            s->role() == coop::net::Role::Host &&
++                            origin > 0 && origin < coop::players::kMaxPeers) {
++                            bool canonical = want;
++                            if (a_.ReadState(actor, canonical)) {
++                                BroadcastAndPrime(key, canonical, s);
++                                UE_LOGI("%s[worldauth]: deferred host COMMIT key='%ls' -> %s from slot %u",
++                                        a_.name, key.c_str(), canonical ? "ON" : "OFF", origin);
++                            } else {
++                                UE_LOGW("%s[worldauth]: deferred host READBACK FAILED key='%ls' from slot %u",
++                                        a_.name, key.c_str(), origin);
++                            }
++                        }
+                         it = pending_.erase(it);
+                         ++applied;
+                     } else if (stablePasses_ >= kSettlePassesForExpiry) {
+                         // The world stopped streaming and it is still not here -- a real
+                         // diagnosis, and the count that grades this lane.
+-                        if (ProbeLog())
+-                            UE_LOGI("%s: deferred '%ls' expired (index settled %d passes, still "
+-                                    "not present on this peer)", a_.name, it->first.c_str(), stablePasses_);
++                        UE_LOGW("%s[worldauth]: DROP deferred key='%ls' from slot %u -- "
++                                "index settled %d passes and actor is still absent",
++                                a_.name, it->first.c_str(), it->second.senderSlot, stablePasses_);
+                         it = pending_.erase(it);
+                         ++expired;
+                     } else if (now >= it->second.deadline) {
+@@ -477,10 +537,9 @@ public:
+                         // never settled for ten minutes, which is a bug signal about the hub
+                         // or the world, not about this instance -- so it says so, loudly, and
+                         // is counted separately from the settled expiry above.
+-                        UE_LOGW("%s: deferred '%ls' hit the %lld-minute BACKSTOP -- the index "
+-                                "never settled (stablePasses=%d); this is a hub/world signal, "
+-                                "not a missing instance",
+-                                a_.name, it->first.c_str(),
++                        UE_LOGW("%s[worldauth]: deferred key='%ls' from slot %u hit the %lld-minute "
++                                "BACKSTOP -- index never settled (stablePasses=%d); hub/world signal",
++                                a_.name, it->first.c_str(), it->second.senderSlot,
+                                 static_cast<long long>(std::chrono::duration_cast<std::chrono::minutes>(kPendingTTL).count()),
+                                 stablePasses_);
+                         it = pending_.erase(it);
+@@ -675,7 +734,11 @@ public:
+ 
+ private:
+     struct Ref { void* actor; int32_t idx; };
+-    struct Pending { bool want; std::chrono::steady_clock::time_point deadline; };
++    struct Pending {
++        bool want;
++        std::chrono::steady_clock::time_point deadline;
++        unsigned senderSlot = 0xFF;
++    };
+ 
+     void* ResolveFast(const std::wstring& key) {
+         if (!IndexCurrent()) return nullptr;  // stale-gen index = another world's actors
+@@ -713,8 +776,8 @@ private:
+         echo_.store(false, std::memory_order_release);
+         { std::lock_guard<std::mutex> lk(stateMutex_); lastKnown_[key] = want; }
+         MaybeSuppressClientAutonomy(actor);  // HostAuth client: mute auto-revert so the applied state holds
+-        UE_LOGI("%s: applied %s key='%ls' ok=%d (from slot %u)",
+-                a_.name, want ? "ON" : "OFF", key.c_str(), ok ? 1 : 0, fromSlot);
++        UE_LOGI("%s[worldauth]: APPLY key='%ls' want=%s ok=%d from slot %u",
++                a_.name, key.c_str(), want ? "ON" : "OFF", ok ? 1 : 0, fromSlot);
+     }
+ 
+     // HostAuth + CLIENT role only: render-only doors must not auto-revert the host's
+diff --git a/src/votv-coop/include/coop/net/protocol.h b/src/votv-coop/include/coop/net/protocol.h
+index 0c9f10e8..cc017609 100644
+--- a/src/votv-coop/include/coop/net/protocol.h
++++ b/src/votv-coop/include/coop/net/protocol.h
+@@ -707,7 +707,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
+ // + replays them in ConnectReplayForSlot. mainPlayer.holding_actor with an Aprop_C no
+ // longer feeds the PropSpawn/PropPose path (the trash clump/pile carry -- the
+ // non-Aprop_C holding_actor case -- stays on its lane untouched).
+-inline constexpr uint16_t kProtocolVersion = 65003; // custom walkie-radio build // v150 (2026-09-01, THE LIGHT GROUP GETS AN OWNER): + LightGroupState=129, host-authored, KeyedTogglePayload. The shipped light lane synced Alightswitch_C::A -- the switch's PRESENTATION bit (mesh + click), which bytecode shows use() toggles UNCONDITIONALLY while it reaches the lamps only through runTrigger(root,0), gated on the root's `active`. So the switch and the lights are structurally decoupled, `A` is not save-persistent and the group's state is, and nothing on either peer owned or reconciled trigger_lightRoot_C::isActive at all. Host-authored because 13 cooked blueprints can move a group and most are host-owned world systems. No payload changed; a NEW KIND did, so a b149 peer would ignore the lane and silently keep the defect -- hence the bump. v149 (2026-08-31, post-ship audit: the admission blob now covers the challenge's FLAGS byte and the host's own nonce, 126 -> 159 B, tag `multivoid-peer-admission-v1` -> `-v2`. The flag that tells a joiner a password is wanted was OUTSIDE the host's signature, so a relay could set it on an OPEN lobby's challenge and a bound client would derive and emit a real tag to a host that never asked -- turning P1's impersonation residual into a tag-harvesting oracle. No payload size changed; the SIGNED PREIMAGE did, which old builds cannot verify -- hence the bump. v148 (2026-08-31, THE LOBBY PASSWORD IS ENFORCED -- `locked` stops being a badge. `AuthChallengePayload` 96 -> 100 B (+flags u8 +3 pad): the HOST tells the joiner a password is wanted, because a DIRECT or LAN connect has no browser row to infer it from. `AuthProofPayload` 64 -> 100 B (+hasPw u8 +3 pad +pwTag[32]): HMAC-SHA256(K, "MVLP1"||hostPub||clientPub||hostNonce) with K = PBKDF2-HMAC-SHA256(password, salt=hostPub, 200k). THE TAG IS A SEPARATE FIELD AND DELIBERATELY NOT IN THE SIGNED BLOB: mixing a KDF of a low-entropy secret into a signature the verifier can recompute is an OFFLINE ORACLE (coop/net/lobby_password.h). What makes a chosen password safe is BINDING, not entropy -- the client sends hasPw=0 unless peer_admission proved the socket's key IS the advertised identity (A65, 2d6c4c63). Host side: K derived once and cached, so an attempt costs one HMAC; guesses bounded in peer_admission. NOTE, added with v149: that bound was keyed on the REMOTE ADDRESS, which is all zeros on P2P, and the sentence that replaced it ("RL_JOIN bounds that lane") was false too -- the signaling token is static and unrate-limited. It is now keyed per ATTEMPTER (real address, else the proved public key) and never shared. An old cohort keeps playing among itself -- the pair is a byte-equality gate per lobby. v147 (2026-08-30, ATV #4 -- the author's CONDITION travels: `AtvStatePayload` 84 -> 148 B (+tiresDurability[4] +tiresDirt[4] +bodyDirt +spareDurability +spareDirt +fuel +health as floats; +tiresMask +tiresValid +hasSpare u8, +spareFixes +tiresFixes[4] int8, +tiresTypes[4] u8). #5 (the impulse neuter, 28a958e8) holds a mirror's accrual at ZERO; this half OVERWRITES the mirror from the author, and the pair is one fix (ATV.md 17.14) -- 17.9 measured the two peers ending a run with DIFFERENT tires worn, and 13.3 measured fuel diverging (99.439 vs 100.000). RECEIVE RULES, each measured: accumulators apply from any legitimate author; PRESENCE (tiresMask, hasSpare) is consumed ONLY from host-authored packets, because a client-author eject ships a mask bit whose paired prop_atvWheel_C birth structurally cannot travel (the express seam is host-only and the wheel key is minted per peer at RANDOM -- no dedupe can exist), so applying it would turn a retained-wheel divergence into host-persisted ITEM LOSS; the refused client-eject direction is a REGISTERED crutch (CRUTCHES.md C1 row) pending the act-as-host intent lane. Apply calls the game's OWN per-facet reducers on change edges vs a LAST-EXPRESSED baseline seeded from the ACTOR (a zero seed would BreakConstraint x8 a settled rig; a per-packet baseline would starve updDirt forever on slow drift): updTires iff mask|types changed (its constraint re-form is measured UNCONDITIONAL -- per-tire conditionality is visibility+collision only, so a bare updTires yields the author-identical rig), updDirt iff fixes changed or a dirt float moved >0.01, updSpareTire iff the spare group changed, updHealth (pure smoke visual) iff |health delta|>0.5; fuel needs NO verb (gauges read per tick) and runout() -- the engine-death verb -- is never called by the sync. tiresValid=0 means the producer could not read its own arrays and the receiver touches NOTHING (mask 0 is the legal all-ejected state, so absence gets its own bit -- the v143 birthLen rule). The idle syncer's change gate gains a condition-block term (a parked host eject must not wait out the 2 s keepalive). battery is deliberately ABSENT: it is an inserted PROP's charge, the prop lane's row. A parse change on both sides, so the bump is mandatory. Prior: v146 (2026-08-29, ATV arc 1 -- a peer that does not author an ATV stops FREEZING it. The mirror model inverts: physics stays ON so the game's own 5-body constraint rig (sus_*/ax_*) runs natively, only the BRAIN is switched off, and the receiver is CORRECTED toward the authority instead of teleported. This is a wire change on BOTH ATV payloads, hence the mandatory bump. `AtvStatePayload` 60 -> 84 B: +linVel[3] +angVel[3], written HARD every packet the way `CNetAPI::ReadVehiclePuresync` writes SetMoveSpeed/SetTurnSpeed, plus a new `authorSlot` that replaces `stateBits` bit3 `authored` -- the boolean said only WHETHER some peer was driving, which was all a receiver needed while its choice was freeze-or-not; with nothing freezing, the question becomes WHO, because `authorSlot == 0xFF` is what elects the HOST as the idle vehicle's syncer (`CUnoccupiedVehicleSync`). `AtvReleasePayload` 56 -> 32 B: the six velocity floats are DELETED, and that deletion is the fix rather than a tidy-up -- `[V]` they were applied to the other peer's copy at the instant its physics was re-enabled, from a pose that had been frozen and was therefore already stale, which the autonomous two-peer probe measured as a 158 cm/s launch that put the client's ATV 109.9 cm away with its rig thrashing at 29.58 cm against a native 2-4 cm band (docs/vehicles/ATV.md 13). There is no un-freeze to inherit a velocity for. `occupantSlot` deliberately STAYS a separate byte from `authorSlot`: it is the SEAT, and `device_occupancy.cpp:230` denies an E-press from it, so fusing them would make a peer merely GRABBING an ATV deny the seat nobody is sitting in. Also in this bump, not on the wire: the seven `BndEvt__*ComponentHitSignature` delegates are cancelled on a non-owner by an authority-gated interceptor [CORRECTED within b146 by `28a958e8`: the guard now NEUTERS -- writes a zero FVector over NormalImpulse and ALWAYS dispatches -- because cancelling the five wheel delegates was itself the 25-40 cm mirror sag (ATV.md 17); kept here as the dated record, see the v147 entry] -- `[V]` they reach `health -= |NormalImpulse|/500000*2*getBumperMult()` and `explode()` at <=0, and they are dispatched by the physics scene, not the tick, so turning physics on without them would let a mirror blow up a vehicle its authority still has. Prior: v145 (2026-08-29, security A59 -- the P2P signaling relay stops believing a name its caller cannot sign for. b144 made a peer's DURABLE public key its rendezvous name, and `[V]` the relay's greeting was `<token> <identity>` with the identity SELF-ASSERTED and the token a static bearer every mod user holds (`signaling.rs:169`), while registration was EVICT-ON-DUPLICATE (`cl.insert`, `:216`) -- so hosting a lobby once harvested the permanent key of every client that joined (it is `m_identityRemote`, handed over as a matter of protocol), and one socket declaring that key thereafter evicted the victim as fast as they re-registered, in EVERY future session. The name could not be rotated without deleting `multivoid_identity.key`, which orphans every inventory row the player holds on every host. Now: the relay answers a greeting with `nonce <64 hex>`, registers ONLY after a valid `auth <128 hex>` -- Ed25519 over `"multivoid-signaling-register-v1" || identity || nonce` -- and the whole pre-registration phase shares ONE existing timeout budget, so an unproved peer holds a MAX_PENDING slot no longer than before. THE RULE HAS NO CONDITIONAL: an earlier cut proved only identities SHAPED like a key, which would have left the master's `h<16hex>`/`c<16hex>` mints registering unproved beside proved ones; those mints and the `peerIdentity` field are RETIRED with the b<=133 cohort (user decision), `/v1/host` now REQUIRES the host's own `gen:` key, and a pre-b145 host gets a NAMED 400 at its first call instead of a silent rendezvous failure two hops later. THE PEER WIRE IS UNTOUCHED -- the admission exchange, its 126-byte blob and all three payloads are byte-identical to v144; this bump is the signaling/master wire plus the release rule, and it is what lets `COOP_MAX_BUILD` tell the cohorts apart. TYPED FRAMING WAS CONSIDERED AND IS UNNECESSARY: `relay_line` does `cl.get(dest)`, so an UNREGISTERED peer is unreachable and nothing can be delivered during the challenge window -- no peer can forge a line that looks like the challenge. NOT CLOSED, hence A59 is MITIGATED: the mod's signaling leg is PLAINTEXT (raw WinSock; TLS there is Tier B arc 3), and on a plaintext channel a challenge-response is RELAYABLE -- an on-path attacker proxies the nonce, harvests a live proof, and one moment on-path converts into permanent denial. That measurement promotes arc 3 from "may be unnecessary" to REQUIRED. The client FAILS CLOSED on a relay that never challenges it, so the relay redeploy and this release are ONE step: `python tools/sig_gate.py --remote <url> --token <tok>` is a BLOCKING release gate (docs/RELEASE.md step 0) and the same script is the A59 drill locally. Prior: v144 (2026-08-29, security A15/A2/A57 -- a peer is seated only after it PROVES the identity it advertises. Until now the durable player identity was a 32-hex string minted into multivoid.ini and appended to the Join packet, and the host keyed that peer's stored inventory by it: copy the `player_guid=` line and you ARE that player, with a receive boundary that could only check the SHAPE of the name and never the right to it. The identity is now an Ed25519 keypair in multivoid_identity.key, its PUBLIC KEY is the peer's GNS identity, and the guid every store uses is `hex(SHA-256(pubkey)[0..16])` RECOMPUTED BY THE HOST. THREE PARSE CHANGES, hence the mandatory bump: +AuthHello=125 / AuthChallenge=126 / AuthProof=127 (the mutual challenge, host proves itself FIRST), and the Join payload LOSES its [u8 guidlen][guid] field -- the skin/prefs/color tail all shift up by it. THE EXCHANGE IS LOAD-BEARING AND NOT A CEREMONY: `[V]` a GNS cert's `identity_string` and its `key_data` are independent protobuf fields and the library binds NEITHER to the other (`connections.cpp:1452-1458` compares the identity to what the connection expects, `:1497` verifies the session signature against key_data, and nothing compares the two), so a peer CAN present a victim's key as its identity and pass every check GNS makes -- the signature it then cannot produce is the whole control. Neither key is on the wire: each end reads the other's 32 identity bytes off its OWN connection, because a key carried in a payload proves possession of a key the sender chose. There is no fourth message -- `[V]` FinishPeerConnected sends AssignPeerSlot only on a host and only from AdmitPending, so its arrival IS the admission signal, and the client refuses it unless the host has proved itself. Also in this bump: the pending band finally enforces the deadline its own comment has claimed since 2026-08-26 (`pendingSinceMs_` was written at three sites and read at NONE), and a full band now evicts its OLDEST un-proved socket instead of refusing the arrival -- an un-proved socket has no standing over an arriving one, and with a multi-message exchange band occupancy is attacker-timed by construction. NOT CLOSED, and not closable this way: a pure RELAY (P1) forwards nonce and signature alike, and `[V]` GNS exposes no key exporter, so there is no channel value to bind to -- that needs the ~6-line fork in PLAN_01 s6. MIGRATION COST, stated not discovered: a host's stored inventory rows for VISITING players are orphaned once, at this bump (PLAN_01 s5). Prior: v143 (2026-08-25, B3 -- a mirrored coin is born knowing what it is worth. `[V]` `baocoin_C::ReceiveBeginPlay` -> `ExecuteUbergraph_baocoin(1441)` reads `points` and calls `baocoin.SetMaterial(0, ...)`: <=10 bronze @1499, >11 && <=25 silver @1725, >26 gold @1820. `[V]` `prop_coingun_C::sell` writes that int BETWEEN `BeginDeferredActorSpawnFromClass` and `FinishSpawningActor` at three of its four mint sites (@974 p, @2294 25, @2879 50); the fourth relies on the CDO. Our client mirror does BeginDeferred -> FinishSpawning with NOTHING in between, so every mirrored coin was born at the CDO default of **5** and painted bronze -- and 5 is ALSO the commonest real denomination (13 of the 19 collects in the 2026-08-25 field log), which is exactly why the report was "монета цвет... была разная" and not "always wrong": 4x +25 and 2x +50 disagreed, ~32%. +`WorldActorSpawnPayload.birthLen`/`birth[64]`, an OPAQUE blob the RECEIVING CLASS interprets -- no type ever comes off the wire, which is what a generic property copier could not have offered (it would take the type from the wire and the offset from a name with no way to cross-check them). N=64 is sized from the measured corpus of three allowlisted classes that write a property in their own deferred window in three different types, not from the coin; at N=4 it would be a typed scalar with a length byte. Same shape as `d14b6644`'s content trailer, so the WA and prop lanes converge rather than fork. `birthLen == 0` means the producer carried nothing and the receiver MUST leave the CDO alone -- writing 0 would be a fail-open that is INVISIBLE, since 0 <= 10 paints bronze exactly like the bug. A producer that cannot READ logs loudly instead, so birthLen=0 never means two things. The reads resolve off `R::ClassOf(actor)` -- the actor is in hand at every call site and its own class is definitionally resident, so no caller depends on another function's latch ordering. (A post-ship audit corrected the ORIGINAL justification for this, which claimed `Install()` could leave a global at -1 permanently: `[V]` it cannot, because the same `g_coinClass` guard gates both the resolve and the latch in one call. The design stood; the reason was false, and the module's single reader now serves the collect lane too, retiring the duplicate.) `:222` carries nothing STRUCTURALLY: sell's BeginDeferred is `EX_CallMath` so the PE interceptor never sees a coin, and `points` is written after BeginDeferred returns, so neither its PRE nor its POST could carry the value. A parse change on both sides, so the bump is mandatory. Prior: v142 (2026-08-25, B3 groundwork -- the WORLD-ACTOR lane stops sharing the NPC spawn payload. `WorldActorSpawn` reused `EntitySpawnPayload` and left THREE of its fields at 0 forever: `savePersisted`, `retireOffEid` and `convertFromEid` are kerfur/NPC concepts, and that struct's own comments said so. +`WorldActorSpawnPayload` = the keep-set `OnWorldActorSpawn` actually reads (className/elementId/loc/rot/scale, 104 B), which is 12 B SMALLER than what it replaces and behaviour-identical by construction -- the consumer never touched the dropped three. This is a PRECONDITION, not tidiness: per `docs/OPUS_48_DISCIPLINE.md` section 8 a seam must not be widened in the commit that introduces its first consumer, and the next commit puts a per-class BIRTH value on this payload for the coin. On the shared struct that field would have made three NPC producers ship something they never asked about. A parse change on both sides, so the bump is mandatory. Prior: v141 (2026-08-25, security A52 -- the pose lane starts carrying the ORIGIN's own clock, so the host can bound how fast a peer CLAIMS to move. Until now an inbound pose was admitted by `ValidatePose` alone: finite, |xyz| <= 1e6 cm, angle ranges, and a SELF-REPORTED `speed` bound -- a static garbage filter with no delta-vs-time check anywhere, so every "was this peer near it" gate in the mod rested on a value the sender writes. That is A50's residual and it is why A50 is MITIGATED and not CLOSED. THE WIRE CHANGE IS THREE BYTES AND ZERO GROWTH: `_reserved2[3]` -- written in three places and read in none since v18 -- becomes `stateTimeMs24`, the origin's monotonic millisecond stamp for the STATE the datagram carries, 0 meaning not stamped. The header CANNOT grow: `BlobChunkPayload` and `VoiceFramePacket` are both exactly `kMaxReliablePayload`. It is stamped at pose SAMPLE time, not send time -- stamping at send makes a game-thread hitch produce an old position under a new stamp, so the interval under-reports the motion and the slack budget silently absorbs `hitch * speed` (a 500 ms hitch at the game's own noclip speed is 4 330 cm). The RECEIVER's clock stays the ceiling: `min(senderElapsed, recvElapsed + tol)` is unconditional, so an inflated OR REWOUND sender clock buys nothing. The relay SCRUBS the field -- a relayed datagram's time belongs to the origin, and no client-side reader exists. This build ships the ledger MEASURE-ONLY: it computes and logs its INPUTS and refuses nothing, because the constants come from a session that never left a 35 m patch of the base and enforcing on them would make the user's first working build its own calibration run. Design of record: the v137 field-defects doc section 13. Prior: v140 (2026-08-25, security A50 -- the coin-gun sale becomes a real TRANSACTION performed BY THE ARBITER, instead of a mint on the client's honour. B1 (v138) made the sold prop NAMEABLE for the first time, and that is exactly what opened the hole: v137 was unexploitable only because its identity never resolved. After B1 the host's whole gate chain was payload size -> the named artifact resolves to A LIVE PROP SOMEWHERE IN THE HOST'S WORLD -> not already sold -> a gun exists -> sellObject says sellable -> MINT; `senderSlot` appeared only as a reply address and a printf argument, so NOTHING BOUND THE NAMED ARTIFACT TO THE SENDER, and `[V]` the sold prop's destroy lives in the GUN's ubergraph @1730, not inside `sell` -- so the host minted and left the prop standing, with the module's own success log naming the dependency out loud ("the client's own PropDestroy follows and removes the prop"). A joining client save-loads the host's world and therefore holds every Aprop_C.Key in it: with no gun, no shot and no destroy it could send one 40-byte CoinGunSell per prop and the host would pay for the entire world. THE FIX IS BOTH HALVES, because neither closes it alone. (1) AUTHORIZATION: +CoinGunResultCode::TooFarAway=7 -- the host measures the named prop against ITS OWN copy of the sender's puppet and refuses anything outside the sender's reach, `[V]` `arm(1000.0)` from the ubergraph's own trace, widened by the prop's measured bounds and one pose-staleness budget, MTA CUnoccupiedVehicleSync.cpp:244/491 IsPointNearPoint3D shape. No live puppet = refused, fail-CLOSED. (2) CONSUMPTION: the host now destroys the sold prop ITSELF immediately after `sell` returns -- the native order, gun ubergraph [24] then [26] -- so the artifact is consumed by the authority rather than on the attacker's honour, the existing K2_DestroyActor seam broadcasts it to every peer for free, and the client's own PropDestroy behind it becomes a steady-state no-op echo. This is signature 2 of the five (replicated cost / unreplicated benefit) pointing the OPPOSITE way from A37 -- the same lane produced both, four days apart, and the second was authored by the fix for the first: [[lesson-a-loss-fix-can-author-a-cheat]]. A new refusal code is a parse change for the client's result switch, so the bump is mandatory. Prior: v139 (2026-08-25, B2 -- a client can finally pick up the host's coins. `[V]` TWO entries reach the coin's credit block `ExecuteUbergraph_baocoin:441`: the overlap BndEvt, and `actionOptionIndex` DIRECTLY -- the E-press, dispatched `EX_LocalVirtualFunction` from mainPlayer's ubergraph @1022, PE-invisible AND Func-invisible. v137 hooked only the overlap, and the field's six real credits produced ZERO lines from that interceptor: the seam had never been observed firing at all. So a client pressing E on a host coin credited ITSELF locally through an unhookable `lib_C::addPoints`, destroyed its own mirror, and the host's coin stayed on the ground while the next balance broadcast erased the phantom. +CoinCollect=124 (client->host, host-terminal): the client observes BOTH entries -- the overlap via the existing interceptor, the E-press via a `0x45` bracket on `actionOptionIndex` gated on ctx being a baocoin_C -- and forwards the coin's eid; the host resolves it against its own WorldActor registry and dispatches the coin's OWN `actionOptionIndex`, so the game's native credit and self-destroy run on the authoritative coin. FORWARD-AND-RECONCILE IS FORCED, NOT CHOSEN: the `0x45` substrate observes without a cancel primitive (a script UFunction reached that way never reads UFunction::Func), so the client's local phantom credit cannot be suppressed and is corrected by the balance broadcast; the overlap entry CAN be cancelled and still is. Eid-only naming is correct here where CoinGunSell needed a key -- a coin is a host-minted WorldActor with no save key, so the eid the host itself issued IS its whole identity. Also: coingun_sync's own two ambient verb reads move off `verbId` onto `verbName` per the contract vm_dispatch.h now carries, which is a precondition for this module registering a SECOND verb; and `LivePropActor` generalizes to `LiveActorOfType(eid, type)` so a WorldActor resolve is the same fail-closed idiom. A parse change on both sides, so the bump is mandatory. Prior: v138 (2026-08-25, B1 -- the coin-gun sale finally NAMES the prop it sold. v137 named it by ElementId alone; `[V]` under v122 no-passive-mint a client mints no Element row for its OWN save-loaded keyed prop, so the eid was 0 for exactly the props a player shoots and 3 of 3 field sales refused with REASON=no element id before the host looked at anything. CoinGunSellPayload becomes {WireKey key; uint32 elementId; uint32 _pad} -- PropDestroyPayload's layout, deliberately, because it names the same artifact as the destroy riding right behind it on the same lane; the host resolves the KEY first and falls back to the eid for the keyless families (clump/chip pile carry Key=None). +CoinGunResult=123 (host->one client): a refusal used to be SILENT, and a silent refusal is INDISTINGUISHABLE from the reported bug (the seller's prop vanishes -- its own destroy is unchanged and still lands -- and no coins appear), so the seller now gets a sentence; a success carries the price the HOST used, which can legitimately differ from the seller's own local toast because `getPriceMultiplier` is per-instance and divergent for prop_batts/prop_food/prop_cementBag/prop_garbBagRoll. Also: the consumption guard is re-keyed off the eid (it would have collapsed onto g_soldEid[0] and poisoned every later sale) onto the artifact name + a world-stamped CachedObjRef, and it is now genuinely erased -- by a host-side sweep of entries whose actor died and by a new OnDisconnect, where v137's comment merely CLAIMED it self-cleaned while the map was erased nowhere at all. A parse change on both sides, so the bump is mandatory). Prior: v137 (2026-08-24, security A37/A38: the coin gun and its coins are SYNCED. `[V]` `Abaocoin_C : AActor` (not `Aprop_C`) was absent from every lane, so a client's sale spawned coins only on the client, credited only the client's local balance, and the host's next broadcast erased it -- while the prop's destroy replicated, so the group LOST THE ITEM AND GAINED NOTHING. Coins are now HOST-MINTED world actors: a client sends +CoinGunSell=122 carrying the sold prop's ElementId AND NOTHING ELSE, immediately BEFORE its ordinary (byte-unchanged) PropDestroy on the same lane, so FIFO delivers the sale while the host's prop is still alive; the host prices it from ITS OWN copy via `lib_C::sellObject` and mints via the game's own `sell`. `baocoin_C` joins kWorldActorAllowlist and `prop_coingun_C` joins kExSpawnSourceClasses (the WA lane's PE author is structurally blind to the gun's EX_CallMath mint, so HostEnrollExSpawn is what allocates the eid and broadcasts). A parse change on both sides, so the bump is mandatory). Prior: v136 (2026-08-24, security A34/A35: the laptop shop stops being FREE for every client. An OrderRequest item is now a `list_store` ROW NAME and nothing else -- it used to carry the client's own price/size/category/objectClass, which the host wrote through verbatim, and `[V]` `makeAnOrder` contains no `addPoints` at all (the charge lives in ui_laptop's Button_order ubergraph), so the client debited itself locally, the host was never charged, the goods were delivered, and the client's debit was refunded by the host's next balance broadcast. The host now prices the order from ITS OWN table (ue_wrap::store_catalog), checks its OWN balance, rolls its OWN ETA, and charges after the commit is confirmed by an orders.Num +1 edge. +OrderRefused=121 (host->one client) because a refusal moves nothing, so the change-polled BalanceSync can never fire, while the client has ALREADY debited itself through an EX_LocalVirtualFunction we cannot suppress. A parse change on both sides, so the bump is mandatory. NOT ONLY SECURITY: `[V]` 473 rows map onto 368 object classes, so the old class-keyed wire could not uniquely name 112 of 473 shop items, and the host's wholesale row copy also fixes the ~141 rows that mis-delivered while name/asProp/parseRowNameToObject were written as NAME_None). Prior: v135 (2026-08-24, WP-6 security: the client->host BalanceDelta (24) lane is RETIRED WHOLE -- it was an unbounded client-authored economy write the host applied via AddPoints, so any peer could set the shared balance to +/-2^31 (security A5). Retired rather than clamped per RULE 2; [V] its only in-tree sender was the dev +1000 button, already refused on a client by dev_gate, and the laptop shop it was built for shipped on OrderRequest with a HOST re-commit. Kind 24 STAYS UNASSIGNED. A parse change (a kind that was accepted is now unknown), so the bump is mandatory, not just the release rule). Prior: v134 (2026-07-31, consume b133: chat HISTORY + the roster ledger/player list + host-assigned unique nicknames persisted to ini + real UTF-8 across every text surface (imgui 1.92.9 lazy atlas, +4,741 codepoints and the combining marks) + the CURSOR fix (ScaleAllSizes truncated MouseCursorScale to 0) + GitHub issue #5 (the overlay stops taking keys the GAME is typing: the predicate is now the game's own IsValid(activeInterface) guard, and the focus backstop asks about USER 0 so WidgetInteraction's virtual user cannot latch it) + the chat send-flicker and nameplate centring/host-ping fixes. No wire-format change in the b133 range; the bump is the release rule + the Paper-pair build number). Prior: v133 (2026-07-29, CHAT HISTORY -- +ChatLine=119 +ChatSpeaker=120, and ChatMessage=48 becomes client->host ONLY (out of IsClientRelayableReliableKind, RULE 2). Chat inverts from host-RELAYED to host-AUTHORED: the lobby now has a chat RECORD with a host-assigned lineSeq that IS the total order every peer sorts by, and a joiner is SEEDED from it. The relay could not carry this -- it fires on the NET thread at receive time, before the game thread where a lineSeq could be assigned even exists, so at relay time the order does not yet exist. A parse change AND a release, so the Paper-pair build number moves with it). Prior: v132 (2026-07-28, ARC B -- the HOST is the canonical namer: a Join's nick is ARBITRATED before it enters the ledger, and the assignment reaches the named peer on its own RosterRow (whose nick already sat in the FIXED PREFIX above the applyDeclared gate for exactly this). The row FORMAT is unchanged -- what changed is who authors the value and that the named peer KEEPS it: per the user's 2026-07-28 decision the assigned name is written back to multivoid.ini, so the next session asks to be called Pelmentor2 and keeps it unless someone else already is. The bump is the release rule + the Paper-pair build number, not a parse change). Prior: v131 (2026-07-28: RosterRow FIXED PREFIX widened -- +[u8 linkKind][i16 pingMs] after eid, so the HOST publishes how every player is connected to the SESSION and every board renders the same value for the same player. Retires the per-viewer derivation that answered transport on some rows and ROUTE ("VIA HOST") on others, in one column, side by side; retires the client-side rttMsForSlot fan-out to nameplates, which could only ever measure the host link. The fields sit in the FIXED PREFIX because the tail's offset arithmetic lives inside the applyDeclared block, which is skipped for exactly the host row and the receiver's own row). Prior: v130 (2026-07-27, arc A: PlayerJoined WIDENED + renamed RosterRow -- +uint16 playerNo, admits slot 0 and the receiver's own slot, playerNo 0 = slot empty. The roster ledger is now the single presence authority; a client's TAB used to list only itself and the host). Prior: v129 (2026-07-26, consume b128: DX12 overlay renderer + Graphics API indicator + Tidy-up fix + the release notes/install pipeline); v128 (consume b127, the WHOLE ini workstream -- arc 3 const Row& ratchet + arc 4 T8 catalog); v127 (consume b126, arcs 1+2); v126 (consume b125, drill-matrix, retracted); v125 (2026-07-22, R11b container extraction):
++inline constexpr uint16_t kProtocolVersion = 65004; // world-authority bundle: host commit + reconciliation + repair identity // v150 (2026-09-01, THE LIGHT GROUP GETS AN OWNER): + LightGroupState=129, host-authored, KeyedTogglePayload. The shipped light lane synced Alightswitch_C::A -- the switch's PRESENTATION bit (mesh + click), which bytecode shows use() toggles UNCONDITIONALLY while it reaches the lamps only through runTrigger(root,0), gated on the root's `active`. So the switch and the lights are structurally decoupled, `A` is not save-persistent and the group's state is, and nothing on either peer owned or reconciled trigger_lightRoot_C::isActive at all. Host-authored because 13 cooked blueprints can move a group and most are host-owned world systems. No payload changed; a NEW KIND did, so a b149 peer would ignore the lane and silently keep the defect -- hence the bump. v149 (2026-08-31, post-ship audit: the admission blob now covers the challenge's FLAGS byte and the host's own nonce, 126 -> 159 B, tag `multivoid-peer-admission-v1` -> `-v2`. The flag that tells a joiner a password is wanted was OUTSIDE the host's signature, so a relay could set it on an OPEN lobby's challenge and a bound client would derive and emit a real tag to a host that never asked -- turning P1's impersonation residual into a tag-harvesting oracle. No payload size changed; the SIGNED PREIMAGE did, which old builds cannot verify -- hence the bump. v148 (2026-08-31, THE LOBBY PASSWORD IS ENFORCED -- `locked` stops being a badge. `AuthChallengePayload` 96 -> 100 B (+flags u8 +3 pad): the HOST tells the joiner a password is wanted, because a DIRECT or LAN connect has no browser row to infer it from. `AuthProofPayload` 64 -> 100 B (+hasPw u8 +3 pad +pwTag[32]): HMAC-SHA256(K, "MVLP1"||hostPub||clientPub||hostNonce) with K = PBKDF2-HMAC-SHA256(password, salt=hostPub, 200k). THE TAG IS A SEPARATE FIELD AND DELIBERATELY NOT IN THE SIGNED BLOB: mixing a KDF of a low-entropy secret into a signature the verifier can recompute is an OFFLINE ORACLE (coop/net/lobby_password.h). What makes a chosen password safe is BINDING, not entropy -- the client sends hasPw=0 unless peer_admission proved the socket's key IS the advertised identity (A65, 2d6c4c63). Host side: K derived once and cached, so an attempt costs one HMAC; guesses bounded in peer_admission. NOTE, added with v149: that bound was keyed on the REMOTE ADDRESS, which is all zeros on P2P, and the sentence that replaced it ("RL_JOIN bounds that lane") was false too -- the signaling token is static and unrate-limited. It is now keyed per ATTEMPTER (real address, else the proved public key) and never shared. An old cohort keeps playing among itself -- the pair is a byte-equality gate per lobby. v147 (2026-08-30, ATV #4 -- the author's CONDITION travels: `AtvStatePayload` 84 -> 148 B (+tiresDurability[4] +tiresDirt[4] +bodyDirt +spareDurability +spareDirt +fuel +health as floats; +tiresMask +tiresValid +hasSpare u8, +spareFixes +tiresFixes[4] int8, +tiresTypes[4] u8). #5 (the impulse neuter, 28a958e8) holds a mirror's accrual at ZERO; this half OVERWRITES the mirror from the author, and the pair is one fix (ATV.md 17.14) -- 17.9 measured the two peers ending a run with DIFFERENT tires worn, and 13.3 measured fuel diverging (99.439 vs 100.000). RECEIVE RULES, each measured: accumulators apply from any legitimate author; PRESENCE (tiresMask, hasSpare) is consumed ONLY from host-authored packets, because a client-author eject ships a mask bit whose paired prop_atvWheel_C birth structurally cannot travel (the express seam is host-only and the wheel key is minted per peer at RANDOM -- no dedupe can exist), so applying it would turn a retained-wheel divergence into host-persisted ITEM LOSS; the refused client-eject direction is a REGISTERED crutch (CRUTCHES.md C1 row) pending the act-as-host intent lane. Apply calls the game's OWN per-facet reducers on change edges vs a LAST-EXPRESSED baseline seeded from the ACTOR (a zero seed would BreakConstraint x8 a settled rig; a per-packet baseline would starve updDirt forever on slow drift): updTires iff mask|types changed (its constraint re-form is measured UNCONDITIONAL -- per-tire conditionality is visibility+collision only, so a bare updTires yields the author-identical rig), updDirt iff fixes changed or a dirt float moved >0.01, updSpareTire iff the spare group changed, updHealth (pure smoke visual) iff |health delta|>0.5; fuel needs NO verb (gauges read per tick) and runout() -- the engine-death verb -- is never called by the sync. tiresValid=0 means the producer could not read its own arrays and the receiver touches NOTHING (mask 0 is the legal all-ejected state, so absence gets its own bit -- the v143 birthLen rule). The idle syncer's change gate gains a condition-block term (a parked host eject must not wait out the 2 s keepalive). battery is deliberately ABSENT: it is an inserted PROP's charge, the prop lane's row. A parse change on both sides, so the bump is mandatory. Prior: v146 (2026-08-29, ATV arc 1 -- a peer that does not author an ATV stops FREEZING it. The mirror model inverts: physics stays ON so the game's own 5-body constraint rig (sus_*/ax_*) runs natively, only the BRAIN is switched off, and the receiver is CORRECTED toward the authority instead of teleported. This is a wire change on BOTH ATV payloads, hence the mandatory bump. `AtvStatePayload` 60 -> 84 B: +linVel[3] +angVel[3], written HARD every packet the way `CNetAPI::ReadVehiclePuresync` writes SetMoveSpeed/SetTurnSpeed, plus a new `authorSlot` that replaces `stateBits` bit3 `authored` -- the boolean said only WHETHER some peer was driving, which was all a receiver needed while its choice was freeze-or-not; with nothing freezing, the question becomes WHO, because `authorSlot == 0xFF` is what elects the HOST as the idle vehicle's syncer (`CUnoccupiedVehicleSync`). `AtvReleasePayload` 56 -> 32 B: the six velocity floats are DELETED, and that deletion is the fix rather than a tidy-up -- `[V]` they were applied to the other peer's copy at the instant its physics was re-enabled, from a pose that had been frozen and was therefore already stale, which the autonomous two-peer probe measured as a 158 cm/s launch that put the client's ATV 109.9 cm away with its rig thrashing at 29.58 cm against a native 2-4 cm band (docs/vehicles/ATV.md 13). There is no un-freeze to inherit a velocity for. `occupantSlot` deliberately STAYS a separate byte from `authorSlot`: it is the SEAT, and `device_occupancy.cpp:230` denies an E-press from it, so fusing them would make a peer merely GRABBING an ATV deny the seat nobody is sitting in. Also in this bump, not on the wire: the seven `BndEvt__*ComponentHitSignature` delegates are cancelled on a non-owner by an authority-gated interceptor [CORRECTED within b146 by `28a958e8`: the guard now NEUTERS -- writes a zero FVector over NormalImpulse and ALWAYS dispatches -- because cancelling the five wheel delegates was itself the 25-40 cm mirror sag (ATV.md 17); kept here as the dated record, see the v147 entry] -- `[V]` they reach `health -= |NormalImpulse|/500000*2*getBumperMult()` and `explode()` at <=0, and they are dispatched by the physics scene, not the tick, so turning physics on without them would let a mirror blow up a vehicle its authority still has. Prior: v145 (2026-08-29, security A59 -- the P2P signaling relay stops believing a name its caller cannot sign for. b144 made a peer's DURABLE public key its rendezvous name, and `[V]` the relay's greeting was `<token> <identity>` with the identity SELF-ASSERTED and the token a static bearer every mod user holds (`signaling.rs:169`), while registration was EVICT-ON-DUPLICATE (`cl.insert`, `:216`) -- so hosting a lobby once harvested the permanent key of every client that joined (it is `m_identityRemote`, handed over as a matter of protocol), and one socket declaring that key thereafter evicted the victim as fast as they re-registered, in EVERY future session. The name could not be rotated without deleting `multivoid_identity.key`, which orphans every inventory row the player holds on every host. Now: the relay answers a greeting with `nonce <64 hex>`, registers ONLY after a valid `auth <128 hex>` -- Ed25519 over `"multivoid-signaling-register-v1" || identity || nonce` -- and the whole pre-registration phase shares ONE existing timeout budget, so an unproved peer holds a MAX_PENDING slot no longer than before. THE RULE HAS NO CONDITIONAL: an earlier cut proved only identities SHAPED like a key, which would have left the master's `h<16hex>`/`c<16hex>` mints registering unproved beside proved ones; those mints and the `peerIdentity` field are RETIRED with the b<=133 cohort (user decision), `/v1/host` now REQUIRES the host's own `gen:` key, and a pre-b145 host gets a NAMED 400 at its first call instead of a silent rendezvous failure two hops later. THE PEER WIRE IS UNTOUCHED -- the admission exchange, its 126-byte blob and all three payloads are byte-identical to v144; this bump is the signaling/master wire plus the release rule, and it is what lets `COOP_MAX_BUILD` tell the cohorts apart. TYPED FRAMING WAS CONSIDERED AND IS UNNECESSARY: `relay_line` does `cl.get(dest)`, so an UNREGISTERED peer is unreachable and nothing can be delivered during the challenge window -- no peer can forge a line that looks like the challenge. NOT CLOSED, hence A59 is MITIGATED: the mod's signaling leg is PLAINTEXT (raw WinSock; TLS there is Tier B arc 3), and on a plaintext channel a challenge-response is RELAYABLE -- an on-path attacker proxies the nonce, harvests a live proof, and one moment on-path converts into permanent denial. That measurement promotes arc 3 from "may be unnecessary" to REQUIRED. The client FAILS CLOSED on a relay that never challenges it, so the relay redeploy and this release are ONE step: `python tools/sig_gate.py --remote <url> --token <tok>` is a BLOCKING release gate (docs/RELEASE.md step 0) and the same script is the A59 drill locally. Prior: v144 (2026-08-29, security A15/A2/A57 -- a peer is seated only after it PROVES the identity it advertises. Until now the durable player identity was a 32-hex string minted into multivoid.ini and appended to the Join packet, and the host keyed that peer's stored inventory by it: copy the `player_guid=` line and you ARE that player, with a receive boundary that could only check the SHAPE of the name and never the right to it. The identity is now an Ed25519 keypair in multivoid_identity.key, its PUBLIC KEY is the peer's GNS identity, and the guid every store uses is `hex(SHA-256(pubkey)[0..16])` RECOMPUTED BY THE HOST. THREE PARSE CHANGES, hence the mandatory bump: +AuthHello=125 / AuthChallenge=126 / AuthProof=127 (the mutual challenge, host proves itself FIRST), and the Join payload LOSES its [u8 guidlen][guid] field -- the skin/prefs/color tail all shift up by it. THE EXCHANGE IS LOAD-BEARING AND NOT A CEREMONY: `[V]` a GNS cert's `identity_string` and its `key_data` are independent protobuf fields and the library binds NEITHER to the other (`connections.cpp:1452-1458` compares the identity to what the connection expects, `:1497` verifies the session signature against key_data, and nothing compares the two), so a peer CAN present a victim's key as its identity and pass every check GNS makes -- the signature it then cannot produce is the whole control. Neither key is on the wire: each end reads the other's 32 identity bytes off its OWN connection, because a key carried in a payload proves possession of a key the sender chose. There is no fourth message -- `[V]` FinishPeerConnected sends AssignPeerSlot only on a host and only from AdmitPending, so its arrival IS the admission signal, and the client refuses it unless the host has proved itself. Also in this bump: the pending band finally enforces the deadline its own comment has claimed since 2026-08-26 (`pendingSinceMs_` was written at three sites and read at NONE), and a full band now evicts its OLDEST un-proved socket instead of refusing the arrival -- an un-proved socket has no standing over an arriving one, and with a multi-message exchange band occupancy is attacker-timed by construction. NOT CLOSED, and not closable this way: a pure RELAY (P1) forwards nonce and signature alike, and `[V]` GNS exposes no key exporter, so there is no channel value to bind to -- that needs the ~6-line fork in PLAN_01 s6. MIGRATION COST, stated not discovered: a host's stored inventory rows for VISITING players are orphaned once, at this bump (PLAN_01 s5). Prior: v143 (2026-08-25, B3 -- a mirrored coin is born knowing what it is worth. `[V]` `baocoin_C::ReceiveBeginPlay` -> `ExecuteUbergraph_baocoin(1441)` reads `points` and calls `baocoin.SetMaterial(0, ...)`: <=10 bronze @1499, >11 && <=25 silver @1725, >26 gold @1820. `[V]` `prop_coingun_C::sell` writes that int BETWEEN `BeginDeferredActorSpawnFromClass` and `FinishSpawningActor` at three of its four mint sites (@974 p, @2294 25, @2879 50); the fourth relies on the CDO. Our client mirror does BeginDeferred -> FinishSpawning with NOTHING in between, so every mirrored coin was born at the CDO default of **5** and painted bronze -- and 5 is ALSO the commonest real denomination (13 of the 19 collects in the 2026-08-25 field log), which is exactly why the report was "монета цвет... была разная" and not "always wrong": 4x +25 and 2x +50 disagreed, ~32%. +`WorldActorSpawnPayload.birthLen`/`birth[64]`, an OPAQUE blob the RECEIVING CLASS interprets -- no type ever comes off the wire, which is what a generic property copier could not have offered (it would take the type from the wire and the offset from a name with no way to cross-check them). N=64 is sized from the measured corpus of three allowlisted classes that write a property in their own deferred window in three different types, not from the coin; at N=4 it would be a typed scalar with a length byte. Same shape as `d14b6644`'s content trailer, so the WA and prop lanes converge rather than fork. `birthLen == 0` means the producer carried nothing and the receiver MUST leave the CDO alone -- writing 0 would be a fail-open that is INVISIBLE, since 0 <= 10 paints bronze exactly like the bug. A producer that cannot READ logs loudly instead, so birthLen=0 never means two things. The reads resolve off `R::ClassOf(actor)` -- the actor is in hand at every call site and its own class is definitionally resident, so no caller depends on another function's latch ordering. (A post-ship audit corrected the ORIGINAL justification for this, which claimed `Install()` could leave a global at -1 permanently: `[V]` it cannot, because the same `g_coinClass` guard gates both the resolve and the latch in one call. The design stood; the reason was false, and the module's single reader now serves the collect lane too, retiring the duplicate.) `:222` carries nothing STRUCTURALLY: sell's BeginDeferred is `EX_CallMath` so the PE interceptor never sees a coin, and `points` is written after BeginDeferred returns, so neither its PRE nor its POST could carry the value. A parse change on both sides, so the bump is mandatory. Prior: v142 (2026-08-25, B3 groundwork -- the WORLD-ACTOR lane stops sharing the NPC spawn payload. `WorldActorSpawn` reused `EntitySpawnPayload` and left THREE of its fields at 0 forever: `savePersisted`, `retireOffEid` and `convertFromEid` are kerfur/NPC concepts, and that struct's own comments said so. +`WorldActorSpawnPayload` = the keep-set `OnWorldActorSpawn` actually reads (className/elementId/loc/rot/scale, 104 B), which is 12 B SMALLER than what it replaces and behaviour-identical by construction -- the consumer never touched the dropped three. This is a PRECONDITION, not tidiness: per `docs/OPUS_48_DISCIPLINE.md` section 8 a seam must not be widened in the commit that introduces its first consumer, and the next commit puts a per-class BIRTH value on this payload for the coin. On the shared struct that field would have made three NPC producers ship something they never asked about. A parse change on both sides, so the bump is mandatory. Prior: v141 (2026-08-25, security A52 -- the pose lane starts carrying the ORIGIN's own clock, so the host can bound how fast a peer CLAIMS to move. Until now an inbound pose was admitted by `ValidatePose` alone: finite, |xyz| <= 1e6 cm, angle ranges, and a SELF-REPORTED `speed` bound -- a static garbage filter with no delta-vs-time check anywhere, so every "was this peer near it" gate in the mod rested on a value the sender writes. That is A50's residual and it is why A50 is MITIGATED and not CLOSED. THE WIRE CHANGE IS THREE BYTES AND ZERO GROWTH: `_reserved2[3]` -- written in three places and read in none since v18 -- becomes `stateTimeMs24`, the origin's monotonic millisecond stamp for the STATE the datagram carries, 0 meaning not stamped. The header CANNOT grow: `BlobChunkPayload` and `VoiceFramePacket` are both exactly `kMaxReliablePayload`. It is stamped at pose SAMPLE time, not send time -- stamping at send makes a game-thread hitch produce an old position under a new stamp, so the interval under-reports the motion and the slack budget silently absorbs `hitch * speed` (a 500 ms hitch at the game's own noclip speed is 4 330 cm). The RECEIVER's clock stays the ceiling: `min(senderElapsed, recvElapsed + tol)` is unconditional, so an inflated OR REWOUND sender clock buys nothing. The relay SCRUBS the field -- a relayed datagram's time belongs to the origin, and no client-side reader exists. This build ships the ledger MEASURE-ONLY: it computes and logs its INPUTS and refuses nothing, because the constants come from a session that never left a 35 m patch of the base and enforcing on them would make the user's first working build its own calibration run. Design of record: the v137 field-defects doc section 13. Prior: v140 (2026-08-25, security A50 -- the coin-gun sale becomes a real TRANSACTION performed BY THE ARBITER, instead of a mint on the client's honour. B1 (v138) made the sold prop NAMEABLE for the first time, and that is exactly what opened the hole: v137 was unexploitable only because its identity never resolved. After B1 the host's whole gate chain was payload size -> the named artifact resolves to A LIVE PROP SOMEWHERE IN THE HOST'S WORLD -> not already sold -> a gun exists -> sellObject says sellable -> MINT; `senderSlot` appeared only as a reply address and a printf argument, so NOTHING BOUND THE NAMED ARTIFACT TO THE SENDER, and `[V]` the sold prop's destroy lives in the GUN's ubergraph @1730, not inside `sell` -- so the host minted and left the prop standing, with the module's own success log naming the dependency out loud ("the client's own PropDestroy follows and removes the prop"). A joining client save-loads the host's world and therefore holds every Aprop_C.Key in it: with no gun, no shot and no destroy it could send one 40-byte CoinGunSell per prop and the host would pay for the entire world. THE FIX IS BOTH HALVES, because neither closes it alone. (1) AUTHORIZATION: +CoinGunResultCode::TooFarAway=7 -- the host measures the named prop against ITS OWN copy of the sender's puppet and refuses anything outside the sender's reach, `[V]` `arm(1000.0)` from the ubergraph's own trace, widened by the prop's measured bounds and one pose-staleness budget, MTA CUnoccupiedVehicleSync.cpp:244/491 IsPointNearPoint3D shape. No live puppet = refused, fail-CLOSED. (2) CONSUMPTION: the host now destroys the sold prop ITSELF immediately after `sell` returns -- the native order, gun ubergraph [24] then [26] -- so the artifact is consumed by the authority rather than on the attacker's honour, the existing K2_DestroyActor seam broadcasts it to every peer for free, and the client's own PropDestroy behind it becomes a steady-state no-op echo. This is signature 2 of the five (replicated cost / unreplicated benefit) pointing the OPPOSITE way from A37 -- the same lane produced both, four days apart, and the second was authored by the fix for the first: [[lesson-a-loss-fix-can-author-a-cheat]]. A new refusal code is a parse change for the client's result switch, so the bump is mandatory. Prior: v139 (2026-08-25, B2 -- a client can finally pick up the host's coins. `[V]` TWO entries reach the coin's credit block `ExecuteUbergraph_baocoin:441`: the overlap BndEvt, and `actionOptionIndex` DIRECTLY -- the E-press, dispatched `EX_LocalVirtualFunction` from mainPlayer's ubergraph @1022, PE-invisible AND Func-invisible. v137 hooked only the overlap, and the field's six real credits produced ZERO lines from that interceptor: the seam had never been observed firing at all. So a client pressing E on a host coin credited ITSELF locally through an unhookable `lib_C::addPoints`, destroyed its own mirror, and the host's coin stayed on the ground while the next balance broadcast erased the phantom. +CoinCollect=124 (client->host, host-terminal): the client observes BOTH entries -- the overlap via the existing interceptor, the E-press via a `0x45` bracket on `actionOptionIndex` gated on ctx being a baocoin_C -- and forwards the coin's eid; the host resolves it against its own WorldActor registry and dispatches the coin's OWN `actionOptionIndex`, so the game's native credit and self-destroy run on the authoritative coin. FORWARD-AND-RECONCILE IS FORCED, NOT CHOSEN: the `0x45` substrate observes without a cancel primitive (a script UFunction reached that way never reads UFunction::Func), so the client's local phantom credit cannot be suppressed and is corrected by the balance broadcast; the overlap entry CAN be cancelled and still is. Eid-only naming is correct here where CoinGunSell needed a key -- a coin is a host-minted WorldActor with no save key, so the eid the host itself issued IS its whole identity. Also: coingun_sync's own two ambient verb reads move off `verbId` onto `verbName` per the contract vm_dispatch.h now carries, which is a precondition for this module registering a SECOND verb; and `LivePropActor` generalizes to `LiveActorOfType(eid, type)` so a WorldActor resolve is the same fail-closed idiom. A parse change on both sides, so the bump is mandatory. Prior: v138 (2026-08-25, B1 -- the coin-gun sale finally NAMES the prop it sold. v137 named it by ElementId alone; `[V]` under v122 no-passive-mint a client mints no Element row for its OWN save-loaded keyed prop, so the eid was 0 for exactly the props a player shoots and 3 of 3 field sales refused with REASON=no element id before the host looked at anything. CoinGunSellPayload becomes {WireKey key; uint32 elementId; uint32 _pad} -- PropDestroyPayload's layout, deliberately, because it names the same artifact as the destroy riding right behind it on the same lane; the host resolves the KEY first and falls back to the eid for the keyless families (clump/chip pile carry Key=None). +CoinGunResult=123 (host->one client): a refusal used to be SILENT, and a silent refusal is INDISTINGUISHABLE from the reported bug (the seller's prop vanishes -- its own destroy is unchanged and still lands -- and no coins appear), so the seller now gets a sentence; a success carries the price the HOST used, which can legitimately differ from the seller's own local toast because `getPriceMultiplier` is per-instance and divergent for prop_batts/prop_food/prop_cementBag/prop_garbBagRoll. Also: the consumption guard is re-keyed off the eid (it would have collapsed onto g_soldEid[0] and poisoned every later sale) onto the artifact name + a world-stamped CachedObjRef, and it is now genuinely erased -- by a host-side sweep of entries whose actor died and by a new OnDisconnect, where v137's comment merely CLAIMED it self-cleaned while the map was erased nowhere at all. A parse change on both sides, so the bump is mandatory). Prior: v137 (2026-08-24, security A37/A38: the coin gun and its coins are SYNCED. `[V]` `Abaocoin_C : AActor` (not `Aprop_C`) was absent from every lane, so a client's sale spawned coins only on the client, credited only the client's local balance, and the host's next broadcast erased it -- while the prop's destroy replicated, so the group LOST THE ITEM AND GAINED NOTHING. Coins are now HOST-MINTED world actors: a client sends +CoinGunSell=122 carrying the sold prop's ElementId AND NOTHING ELSE, immediately BEFORE its ordinary (byte-unchanged) PropDestroy on the same lane, so FIFO delivers the sale while the host's prop is still alive; the host prices it from ITS OWN copy via `lib_C::sellObject` and mints via the game's own `sell`. `baocoin_C` joins kWorldActorAllowlist and `prop_coingun_C` joins kExSpawnSourceClasses (the WA lane's PE author is structurally blind to the gun's EX_CallMath mint, so HostEnrollExSpawn is what allocates the eid and broadcasts). A parse change on both sides, so the bump is mandatory). Prior: v136 (2026-08-24, security A34/A35: the laptop shop stops being FREE for every client. An OrderRequest item is now a `list_store` ROW NAME and nothing else -- it used to carry the client's own price/size/category/objectClass, which the host wrote through verbatim, and `[V]` `makeAnOrder` contains no `addPoints` at all (the charge lives in ui_laptop's Button_order ubergraph), so the client debited itself locally, the host was never charged, the goods were delivered, and the client's debit was refunded by the host's next balance broadcast. The host now prices the order from ITS OWN table (ue_wrap::store_catalog), checks its OWN balance, rolls its OWN ETA, and charges after the commit is confirmed by an orders.Num +1 edge. +OrderRefused=121 (host->one client) because a refusal moves nothing, so the change-polled BalanceSync can never fire, while the client has ALREADY debited itself through an EX_LocalVirtualFunction we cannot suppress. A parse change on both sides, so the bump is mandatory. NOT ONLY SECURITY: `[V]` 473 rows map onto 368 object classes, so the old class-keyed wire could not uniquely name 112 of 473 shop items, and the host's wholesale row copy also fixes the ~141 rows that mis-delivered while name/asProp/parseRowNameToObject were written as NAME_None). Prior: v135 (2026-08-24, WP-6 security: the client->host BalanceDelta (24) lane is RETIRED WHOLE -- it was an unbounded client-authored economy write the host applied via AddPoints, so any peer could set the shared balance to +/-2^31 (security A5). Retired rather than clamped per RULE 2; [V] its only in-tree sender was the dev +1000 button, already refused on a client by dev_gate, and the laptop shop it was built for shipped on OrderRequest with a HOST re-commit. Kind 24 STAYS UNASSIGNED. A parse change (a kind that was accepted is now unknown), so the bump is mandatory, not just the release rule). Prior: v134 (2026-07-31, consume b133: chat HISTORY + the roster ledger/player list + host-assigned unique nicknames persisted to ini + real UTF-8 across every text surface (imgui 1.92.9 lazy atlas, +4,741 codepoints and the combining marks) + the CURSOR fix (ScaleAllSizes truncated MouseCursorScale to 0) + GitHub issue #5 (the overlay stops taking keys the GAME is typing: the predicate is now the game's own IsValid(activeInterface) guard, and the focus backstop asks about USER 0 so WidgetInteraction's virtual user cannot latch it) + the chat send-flicker and nameplate centring/host-ping fixes. No wire-format change in the b133 range; the bump is the release rule + the Paper-pair build number). Prior: v133 (2026-07-29, CHAT HISTORY -- +ChatLine=119 +ChatSpeaker=120, and ChatMessage=48 becomes client->host ONLY (out of IsClientRelayableReliableKind, RULE 2). Chat inverts from host-RELAYED to host-AUTHORED: the lobby now has a chat RECORD with a host-assigned lineSeq that IS the total order every peer sorts by, and a joiner is SEEDED from it. The relay could not carry this -- it fires on the NET thread at receive time, before the game thread where a lineSeq could be assigned even exists, so at relay time the order does not yet exist. A parse change AND a release, so the Paper-pair build number moves with it). Prior: v132 (2026-07-28, ARC B -- the HOST is the canonical namer: a Join's nick is ARBITRATED before it enters the ledger, and the assignment reaches the named peer on its own RosterRow (whose nick already sat in the FIXED PREFIX above the applyDeclared gate for exactly this). The row FORMAT is unchanged -- what changed is who authors the value and that the named peer KEEPS it: per the user's 2026-07-28 decision the assigned name is written back to multivoid.ini, so the next session asks to be called Pelmentor2 and keeps it unless someone else already is. The bump is the release rule + the Paper-pair build number, not a parse change). Prior: v131 (2026-07-28: RosterRow FIXED PREFIX widened -- +[u8 linkKind][i16 pingMs] after eid, so the HOST publishes how every player is connected to the SESSION and every board renders the same value for the same player. Retires the per-viewer derivation that answered transport on some rows and ROUTE ("VIA HOST") on others, in one column, side by side; retires the client-side rttMsForSlot fan-out to nameplates, which could only ever measure the host link. The fields sit in the FIXED PREFIX because the tail's offset arithmetic lives inside the applyDeclared block, which is skipped for exactly the host row and the receiver's own row). Prior: v130 (2026-07-27, arc A: PlayerJoined WIDENED + renamed RosterRow -- +uint16 playerNo, admits slot 0 and the receiver's own slot, playerNo 0 = slot empty. The roster ledger is now the single presence authority; a client's TAB used to list only itself and the host). Prior: v129 (2026-07-26, consume b128: DX12 overlay renderer + Graphics API indicator + Tidy-up fix + the release notes/install pipeline); v128 (consume b127, the WHOLE ini workstream -- arc 3 const Row& ratchet + arc 4 T8 catalog); v127 (consume b126, arcs 1+2); v126 (consume b125, drill-matrix, retracted); v125 (2026-07-22, R11b container extraction):
+                                                   // ContainerContents becomes BIDIRECTIONAL and its
+                                                   // blob gains a baseHash. A client now AUTHORS the
+                                                   // world container it mutated (presser-authored
+@@ -2852,7 +2852,7 @@ enum class ReliableKind : uint8_t {
+                        //     still reaches the host as a LightState edge, and the host's own
+                        //     use() is what produces the authoritative group change.
+ 
+-    RepairOutcome = 130, // custom 65003: cooperative repair COMPLETION.
++    RepairOutcome = 130, // custom 65004: cooperative repair COMPLETION.
+                        //     CLIENT->HOST request when a locally-solved server/radio-tower/
+                        //     generator flips to repaired; HOST applies the real repaired
+                        //     outcome and broadcasts the accepted result. The compound puzzle
+@@ -4274,9 +4274,9 @@ struct DroneStatePayload {
+ };
+ static_assert(sizeof(DroneStatePayload) == 40, "DroneStatePayload must be 40 bytes");
+ 
+-// custom 65003: a peer completed one of the previously-local repair minigames.
++// custom 65004: a peer completed one of the previously-local repair minigames.
+ struct RepairOutcomePayload {
+-    WireKey key;          // save-stable key when available, deterministic actor name otherwise
++    WireKey key;          // deterministic coop::element::PortableWireKey (mv_<16 hex>)
+     uint8_t target;       // 1=serverBox, 2=radiotower, 3=generator/transformer panel
+     uint8_t repaired;     // must be 1
+     uint8_t _pad[2];
+diff --git a/src/votv-coop/include/coop/props/remote_prop.h b/src/votv-coop/include/coop/props/remote_prop.h
+index b9d4121c..08de23a6 100644
+--- a/src/votv-coop/include/coop/props/remote_prop.h
++++ b/src/votv-coop/include/coop/props/remote_prop.h
+@@ -12,10 +12,10 @@
+ //     is non-zero (throw), clear the cache.
+ //
+ // Methodology-wise this matches MTA's ucSyncTimeContext-style ownership
+-// transfer: the sender (host) is authoritative for the held prop; the
+-// receiver kinematically displays it. When the host releases, the prop's
+-// physics resumes on every peer independently (same world state because
+-// Aprop_C.heavy / .Static etc. are content-driven, identical cross-peer).
++// transfer: the current holder is authoritative while the prop is held and
++// receivers kinematically display it. On release, physics resumes; b65004 then
++// lets the HOST's copy settle and re-expresses that final transform so every
++// peer converges to the same resting pose the host save will persist.
+ 
+ #pragma once
+ 
+@@ -56,6 +56,12 @@ void Tick(coop::net::Session& session);
+ // minor inaccuracy in exchange for natural sound/effects).
+ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, void* localPlayer);
+ 
++// b65004: HOST-local release counterpart to OnRelease's client->host path.
++// Queues `actor` until the host physics copy comes to rest, then the existing
++// PropSpawn convergence lane re-expresses that final transform to all clients.
++// Safe no-op when called on a client/non-authority peer or with a bad actor.
++void QueueHostAuthoritySettle(void* actor);
++
+ // v5: handle an incoming PropSpawn (peer dropped an inventory item into
+ // the world). MOVED (M-1 2026-05-29) to coop::remote_prop_spawn::OnSpawn.
+ // See coop/remote_prop_spawn.h for the public interface + design notes;
+diff --git a/src/votv-coop/src/coop/dispatch/event_dispatch_state.cpp b/src/votv-coop/src/coop/dispatch/event_dispatch_state.cpp
+index 7f97b6d2..4508b898 100644
+--- a/src/votv-coop/src/coop/dispatch/event_dispatch_state.cpp
++++ b/src/votv-coop/src/coop/dispatch/event_dispatch_state.cpp
+@@ -46,24 +46,22 @@ bool HandleStateEvent(net::Session& session,
+     case net::ReliableKind::ApplianceState:
+     case net::ReliableKind::LightGroupState:    // v150: the light GROUP's isActive (host-authored)
+     case net::ReliableKind::LockerDoorState: {  // v62: lockers + drone-console doors (same KeyedToggle shape)
+-        // LightGroupState is the one HOST-AUTHORED kind in this otherwise symmetric family, so
+-        // it does not get the family's "any peer may send" treatment: a client that authored it
+-        // would drive the host's AND every other client's lights, which is precisely the
+-        // pollution the adapter chose HostAuth to prevent. Channel::OnReliable performs no role
+-        // or sender check of its own, so the drop has to be here, at the family boundary.
+-        // (Refused on the receiving CLIENT too, not only on the host -- the host relays nothing
+-        // on this kind, so a packet arriving from a non-host slot is not ours either way.)
+-        if (msg.kind == net::ReliableKind::LightGroupState && msg.senderPeerSlot != 0) {
+-            UE_LOGW("event_feed: LightGroupState from slot %d refused -- this kind is host-authored",
+-                    msg.senderPeerSlot);
+-            return true;  // claimed by this family, deliberately not applied
+-        }
+-        // Phase 5D (v27): a peer toggled a keyed interactable (base door /
+-        // light group / container lid / garage / appliance). SYMMETRIC -- any peer
+-        // can send; the host relays a client-originated edge to the other clients
+-        // (IsClientRelayableReliableKind) before this drain runs.
+-        // interactable_sync routes by kind to the right channel, resolves the
+-        // instance by Key, + idempotently applies on the GT (echo-suppressed).
++        // b65004 WORLD AUTHORITY. Clients consume this shared-world family
++        // only from slot 0. Symmetric client changes may arrive at the HOST, where
++        // interactable_sync commits them before broadcasting canonical state.
++        if (session.role() != net::Role::Host && msg.senderPeerSlot != 0) {
++            UE_LOGW("event_feed: keyed world-state kind=%u from non-host slot %d refused",
++                    static_cast<unsigned>(msg.kind), msg.senderPeerSlot);
++            return true;
++        }
++        if (session.role() == net::Role::Host && msg.senderPeerSlot != 0 &&
++            (msg.kind == net::ReliableKind::DoorState ||
++             msg.kind == net::ReliableKind::LightGroupState)) {
++            UE_LOGW("event_feed: host-authored keyed state kind=%u from client slot %d refused",
++                    static_cast<unsigned>(msg.kind), msg.senderPeerSlot);
++            return true;
++        }
++        // The generic channel resolves by portable/key identity and applies on GT.
+         // (KeypadState is NOT here -- it carries a richer payload, its own case below.)
+         // RE: research/findings/computers-devices/votv-doors-and-lightswitches-RE-2026-05-25.md.
+         if (msg.payloadLen < sizeof(net::KeyedTogglePayload)) {
+diff --git a/src/votv-coop/src/coop/interactables/drive_sync.cpp b/src/votv-coop/src/coop/interactables/drive_sync.cpp
+index 0d49e1bb..4696c581 100644
+--- a/src/votv-coop/src/coop/interactables/drive_sync.cpp
++++ b/src/votv-coop/src/coop/interactables/drive_sync.cpp
+@@ -190,8 +190,10 @@ void AnnounceSlot(int role, bool occupied, uint32_t eid) {
+     p.occupied = occupied ? 1 : 0;
+     p.censusIdx = 0;
+     p.driveEid = eid;
+-    s->SendReliable(coop::net::ReliableKind::DriveSlotState, &p, sizeof(p));
++    const bool ok = s->SendReliable(coop::net::ReliableKind::DriveSlotState, &p, sizeof(p));
+     ++g_cSlotSent;
++    UE_LOGI("drive_sync[worldauth]: TX slot role=%u occupied=%u eid=%u ok=%d",
++            p.role, p.occupied, p.driveEid, ok ? 1 : 0);
+ }
+ 
+ // Read a slot's live state; diff vs baseline; announce the edge. `announce`
+@@ -228,6 +230,8 @@ void SendPayload(uint32_t eid, const SD::Row& row, int toSlot /* -1 = all */) {
+     else
+         coop::blob_chunks::SendBlobToSlot(s, toSlot, coop::net::ReliableKind::DrivePayload, seq, blob);
+     ++g_cPayloadSent;
++    UE_LOGI("drive_sync[worldauth]: TX payload eid=%u seq=%u bytes=%zu target=%d",
++            eid, seq, blob.size(), toSlot);
+ }
+ 
+ // Diff-gated sweep over every live drive (1 Hz + on dirty-mark). Emission
+@@ -293,6 +297,8 @@ void ApplyPayloadBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot, bool
+                 UE_LOGW("drive_sync: pending cap hit -- oldest dropped");
+             }
+             g_pending.push_back(std::move(pd));
++            UE_LOGI("drive_sync[worldauth]: DEFER payload eid=%u from slot %u -- actor unresolved",
++                    eid, senderSlot);
+         }
+         return;
+     }
+@@ -327,8 +333,17 @@ void ApplyPayloadBlob(const std::vector<uint8_t>& blob, uint8_t senderSlot, bool
+             g_driveBase[eid] = coop::blob_chunks::Fnv64(coop::signal_wire::Serialize(applied, false));
+     }
+     ++g_cPayloadApplied;
+-    UE_LOGI("drive_sync: payload applied eid=%u (name='%ls' size=%.0f) from slot %u",
++    UE_LOGI("drive_sync[worldauth]: APPLY payload eid=%u name='%ls' size=%.0f from slot %u",
+             eid, row.name.c_str(), row.size, senderSlot);
++
++    if (IsHost() && senderSlot > 0 && senderSlot < coop::net::kMaxPeers) {
++        SD::Row canonical;
++        if (DC::ReadDriveRow(actor, canonical)) {
++            SendPayload(eid, canonical, -1);
++            UE_LOGI("drive_sync[worldauth]: host COMMIT payload eid=%u from slot %u",
++                    eid, senderSlot);
++        }
++    }
+ }
+ 
+ // --------------------------------------------------------------------------
+@@ -374,11 +389,12 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
+             return;
+         }
+         if (cur && curEid != p.driveEid) {
+-            // Conflict: locally captured a DIFFERENT drive. The HOST is
+-            // canonical: host re-announces its state; a client converges to
+-            // the incoming line (eject ours, insert theirs).
++            // Conflict: locally captured a DIFFERENT drive. The HOST refuses
++            // the requested replacement; the caller emits one canonical reply.
+             if (IsHost()) {
+-                AnnounceSlot(p.role, true, curEid);
++                UE_LOGW("drive_sync[worldauth]: REFUSED insert conflict role=%u requestedEid=%u "
++                        "hostEid=%u from slot %u",
++                        p.role, p.driveEid, curEid, senderSlot);
+                 return;
+             }
+             coop::desk_snd_fx::ScopedWireApply guard;
+@@ -395,6 +411,16 @@ void OnSlotLine(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot, b
+         UE_LOGI("drive_sync: slot role=%u INSERT eid=%u applied (from slot %u)",
+                 p.role, p.driveEid, senderSlot);
+     } else {
++        // b65004 WORLD AUTHORITY: a client EJECT names the drive it actually
++        // removed. Never let a stale "empty" observation eject a different,
++        // newer host occupant. A zero eid is ambiguous and therefore fails
++        // closed on the host; the canonical occupied row is sent back.
++        if (IsHost() && senderSlot > 0 && cur &&
++            (p.driveEid == 0 || curEid != p.driveEid)) {
++            UE_LOGW("drive_sync[worldauth]: REFUSED stale eject role=%u clientEid=%u hostEid=%u slot=%u",
++                    p.role, p.driveEid, curEid, senderSlot);
++            return;
++        }
+         if (!cur) {  // already empty: prime + belt latch completion
+             g_slotBase[p.role] = {true, false, 0};
+             DC::CompleteEjectLatch(slot, LivePropActor(p.driveEid));
+@@ -419,7 +445,16 @@ void RetryPendingTick() {
+     std::vector<Pending> keep;
+     for (auto& pd : g_pending) {
+         if (now >= pd.until) {
+-            UE_LOGW("drive_sync: pending apply kind=%d expired (actor never resolved)", pd.kind);
++            if (pd.kind == 0) {
++                UE_LOGW("drive_sync[worldauth]: DROP deferred slot role=%u occupied=%u eid=%u "
++                        "from slot %u -- actor never resolved",
++                        pd.slotLine.role, pd.slotLine.occupied, pd.slotLine.driveEid, pd.senderSlot);
++            } else {
++                uint32_t deadEid = 0;
++                if (pd.blob.size() >= 4) std::memcpy(&deadEid, pd.blob.data(), 4);
++                UE_LOGW("drive_sync[worldauth]: DROP deferred payload eid=%u from slot %u "
++                        "-- actor never resolved", deadEid, pd.senderSlot);
++            }
+             continue;
+         }
+         bool done = false;
+@@ -437,6 +472,20 @@ void RetryPendingTick() {
+             void* drive = LivePropActor(pd.slotLine.driveEid);
+             if (drive || !pd.slotLine.occupied) {
+                 OnSlotLine(pd.slotLine, pd.senderSlot, /*fromPending*/true);
++                if (IsHost() && pd.senderSlot > 0 &&
++                    pd.senderSlot < coop::net::kMaxPeers) {
++                    void* slot = DC::SlotActor(pd.slotLine.role);
++                    if (slot) {
++                        void* canonicalDrive = DC::SlotDrive(slot);
++                        const uint32_t canonicalEid = canonicalDrive ? static_cast<uint32_t>(
++                            coop::element::Registry::Get().EidForActor(canonicalDrive)) : 0;
++                        AnnounceSlot(pd.slotLine.role, canonicalDrive != nullptr, canonicalEid);
++                        UE_LOGI("drive_sync[worldauth]: host CANONICAL deferred slot role=%u "
++                                "occupied=%d eid=%u after request from slot %u",
++                                pd.slotLine.role, canonicalDrive ? 1 : 0, canonicalEid,
++                                pd.senderSlot);
++                    }
++                }
+                 done = true;
+             }
+         } else if (pd.kind == 1) {
+@@ -533,14 +582,44 @@ void Tick() {
+ }
+ 
+ void OnDriveSlotState(const coop::net::DriveSlotStatePayload& p, uint8_t senderSlot) {
+-    if (!DC::EnsureResolved()) return;
++    UE_LOGI("drive_sync[worldauth]: RX slot role=%u occupied=%u eid=%u from slot %u",
++            p.role, p.occupied, p.driveEid, senderSlot);
++    if (p.role >= DC::kRoleCount) {
++        UE_LOGW("drive_sync[worldauth]: DROP slot -- invalid role=%u from slot %u",
++                p.role, senderSlot);
++        return;
++    }
++    if (!DC::EnsureResolved()) {
++        UE_LOGW("drive_sync[worldauth]: DROP slot role=%u -- drive-chain classes unresolved",
++                p.role);
++        return;
++    }
+     OnSlotLine(p, senderSlot, /*fromPending*/false);
++
++    if (IsHost() && senderSlot > 0 && senderSlot < coop::net::kMaxPeers &&
++        (!p.occupied || LivePropActor(p.driveEid))) {
++        void* slot = DC::SlotActor(p.role);
++        if (slot) {
++            void* drive = DC::SlotDrive(slot);
++            const uint32_t eid = drive ? static_cast<uint32_t>(
++                coop::element::Registry::Get().EidForActor(drive)) : 0;
++            AnnounceSlot(p.role, drive != nullptr, eid);
++            UE_LOGI("drive_sync[worldauth]: host CANONICAL slot role=%u occupied=%d eid=%u "
++                    "after request from slot %u",
++                    p.role, drive ? 1 : 0, eid, senderSlot);
++        }
++    }
+ }
+ 
+ void OnDrivePayloadChunk(const coop::net::BlobChunkPayload& p, uint8_t senderSlot) {
+     std::vector<uint8_t> blob;
+     if (!g_payloadAsm.OnChunk(p, senderSlot, blob)) return;
+-    if (!DC::EnsureResolved()) return;
++    UE_LOGI("drive_sync[worldauth]: RX payload-complete bytes=%zu from slot %u",
++            blob.size(), senderSlot);
++    if (!DC::EnsureResolved()) {
++        UE_LOGW("drive_sync[worldauth]: DROP payload-complete -- drive-chain classes unresolved");
++        return;
++    }
+     ApplyPayloadBlob(blob, senderSlot, /*fromPending*/false);
+ }
+ 
+diff --git a/src/votv-coop/src/coop/interactables/repair_sync.cpp b/src/votv-coop/src/coop/interactables/repair_sync.cpp
+index fbf3ae63..6049958b 100644
+--- a/src/votv-coop/src/coop/interactables/repair_sync.cpp
++++ b/src/votv-coop/src/coop/interactables/repair_sync.cpp
+@@ -2,6 +2,7 @@
+ 
+ #include "coop/interactables/repair_sync.h"
+ 
++#include "coop/element/portable_identity.h"
+ #include "coop/net/protocol.h"
+ #include "coop/net/session.h"
+ 
+@@ -54,9 +55,6 @@ Desc g_descs[] = {
+     {kRepairGenerator,  L"transformerMGPanel_C", L"fixed",    L"Fixed",    true},
+ };
+ 
+-void* g_saveBase = nullptr;
+-int32_t g_saveKeyOff = -1;
+-
+ std::unordered_map<std::string, bool> g_lastRepaired;
+ uint64_t g_lastPoll = 0;
+ 
+@@ -66,17 +64,6 @@ uint64_t NowMs() {
+         duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+ }
+ 
+-void ResolveSharedKey() {
+-    if (g_saveKeyOff >= 0) return;
+-    if (!g_saveBase) g_saveBase = R::FindClass(L"actor_save_C");
+-    if (!g_saveBase) return;
+-    g_saveKeyOff = R::FindPropertyOffset(g_saveBase, L"Key");
+-    if (g_saveKeyOff < 0) {
+-        g_saveKeyOff = 0x0230;
+-        UE_LOGW("repair_sync: actor_save_C.Key reflection failed -- fallback 0x0230");
+-    }
+-}
+-
+ void ResolveDesc(Desc& d) {
+     if (!d.cls) d.cls = R::FindClass(d.className);
+     if (!d.cls || d.stateOff >= 0 || d.stateOff == -2) return;
+@@ -123,39 +110,10 @@ std::string NarrowAscii(const std::wstring& w) {
+     return s;
+ }
+ 
+-uint64_t Fnv1a64(const std::string& s) {
+-    uint64_t h = 1469598103934665603ull;
+-    for (unsigned char c : s) {
+-        h ^= c;
+-        h *= 1099511628211ull;
+-    }
+-    return h;
+-}
+-
+ std::string ActorIdentity(void* actor) {
+-    ResolveSharedKey();
+-
+-    std::wstring id;
+-    if (actor && g_saveBase && g_saveKeyOff >= 0) {
+-        void* c = R::ClassOf(actor);
+-        void* bases[1] = {g_saveBase};
+-        if (c && R::IsDescendantOfAny(c, bases, 1)) {
+-            const R::FName& key = *reinterpret_cast<const R::FName*>(
+-                reinterpret_cast<const uint8_t*>(actor) + g_saveKeyOff);
+-            id = R::ToString(key);
+-            if (id == L"None") id.clear();
+-        }
+-    }
+-    if (id.empty())
+-        id = R::ToString(R::NameOf(actor));
+-
+-    std::string s = NarrowAscii(id);
+-    if (s.size() <= 31) return s;
+-
+-    char buf[24]{};
+-    std::snprintf(buf, sizeof(buf), "h%016llx",
+-                  static_cast<unsigned long long>(Fnv1a64(s)));
+-    return std::string(buf);
++    // b65004: one deterministic identity rule on every peer. Do not fall back
++    // to game Keys or UObject instance names that can be process-local.
++    return NarrowAscii(coop::element::PortableWireKey(actor));
+ }
+ 
+ void PutWireKey(coop::net::WireKey& out, const std::string& s) {
+@@ -248,7 +206,7 @@ bool ApplyRepair(void* actor, Desc& d) {
+ 
+     bool finalState = false;
+     const bool ok = IsRepaired(actor, d, finalState) && finalState;
+-    UE_LOGI("repair_sync: apply target=%u id='%s' called=%d repaired=%d",
++    UE_LOGI("repair_sync[worldauth]: APPLY target=%u id='%s' called=%d repaired=%d",
+             static_cast<unsigned>(d.target), ActorIdentity(actor).c_str(),
+             called ? 1 : 0, ok ? 1 : 0);
+     return ok;
+@@ -259,21 +217,30 @@ std::string BaselineKey(uint8_t target, const std::string& id) {
+ }
+ 
+ void NoteBaseline(uint8_t target, void* actor, bool repaired) {
+-    g_lastRepaired[BaselineKey(target, ActorIdentity(actor))] = repaired;
++    const std::string id = ActorIdentity(actor);
++    if (!id.empty())
++        g_lastRepaired[BaselineKey(target, id)] = repaired;
+ }
+ 
+ void SendOutcome(uint8_t target, void* actor) {
+     auto* s = g_session.load(std::memory_order_acquire);
+     if (!s || !actor) return;
+ 
++    const std::string id = ActorIdentity(actor);
++    if (id.empty()) {
++        UE_LOGW("repair_sync: target=%u has no portable identity -- outcome not authored",
++                static_cast<unsigned>(target));
++        return;
++    }
++
+     coop::net::RepairOutcomePayload p{};
+     p.target = target;
+     p.repaired = 1;
+-    PutWireKey(p.key, ActorIdentity(actor));
++    PutWireKey(p.key, id);
+ 
+     if (s->SendReliable(coop::net::ReliableKind::RepairOutcome, &p, sizeof(p))) {
+-        UE_LOGI("repair_sync: %s target=%u id='%s'",
+-                s->role() == coop::net::Role::Host ? "host outcome" : "client repair request",
++        UE_LOGI("repair_sync[worldauth]: TX %s target=%u id='%s'",
++                s->role() == coop::net::Role::Host ? "host-outcome" : "client-request",
+                 static_cast<unsigned>(target), GetWireKey(p.key).c_str());
+     }
+ }
+@@ -293,8 +260,6 @@ void Tick() {
+     if (now - g_lastPoll < kPollMs) return;
+     g_lastPoll = now;
+ 
+-    ResolveSharedKey();
+-
+     for (auto& d : g_descs) {
+         ResolveDesc(d);
+         if (!d.cls || d.stateOff < 0) continue;
+@@ -306,11 +271,14 @@ void Tick() {
+             if (!IsRepaired(obj, d, repaired)) continue;
+ 
+             const std::string id = ActorIdentity(obj);
++            if (id.empty()) continue;
+             const std::string bk = BaselineKey(d.target, id);
+ 
+             auto it = g_lastRepaired.find(bk);
+             if (it == g_lastRepaired.end()) {
+                 g_lastRepaired.emplace(bk, repaired);
++                UE_LOGI("repair_sync[worldauth]: BASELINE target=%u id='%s' repaired=%d",
++                        static_cast<unsigned>(d.target), id.c_str(), repaired ? 1 : 0);
+                 continue;
+             }
+ 
+@@ -335,6 +303,11 @@ void OnReliable(const coop::net::RepairOutcomePayload& p, uint8_t senderSlot) {
+     auto* s = g_session.load(std::memory_order_acquire);
+     if (!s) return;
+ 
++    UE_LOGI("repair_sync[worldauth]: RX target=%u id='%s' repaired=%u from slot=%u role=%s",
++            static_cast<unsigned>(p.target), GetWireKey(p.key).c_str(),
++            static_cast<unsigned>(p.repaired), senderSlot,
++            s->role() == coop::net::Role::Host ? "host" : "client");
++
+     Desc* d = nullptr;
+     void* actor = FindTarget(p, &d);
+     if (!actor || !d) {
+@@ -357,7 +330,7 @@ void OnReliable(const coop::net::RepairOutcomePayload& p, uint8_t senderSlot) {
+ 
+         NoteBaseline(p.target, actor, true);
+         s->SendReliable(coop::net::ReliableKind::RepairOutcome, &p, sizeof(p));
+-        UE_LOGI("repair_sync: host ACCEPTED target=%u id='%s' from slot=%u",
++        UE_LOGI("repair_sync[worldauth]: host COMMIT+BROADCAST target=%u id='%s' from slot=%u",
+                 static_cast<unsigned>(p.target), GetWireKey(p.key).c_str(), senderSlot);
+         return;
+     }
+@@ -374,8 +347,6 @@ void OnReliable(const coop::net::RepairOutcomePayload& p, uint8_t senderSlot) {
+ void OnDisconnect() {
+     g_lastRepaired.clear();
+     g_lastPoll = 0;
+-    g_saveBase = nullptr;
+-    g_saveKeyOff = -1;
+ 
+     for (auto& d : g_descs) {
+         d.cls = nullptr;
+diff --git a/src/votv-coop/src/coop/net/session_lanes.h b/src/votv-coop/src/coop/net/session_lanes.h
+index db17e7ca..c84bf18b 100644
+--- a/src/votv-coop/src/coop/net/session_lanes.h
++++ b/src/votv-coop/src/coop/net/session_lanes.h
+@@ -206,9 +206,10 @@ inline Lane LaneForKind(ReliableKind k) {
+ //     destroy / throw must replicate to every peer (the Aprop_C lineage is
+ //     host-authoritative for spawns the HOST detects, but a client's own
+ //     takeObj-path drop originates client-side and needs cross-peer fan-out).
+-//   - DoorState / LightState / ContainerState / WindowCleanState / GrimeState:
+-//     keyed interactables + dirt are SYMMETRIC (any peer can toggle / wipe one
+-//     locally), so a client-originated edge must reach the OTHER clients via the host.
++//   - WindowCleanState / GrimeState and the explicitly peer-authored lanes below
++//     still use raw host relay. b65004 deliberately removes Door/Light/Container/
++//     Garage/Appliance/Locker and DriveSlot/DrivePayload from this list: those
++//     terminate at the host, are committed there, then the host authors the result.
+ // NOT relayed:
+ //   - Weather / RedSky / LightningStrike / EntitySpawn / EntityDestroy /
+ //     RestoreVitals / TeleportClient / PlayerDamage: host-authoritative -- they
+@@ -228,12 +229,6 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
+     case ReliableKind::PropConvert:       // v52: a client's clump ball->pile convert must reach the other clients
+     case ReliableKind::PropRelease:
+     case ReliableKind::PropStickState:    // v68: a client's wall-attachable stick (camera on a wall) must reach the other clients
+-    case ReliableKind::DoorState:
+-    case ReliableKind::LightState:
+-    case ReliableKind::ContainerState:
+-    case ReliableKind::GarageDoorState:   // v44: garage door is SYMMETRIC -- relay a client's open/close to the others
+-    case ReliableKind::ApplianceState:    // v45: appliance on/off toggles are SYMMETRIC -- relay a client's edge to the others
+-    case ReliableKind::LockerDoorState:   // v62: locker/console doors are SYMMETRIC -- relay a client's toggle to the others
+     case ReliableKind::PowerControlState: // v46: base power panel breakers are SYMMETRIC -- relay a client's edge to the others
+     case ReliableKind::AtvState:          // v47: ATV body pose is OCCUPANT-OR-GRABBER-authoritative -- relay a client driver's/grabber's pose to the other clients
+     case ReliableKind::AtvRelease:        // v76: ATV grab-release/throw edge -- relay a client grabber's release to the other clients (companion to AtvState)
+@@ -243,8 +238,6 @@ inline bool IsClientRelayableReliableKind(ReliableKind k) {
+     case ReliableKind::DeskScanEvent:     // v112: the SHIFT scan notification is PRESSER-authored -- relay so every mirror replays the spawnDirs visual (the beep rides DeskSndFx since v115)
+     case ReliableKind::DeskSndFx:         // v115: desk audio effects are PRESSER-authored (organic Play/SetActive at the native seam) -- relay a client's fx to the others
+     case ReliableKind::PlayDeckEvent:     // v117 (L6): deck playback edges are PRESSER-authored (organic Activate/Deactivate at the seam; any peer may stop) -- relay a client's edge to the others
+-    case ReliableKind::DriveSlotState:    // v119 (L5): slot FSM lines are ANY-PEER-announced idempotent state -- relay a client's edge to the others (host canonical on conflict)
+-    case ReliableKind::DrivePayload:      // v119 (L5): drive Data_0 rows are WRITER-authored -- relay a client writer's row to the others
+     case ReliableKind::DishAimState:      // v64: dish aim is CLAIM-OWNER-authoritative -- relay a client occupant's stream to the others
+     case ReliableKind::KeypadState:
+     case ReliableKind::WindowCleanState:  // v41: base-window clean is SYMMETRIC -- relay a client's wipe to the others
+diff --git a/src/votv-coop/src/coop/player/local_streams.cpp b/src/votv-coop/src/coop/player/local_streams.cpp
+index 5a4622b3..17dd1c66 100644
+--- a/src/votv-coop/src/coop/player/local_streams.cpp
++++ b/src/votv-coop/src/coop/player/local_streams.cpp
+@@ -599,6 +599,11 @@ void Tick(coop::net::Session& session, void* local, void* controller) {
+             session.SendPropRelease(g_lastHeldKey,
+                                     vel.linearCmS.X, vel.linearCmS.Y, vel.linearCmS.Z,
+                                     vel.angularDegS.X, vel.angularDegS.Y, vel.angularDegS.Z, relEid, /*relCtx=*/0u);
++            if (session.role() == coop::net::Role::Host && g_lastHeldProp.Alive()) {
++                UE_LOGI("remote_prop[worldauth]: HOST-LOCAL RELEASE actor=%p -> queue final rest convergence",
++                        g_lastHeldProp.Raw());
++                coop::remote_prop::QueueHostAuthoritySettle(g_lastHeldProp.Raw());
++            }
+         }
+         g_lastHeldProp.Reset();
+         g_lastHeldKey = {};
+diff --git a/src/votv-coop/src/coop/props/remote_prop.cpp b/src/votv-coop/src/coop/props/remote_prop.cpp
+index 70ec3458..1e9452bf 100644
+--- a/src/votv-coop/src/coop/props/remote_prop.cpp
++++ b/src/votv-coop/src/coop/props/remote_prop.cpp
+@@ -14,6 +14,7 @@
+ #include "coop/player/players_registry.h"
+ #include "coop/props/prop_echo_suppress.h"
+ #include "coop/props/prop_element_tracker.h"
++#include "coop/props/prop_snapshot.h"  // b65004: host rest-pose convergence after client releases
+ #include "coop/props/prop_stick_sync.h"  // v68: stuck wall-attachable gates (unstick + release)
+ #include "coop/element/identity_create.h"  // CreateOrAdoptPropMirror (the prop-mirror bind keystone; RegisterPropMirror forwards)
+ #include "coop/props/trash_channel.h"  // docs/piles/08: per-eid sync-time-context (stale carry/convert drop)
+@@ -69,6 +70,20 @@ std::array<PendingUnstick, coop::players::kMaxPeers> g_pendingUnstick{};
+ constexpr int      kUnstickStreak   = 5;
+ constexpr uint64_t kUnstickWindowMs = 400;  // streak resets after this gap (stale burst over)
+ 
++// b65004: after a CLIENT releases a HOST-OWNED persistent Aprop_C, the host
++// remains the physics authority until that copy settles. At rest we re-express
++// exactly that actor through the already-proven PropSpawn convergence path,
++// which corrects every client to the transform the HOST will save.
++struct HostSettleCorrection {
++    void* actor = nullptr;
++    int32_t actorIdx = -1;
++    uint64_t expiresMs = 0;
++    int sourceSlot = -1;
++};
++std::vector<HostSettleCorrection> g_hostSettle;
++constexpr uint64_t kHostSettleTtlMs = 30000;
++constexpr size_t kHostSettleCap = 64;
++
+ // True if `actor` is the cached drive target of ANY slot's drive state.
+ }  // namespace [drive helpers part 1]
+ 
+@@ -155,6 +170,107 @@ bool StickHoldsPhysicsOff(void* actor) {
+            (ue_wrap::prop::IsFrozen(actor) || ue_wrap::prop::IsStatic(actor));
+ }
+ 
++void QueueHostSettleCorrection(void* actor, int senderSlot) {
++    // Only the HOST broadcasts incremental PropSpawn, and only client-originated
++    // releases need a handback. Client-born mirrors deliberately stay out: they
++    // have no host-local Prop Element and therefore are not part of the host save
++    // authority this correction is meant to persist.
++    if (senderSlot < 0) return;
++    if (!coop::prop_snapshot::ExpressWouldBroadcast()) {
++        // sourceSlot==0 is the ordinary client receiving the HOST's release;
++        // that peer must not queue authority work and does not need a warning.
++        if (senderSlot > 0) {
++            UE_LOGW("remote_prop[worldauth]: REST-SKIP slot=%d -- this peer is not host authority",
++                    senderSlot);
++        }
++        return;
++    }
++    if (!actor) {
++        UE_LOGW("remote_prop[worldauth]: REST-SKIP slot=%d -- released actor unresolved", senderSlot);
++        return;
++    }
++    if (!R::IsLive(actor) || !ue_wrap::prop::IsDescendantOfProp(actor)) {
++        UE_LOGI("remote_prop[worldauth]: REST-SKIP actor=%p slot=%d -- not a live persistent Aprop",
++                actor, senderSlot);
++        return;
++    }
++    if (StickHoldsPhysicsOff(actor)) {
++        UE_LOGI("remote_prop[worldauth]: REST-SKIP actor=%p slot=%d -- frozen/static owns final pose",
++                actor, senderSlot);
++        return;
++    }
++
++    const auto eid = coop::prop_element_tracker::GetPropElementIdForActor(actor);
++    if (eid == coop::element::kInvalidId || eid == 0) {
++        UE_LOGI("remote_prop[worldauth]: REST-SKIP actor=%p slot=%d -- no host-local prop eid",
++                actor, senderSlot);
++        return;
++    }
++
++    const std::wstring key = ue_wrap::prop::GetInteractableKeyString(actor);
++    if (key.empty() || key == L"None") {
++        UE_LOGI("remote_prop[worldauth]: REST-SKIP actor=%p eid=%u slot=%d -- no stable key",
++                actor, static_cast<unsigned>(eid), senderSlot);
++        return;
++    }
++
++    const uint64_t expires = NowMs() + kHostSettleTtlMs;
++    for (auto& p : g_hostSettle) {
++        if (p.actor == actor) {
++            p.actorIdx = R::InternalIndexOf(actor);
++            p.expiresMs = expires;
++            p.sourceSlot = senderSlot;
++            UE_LOGI("remote_prop[worldauth]: REFRESH host rest-pose correction actor=%p slot=%d",
++                    actor, senderSlot);
++            return;
++        }
++    }
++    if (g_hostSettle.size() >= kHostSettleCap) {
++        UE_LOGW("remote_prop[worldauth]: settle queue cap hit -- dropping oldest correction");
++        g_hostSettle.erase(g_hostSettle.begin());
++    }
++    g_hostSettle.push_back(
++        HostSettleCorrection{actor, R::InternalIndexOf(actor), expires, senderSlot});
++    UE_LOGI("remote_prop[worldauth]: QUEUE rest-pose key='%ls' eid=%u source=%s%d",
++            key.c_str(), static_cast<unsigned>(eid),
++            senderSlot == 0 ? "host-local/" : "slot-", senderSlot);
++}
++
++void TickHostSettleCorrections(uint64_t nowMs) {
++    if (g_hostSettle.empty()) return;
++    for (auto it = g_hostSettle.begin(); it != g_hostSettle.end();) {
++        if (!R::IsLiveByIndex(it->actor, it->actorIdx)) {
++            UE_LOGW("remote_prop[worldauth]: REST-DROP actor=%p slot=%d -- actor died before settle",
++                    it->actor, it->sourceSlot);
++            it = g_hostSettle.erase(it);
++            continue;
++        }
++        if (nowMs >= it->expiresMs) {
++            UE_LOGW("remote_prop[worldauth]: host rest-pose correction expired before body settled (slot %d)",
++                    it->sourceSlot);
++            it = g_hostSettle.erase(it);
++            continue;
++        }
++        // Another player grabbed it before it settled. The live PropPose lane
++        // owns position until that later release.
++        if (IsActorUnderAnyDrive(it->actor) ||
++            !E::IsActorRootBodyAtRest(it->actor)) {
++            ++it;
++            continue;
++        }
++
++        const auto loc = E::GetActorLocation(it->actor);
++        const std::wstring key = ue_wrap::prop::GetInteractableKeyString(it->actor);
++        const auto eid = coop::prop_element_tracker::GetPropElementIdForActor(it->actor);
++        UE_LOGI("remote_prop[worldauth]: REST-READY key='%ls' eid=%u actor=%p slot=%d "
++                "loc=(%.1f,%.1f,%.1f) -- requesting host PropSpawn convergence",
++                key.c_str(), static_cast<unsigned>(eid), it->actor, it->sourceSlot,
++                loc.X, loc.Y, loc.Z);
++        coop::prop_snapshot::ExpressIncrementalSpawn(it->actor);
++        it = g_hostSettle.erase(it);
++    }
++}
++
+ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
+     // docs/piles/08: DROP a STALE trash carry pose -- one still in flight from before the entity's last
+     // transition (re-pile/throw bumps ctx). Without this, a late clump-carry pose would re-drive the
+@@ -262,6 +378,11 @@ void ResolveAndStartDrive(int slot, const coop::net::PropPoseSnapshot& pose) {
+ 
+ }  // namespace
+ 
++void QueueHostAuthoritySettle(void* actor) {
++    // sourceSlot 0 denotes a release authored by the host's own local player.
++    QueueHostSettleCorrection(actor, 0);
++}
++
+ void Tick(coop::net::Session& session) {
+     // Drives g_drives across all slots (T-10, GT-only). Called every game-
+     // thread tick from net_pump::Tick.
+@@ -349,6 +470,11 @@ void Tick(coop::net::Session& session) {
+             ResetDriveState(drive);
+         }
+     }
++
++    // b65004: a client release is allowed to run host physics, then the host
++    // commits the eventual rest transform once. This is what closes the
++    // "same drive settles somewhere different on each machine" gap.
++    TickHostSettleCorrections(nowMs);
+ }
+ 
+ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, void* localPlayer) {
+@@ -356,6 +482,8 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
+     // event_feed on the game thread.
+     UE_ASSERT_GAME_THREAD("g_drives (remote_prop::OnRelease)");
+     const std::wstring keyW = KeyToWString(payload.key);
++    UE_LOGI("remote_prop[worldauth]: RX RELEASE slot=%d key='%ls' eid=%u ctx=%u",
++            senderSlot, keyW.c_str(), payload.elementId, static_cast<unsigned>(payload.ctx));
+     const float linSpeedSq = payload.linVelX * payload.linVelX +
+                              payload.linVelY * payload.linVelY +
+                              payload.linVelZ * payload.linVelZ;
+@@ -498,6 +626,11 @@ void OnRelease(int senderSlot, const coop::net::PropReleasePayload& payload, voi
+     if (releasedSlot >= 0) {
+         ResetDriveState(g_drives[releasedSlot]);
+     }
++
++    // Do this AFTER clearing the sender's active drive so a passive drop that
++    // is already resting can commit on the next Tick instead of being held
++    // indefinitely by IsActorUnderAnyDrive().
++    QueueHostSettleCorrection(propActor, senderSlot);
+ }
+ 
+ namespace {
+@@ -704,6 +837,7 @@ void ForceRelease() {
+     if (released > 0) {
+         UE_LOGI("remote_prop: force-release on disconnect/teardown (%d active drive(s) cleared)", released);
+     }
++    g_hostSettle.clear();
+     // A2 (2026-05-29): drain wire-received Prop mirrors on full session
+     // teardown. Each mirror's dtor routes through Registry::UnregisterMirror
+     // (m_mirror=true) so the Registry's m_byId slots in the foreign
+diff --git a/src/votv-coop/src/coop/world/event_fire_sync.cpp b/src/votv-coop/src/coop/world/event_fire_sync.cpp
+index 6cd798bc..628a1ab1 100644
+--- a/src/votv-coop/src/coop/world/event_fire_sync.cpp
++++ b/src/votv-coop/src/coop/world/event_fire_sync.cpp
+@@ -438,16 +438,21 @@ void Tick() {
+     if (!GT::IsGameThread()) return;
+     auto* s = g_session.load(std::memory_order_acquire);
+     if (!s || !s->connected()) return;
+-    const long long now = NowMs();
+-    if (now - g_lastPollMs < kPollIntervalMs) return;
+-    g_lastPollMs = now;
++
+     ResolvePass();
+-    if (s->role() == coop::net::Role::Host) {
+-        HostPollTick();
+-    } else {
++
++    if (s->role() != coop::net::Role::Host) {
++        // Suppression is an invariant now, not a 1 Hz maintenance job. A world
++        // load repopulates allEvents; close that window every gameplay tick.
+         ClientSuppressTick();
+         ClientDrainTick();
++        return;
+     }
++
++    const long long now = NowMs();
++    if (now - g_lastPollMs < kPollIntervalMs) return;
++    g_lastPollMs = now;
++    HostPollTick();
+ }
+ 
+ bool HostFire(FireKind kind, const std::wstring& eventName, const std::wstring& specialName) {

@@ -40,6 +40,9 @@ bool HandleEntityEvent(net::Session& session,
                        const net::Session::ReliableMessage& msg,
                        void* localPlayer);
 
+// Explicit console diagnostic for fixed-size spawn packet rejections.
+void LogEntitySpawnDiagnostics();
+
 // Keyed device-state family: DoorState/LightState/ContainerState/GarageDoorState/
 // ApplianceState (the shared KeyedTogglePayload case), KeypadState,
 // PowerControlState, AtvState, DroneState, WindowCleanState, GrimeState,

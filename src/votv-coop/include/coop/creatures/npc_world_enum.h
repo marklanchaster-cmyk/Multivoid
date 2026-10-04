@@ -71,4 +71,7 @@ void DrainPendingExSpawns();
 // a stale queued address must never survive into the next session. Any thread.
 void ClearPendingExSpawns();
 
+// Explicit console diagnostic for the bounded EX-spawn staging queue.
+void LogDiagnostics();
+
 }  // namespace coop::npc_world_enum

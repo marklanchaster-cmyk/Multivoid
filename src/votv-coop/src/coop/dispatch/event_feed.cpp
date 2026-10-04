@@ -22,6 +22,7 @@
 #include "ue_wrap/engine/engine.h"           // DestroyActor (drill)
 #include "ue_wrap/core/reflection.h"         // NumObjects/ObjectAt/IsLive (drill)
 #include "coop/interactables/interactable_sync.h"
+#include "coop/interactables/drive_sync.h"  // JIP pending-apply bracket lifetime
 #include "ui/join_curtain.h"  // instant-world SEAM 1: the short curtain (Show at SnapshotBegin / dismiss at Complete)
 #include "coop/session/join_progress.h"
 #include "coop/element/mirror_defer.h"  // instant-world SEAM 2+3: arm deferred-hide / reveal-confirmed at the lift
@@ -470,6 +471,7 @@ void Update(net::Session& session, void* localPlayer) {
             // R-4b D9: while the bracket is open, container-contents parks do
             // not age (their PropSpawns are still in the Bulk stream behind us).
             coop::props::container_contents_sync::NoteJoinSnapshotBracket(true);
+            coop::drive_sync::NoteJoinSnapshotBracket(true);
             // R-4a end-condition: the bracket apply window opens -- raise/refresh the
             // reconcile window (kind classified by completeSinceArm; see world_load_episode.h).
             coop::world_load_episode::NoteReconcileBegin();
@@ -538,6 +540,7 @@ void Update(net::Session& session, void* localPlayer) {
             // dispatched above (same lane, strictly before this). Parks
             // re-stamp; the TTL runs from here as a leak-guard.
             coop::props::container_contents_sync::NoteJoinSnapshotBracket(false);
+            coop::drive_sync::NoteJoinSnapshotBracket(false);
             // instant-world curtain LIFT (SEAM 1+3): the primary world is assembled -- every host
             // PropSpawn/EntitySpawn in this snapshot has been applied above. Fade the curtain out and reveal
             // the CONFIRMED mirrors NOW (~2s BEFORE quiescence -> the world fades in already-assembled, no

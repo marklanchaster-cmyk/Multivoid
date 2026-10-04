@@ -22,6 +22,7 @@
 #include "coop/creatures/piramid_sync.h"  // v100 auxYaw: the piramid heading producer/consumer
 
 #include "coop/items/coingun_sync.h"   // v143 (B3): ReadCoinPoints for the birth blob
+#include "coop/world/event_actor_birth.h"
 #include "coop/element/element_deleter.h"
 #include "coop/element/mirror_manager.h"
 #include "coop/element/mirror_managers.h"  // PropMirrors/NpcMirrors/WaMirrors
@@ -39,7 +40,6 @@
 #include "ue_wrap/core/types.h"
 
 #include <atomic>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>   // v143: FillBirthBlob is this file's first std::memcpy
@@ -94,6 +94,15 @@ using coop::element::WaMirrors;   // canonical accessor (coop/element/mirror_man
 std::mutex g_actorToWaIdMutex;
 std::unordered_map<void*, coop::element::ElementId> g_actorToWaId;
 
+std::atomic<uint64_t> g_enrollments{0};
+std::atomic<uint64_t> g_duplicateEnrollments{0};
+std::atomic<uint64_t> g_identityRejects{0};
+std::atomic<uint64_t> g_birthValidationFailures{0};
+std::atomic<uint64_t> g_birthsSent{0};
+std::atomic<uint64_t> g_birthsReceived{0};
+std::atomic<uint64_t> g_destroysSent{0};
+std::atomic<uint64_t> g_destroysReceived{0};
+
 // Thread-local pending-spawn slot (params-pointer correlation -- the same token npc_sync uses to
 // disambiguate nested non-WA BeginDeferred calls; the engine allocates a fresh frame per call).
 struct PendingWaSpawn {
@@ -106,6 +115,10 @@ thread_local PendingWaSpawn t_pendingWa{coop::element::kInvalidId, nullptr};
 // is the class leaf name (e.g. "rozitBorg_C"), exactly the FindClass key.
 bool IsAllowlistedClass(void* cls) {
     if (!cls) return false;
+    // Package identity is mandatory for ambiguous event leaves (the cook has
+    // multiple unrelated NewBlueprint5_C classes), so admit those through the
+    // typed adapter before consulting the legacy leaf-name allowlist.
+    if (coop::event_actor_birth::RequiresBirth(cls)) return true;
     const auto& nm = R::NameOf(cls);
     for (size_t i = 0; i < P::name::kWorldActorAllowlistSize; ++i)
         if (R::NameEquals(nm, P::name::kWorldActorAllowlist[i])) return true;
@@ -114,6 +127,7 @@ bool IsAllowlistedClass(void* cls) {
 
 // Wire-className trust gate (client receiver): the wstring built from the wire string.
 bool IsAllowlistedClassNameW(const std::wstring& nm) {
+    if (coop::event_actor_birth::IsWireClassKey(nm)) return true;
     for (size_t i = 0; i < P::name::kWorldActorAllowlistSize; ++i)
         if (nm == P::name::kWorldActorAllowlist[i]) return true;
     return false;
@@ -139,6 +153,12 @@ bool IsAllowlistedClassNameW(const std::wstring& nm) {
 // connect snapshot -- which `coingun_collect.cpp:490` re-fires at 0.5 Hz per slot on the repair path.
 void FillBirthBlob(coop::net::WorldActorSpawnPayload& p, void* cls, void* actor) {
     p.birthLen = 0;
+    if (coop::event_actor_birth::RequiresBirth(cls)) {
+        if (!coop::event_actor_birth::Capture(actor, p))
+            UE_LOGW("world-actor: event birth capture failed for eid=%u -- spawn must not be sent",
+                    p.elementId);
+        return;
+    }
     if (!actor || !coop::coingun_sync::IsCoinClass(cls)) return;
     const int32_t pts = coop::coingun_sync::ReadCoinPoints(actor);
     if (pts < 0) {
@@ -236,6 +256,8 @@ void WorldActorDestroy_PRE(void* self, void* /*function*/, void* /*params*/) {
     p.elementId = static_cast<uint32_t>(eid);
     if (!s->SendReliable(coop::net::ReliableKind::WorldActorDestroy, &p, sizeof(p)))
         UE_LOGW("world-actor[host destroy PRE]: SendReliable(WorldActorDestroy) failed for eid=%u", eid);
+    else
+        g_destroysSent.fetch_add(1, std::memory_order_relaxed);
 }
 
 bool WorldActorSuppress_Interceptor(void* self, void* params) {
@@ -263,6 +285,13 @@ bool WorldActorSuppress_Interceptor(void* self, void* params) {
         // through HostEnrollExSpawn and zero through here). But that invariant lived only in a commit
         // message, which meant birthLen=0 could quietly mean two things at exactly one site (audit
         // I-2). Make it say so itself, so a SECOND birth-carrying class cannot regress in silence.
+        if (coop::event_actor_birth::RequiresBirth(actorClass)) {
+            UE_LOGI("world-actor[host PRE]: typed event-birth class reached PE author -- deferring "
+                    "enrollment until the post-Finish source/product drain");
+            // Let the native spawn proceed, but do not allocate/broadcast the unsafe PRE row; the
+            // post-Finish drain will capture the complete typed state and enroll it once.
+            return false;
+        }
         if (coop::coingun_sync::IsCoinClass(actorClass)) {
             UE_LOGE("world-actor[host PRE]: a birth-value class reached the PE author, which cannot "
                     "carry its birth value -- this mirror will be born at the CDO default and render "
@@ -286,15 +315,19 @@ bool WorldActorSuppress_Interceptor(void* self, void* params) {
             return false;
         }
         p.elementId = static_cast<uint32_t>(eid);
+        g_enrollments.fetch_add(1, std::memory_order_relaxed);
         t_pendingWa = {eid, params};  // for the matching POST (same thread, same call)
         UE_LOGI("world-actor[host]: tracked WorldActorSpawn class='%ls' eid=%u loc=(%.0f,%.0f,%.0f) "
                 "rot=(p=%.1f y=%.1f r=%.1f)", cls.c_str(), p.elementId, p.locX, p.locY, p.locZ,
                 p.rotPitch, p.rotYaw, p.rotRoll);
         // Alone-host spawns are delivered by the join connect-snapshot instead.
-        if (s->connected() &&
-            !s->SendReliable(coop::net::ReliableKind::WorldActorSpawn, &p, sizeof(p))) {
-            UE_LOGW("world-actor[host]: SendReliable(WorldActorSpawn) failed -- eid=%u not broadcast",
-                    p.elementId);
+        if (s->connected()) {
+            if (!s->SendReliable(coop::net::ReliableKind::WorldActorSpawn, &p, sizeof(p))) {
+                UE_LOGW("world-actor[host]: SendReliable(WorldActorSpawn) failed -- eid=%u not broadcast",
+                        p.elementId);
+            } else {
+                g_birthsSent.fetch_add(1, std::memory_order_relaxed);
+            }
         }
         return false;  // host spawns normally (pass-through)
     }
@@ -448,6 +481,15 @@ void OnDisconnect() {
         g_actorToWaId.clear();
     }
     g_incomingWorldActorClass.store(nullptr, std::memory_order_release);
+    g_enrollments.store(0, std::memory_order_relaxed);
+    g_duplicateEnrollments.store(0, std::memory_order_relaxed);
+    g_identityRejects.store(0, std::memory_order_relaxed);
+    g_birthValidationFailures.store(0, std::memory_order_relaxed);
+    g_birthsSent.store(0, std::memory_order_relaxed);
+    g_birthsReceived.store(0, std::memory_order_relaxed);
+    g_destroysSent.store(0, std::memory_order_relaxed);
+    g_destroysReceived.store(0, std::memory_order_relaxed);
+    g_session.store(nullptr, std::memory_order_release);
 }
 
 void TickPoseStream() {
@@ -485,6 +527,10 @@ void TickPoseStream() {
             continue;
         }
         if (!connected) continue;  // no peers: lifecycle-only pass, no batch to build
+        // Player-relative presentation actors run their native client Tick from the same typed
+        // birth state. Streaming the host player's camera-relative transform would both fight that
+        // Tick and consume scarce generic WA pose slots.
+        if (coop::event_actor_birth::UsesLocalPresentationTick(el->GetTypeName())) continue;
         // C-2 + I-1 (audit 2026-08-24) -- READ THE ORDER HERE BEFORE CHANGING IT.
         // The cap check MUST come first. `E::GetActorLocation` / `GetActorRotation` are each a full
         // ProcessEvent dispatch WITH a per-call heap allocation, so hoisting them above this check (as
@@ -540,21 +586,8 @@ void TickPoseStream() {
         if (!s->SendReliable(coop::net::ReliableKind::WorldActorDestroy, &dp, sizeof(dp)))
             UE_LOGW("world-actor[host dead-retire]: SendReliable(WorldActorDestroy) failed for eid=%u",
                     static_cast<uint32_t>(d.eid));
-    }
-    // [WA-TRACE host-read] 1 Hz while anything streams: the EXACT coords this tick read off each
-    // live WA actor (= what the net thread will serialize). The freeze-hunt discriminator: if these
-    // coords move while the client's applied pose doesn't, the break is downstream (wire/apply/drive);
-    // if they are frozen at spawn, the host read itself is the break (2026-07-05 0s-frozen-pyramid).
-    if (!batch.empty()) {
-        static long long s_lastReadTraceMs = 0;
-        const long long nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
-        if (nowMs - s_lastReadTraceMs >= 1000) {
-            s_lastReadTraceMs = nowMs;
-            for (const auto& snap : batch)
-                UE_LOGI("[WA-TRACE host-read] eid=%u loc=(%.0f,%.0f,%.0f) yaw=%.1f aux=%.1f (n=%zu connected=%d)",
-                        snap.elementId, snap.x, snap.y, snap.z, snap.yaw, snap.auxYaw, batch.size(), connected ? 1 : 0);
-        }
+        else
+            g_destroysSent.fetch_add(1, std::memory_order_relaxed);
     }
     if (!connected) return;  // publish is peer-dependent
     if (truncated > 0) {
@@ -597,6 +630,12 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
         p.rotPitch = rot.Pitch; p.rotYaw = rot.Yaw; p.rotRoll = rot.Roll;
         p.scaleX = scl.X; p.scaleY = scl.Y; p.scaleZ = scl.Z;
         FillBirthBlob(p, R::ClassOf(actor), actor);
+        if (coop::event_actor_birth::RequiresBirth(R::ClassOf(actor)) && p.birthLen == 0) {
+            g_birthValidationFailures.fetch_add(1, std::memory_order_relaxed);
+            UE_LOGW("world-actor[host snapshot]: required birth state unreadable for eid=%u -- skipped",
+                    p.elementId);
+            continue;
+        }
         // The late-join half of the birth instrument (audit M-4). Without it this leg printed on the
         // CLIENT only, so a joiner's coins had no host-side value to be paired against -- and
         // principle 8 makes late join a first-class path, not an edge case.
@@ -608,8 +647,10 @@ void QueueConnectBroadcastForSlot(int peerSlot) {
                     "-> slot %d", p.elementId, p.birthLen, pts,
                     mat.empty() ? L"<unresolved>" : mat.c_str(), peerSlot);
         }
-        if (s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::WorldActorSpawn, &p, sizeof(p)))
+        if (s->SendReliableToSlot(peerSlot, coop::net::ReliableKind::WorldActorSpawn, &p, sizeof(p))) {
             ++sent;
+            g_birthsSent.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     if (sent > 0 || unbound > 0)
         UE_LOGI("world-actor: connect-snapshot -- sent %d existing WA(s) to slot %d (%zu element(s), "
@@ -684,14 +725,30 @@ unsigned int HostEnrollExSpawn(void* actor) {
         g_disabledThisProcess.load(std::memory_order_acquire)) return 0;
     if (!actor) return 0;
     void* cls = R::ClassOf(actor);
-    if (!cls || !IsAllowlistedClass(cls)) return 0;
+    if (!cls) return 0;
+    if (!IsAllowlistedClass(cls)) {
+        g_identityRejects.fetch_add(1, std::memory_order_relaxed);
+        UE_LOGW("world-actor[host ex-enroll]: class rejected by exact identity gate");
+        return 0;
+    }
+    coop::net::WorldActorSpawnPayload birthProbe{};
+    if (coop::event_actor_birth::RequiresBirth(cls) &&
+        !coop::event_actor_birth::Capture(actor, birthProbe)) {
+        g_birthValidationFailures.fetch_add(1, std::memory_order_relaxed);
+        UE_LOGW("world-actor[host ex-enroll]: required event birth state unreadable -- skipped");
+        return 0;
+    }
     {
         // Dedup vs the interceptor+POST path: a PE-dispatched spawn was already bound there.
         std::lock_guard<std::mutex> lk(g_actorToWaIdMutex);
         auto it = g_actorToWaId.find(actor);
-        if (it != g_actorToWaId.end()) return static_cast<unsigned int>(it->second);
+        if (it != g_actorToWaId.end()) {
+            g_duplicateEnrollments.fetch_add(1, std::memory_order_relaxed);
+            return static_cast<unsigned int>(it->second);
+        }
     }
-    const std::wstring clsW = R::ToString(R::NameOf(cls));
+    std::wstring clsW = coop::event_actor_birth::WireClassKey(cls);
+    if (clsW.empty()) clsW = R::ToString(R::NameOf(cls));
     auto wa = std::make_unique<coop::element::WorldActor>();
     std::string typeName8;
     for (size_t i = 0; i < clsW.size() && i < 63; ++i) typeName8.push_back(static_cast<char>(clsW[i]));
@@ -708,6 +765,7 @@ unsigned int HostEnrollExSpawn(void* actor) {
         return 0;
     }
     el->SetActor(actor, R::InternalIndexOf(actor));
+    g_enrollments.fetch_add(1, std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lk(g_actorToWaIdMutex);
         g_actorToWaId[actor] = eid;
@@ -745,10 +803,13 @@ unsigned int HostEnrollExSpawn(void* actor) {
     }
     // Broadcast only with peers present -- an alone-host enroll is delivered by the join
     // connect-snapshot instead (a peer-less SendReliable would just WARN-spam).
-    if (s->connected() &&
-        !s->SendReliable(coop::net::ReliableKind::WorldActorSpawn, &p, sizeof(p))) {
-        UE_LOGW("world-actor[host ex-enroll]: SendReliable(WorldActorSpawn) failed for eid=%u "
-                "(element kept; the connect snapshot can still deliver it)", eid);
+    if (s->connected()) {
+        if (!s->SendReliable(coop::net::ReliableKind::WorldActorSpawn, &p, sizeof(p))) {
+            UE_LOGW("world-actor[host ex-enroll]: SendReliable(WorldActorSpawn) failed for eid=%u "
+                    "(element kept; the connect snapshot can still deliver it)", eid);
+        } else {
+            g_birthsSent.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     return static_cast<unsigned int>(eid);
 }
@@ -778,6 +839,42 @@ bool IsAllowlistedClassNameW(const std::wstring& nm) {
     return coop::world_actor_sync::IsAllowlistedClassNameW(nm);
 }
 
+void NoteBirthReceived() { g_birthsReceived.fetch_add(1, std::memory_order_relaxed); }
+void NoteDestroyReceived() { g_destroysReceived.fetch_add(1, std::memory_order_relaxed); }
+void NoteBirthValidationFailure() {
+    g_birthValidationFailures.fetch_add(1, std::memory_order_relaxed);
+}
+void NoteDuplicateBirth() { g_duplicateEnrollments.fetch_add(1, std::memory_order_relaxed); }
+
 }  // namespace detail
+
+void LogDiagnostics() {
+    const size_t tracked = WaMirrors().Size();
+    const auto* session = LoadSession();
+    // WorldActor ownership is role-pure: host entries are authoritative and
+    // client entries are mirrors, so the mirror count needs no collection scan.
+    const size_t mirrors = session && session->role() == coop::net::Role::Client ? tracked : 0;
+    size_t reverse = 0;
+    {
+        std::lock_guard<std::mutex> lk(g_actorToWaIdMutex);
+        reverse = g_actorToWaId.size();
+    }
+    UE_LOGI("event_sync_status: worldActor trackedCurrent=%zu mirrorCurrent=%zu reverseCurrent=%zu",
+            tracked, mirrors, reverse);
+    UE_LOGI("event_sync_status: worldActor enrollTotalSession=%llu "
+            "duplicateRejectedTotalSession=%llu identityRejectedTotalSession=%llu",
+            static_cast<unsigned long long>(g_enrollments.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_duplicateEnrollments.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_identityRejects.load(std::memory_order_relaxed)));
+    UE_LOGI("event_sync_status: worldActor birthValidationFailedTotalSession=%llu "
+            "birthSentTotalSession=%llu birthReceivedTotalSession=%llu",
+            static_cast<unsigned long long>(g_birthValidationFailures.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_birthsSent.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_birthsReceived.load(std::memory_order_relaxed)));
+    UE_LOGI("event_sync_status: worldActor destroySentTotalSession=%llu "
+            "destroyReceivedTotalSession=%llu",
+            static_cast<unsigned long long>(g_destroysSent.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(g_destroysReceived.load(std::memory_order_relaxed)));
+}
 
 }  // namespace coop::world_actor_sync

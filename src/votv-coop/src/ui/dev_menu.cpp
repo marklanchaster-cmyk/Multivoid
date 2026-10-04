@@ -24,6 +24,7 @@
 #include "ui/overlay_backend.h"  // Kind() -- the "Graphics API" line
 #include "coop/player/roster.h"  // LocalIsHost -- the Administration role gate
 #include "ui/admin_panel.h"
+#include "ui/console.h"
 #include "ui/world_rules_panel.h"  // F1 > World > Rules (shown to everyone)
 #include "ui/net_stats_panel.h"
 #include "ui/scale.h"
@@ -335,7 +336,15 @@ void RenderSkins() { ui::skins_panel::Render(); }
 
 // Network stats overlay pref + live readout (its own panel file -- ui/net_stats_panel.cpp;
 // this is just the tree hook). Non-dev: every player gets the toggle, like Cosmetics.
-void RenderNetStats() { ui::net_stats_panel::RenderMenuPref(); }
+void RenderNetStats() {
+    ui::net_stats_panel::RenderMenuPref();
+    ImGui::Separator();
+    if (ImGui::Button(ui::console::IsOpen() ? "Close diagnostic console"
+                                            : "Open diagnostic console"))
+        ui::console::Toggle();
+    ImGui::SameLine();
+    ImGui::TextDisabled("commands: help, event_sync_status");
+}
 
 // Peer action notifications: show a chat/feed line when another player does a shared
 // action everyone should see (first: deleting an email). A LOCAL view preference

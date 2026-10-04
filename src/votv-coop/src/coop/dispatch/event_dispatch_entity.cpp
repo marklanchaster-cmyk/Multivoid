@@ -32,11 +32,17 @@
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
 
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <string>
 
 namespace coop::event_feed {
+
+namespace {
+std::atomic<uint64_t> g_entitySpawnSizeRejected{0};
+std::atomic<uint64_t> g_worldActorSpawnSizeRejected{0};
+}
 
 bool HandleEntityEvent(net::Session& session,
                        const net::Session::ReliableMessage& msg,
@@ -547,8 +553,9 @@ bool HandleEntityEvent(net::Session& session,
         // per-field validation (finite + bounds + allowlist + dedup).
         // UFunction calls inside OnEntitySpawn are game-thread only, so
         // dispatch via GT::Post.
-        if (msg.payloadLen < sizeof(net::EntitySpawnPayload)) {
-            UE_LOGW("event_feed: EntitySpawn payload too short (%zu < %zu)",
+        if (msg.payloadLen != sizeof(net::EntitySpawnPayload)) {
+            g_entitySpawnSizeRejected.fetch_add(1, std::memory_order_relaxed);
+            UE_LOGW("event_feed: EntitySpawn payload size mismatch (%zu != %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::EntitySpawnPayload));
             break;
         }
@@ -607,8 +614,9 @@ bool HandleEntityEvent(net::Session& session,
         // otherwise flood crafted classNames forcing FindClass walks on the host game thread).
         // OnWorldActorSpawn does the full per-field validation (finite + bounds + allowlist + dedup);
         // its UFunction calls are game-thread only, so dispatch via GT::Post.
-        if (msg.payloadLen < sizeof(net::WorldActorSpawnPayload)) {
-            UE_LOGW("event_feed: WorldActorSpawn payload too short (%zu < %zu)",
+        if (msg.payloadLen != sizeof(net::WorldActorSpawnPayload)) {
+            g_worldActorSpawnSizeRejected.fetch_add(1, std::memory_order_relaxed);
+            UE_LOGW("event_feed: WorldActorSpawn payload size mismatch (%zu != %zu)",
                     static_cast<size_t>(msg.payloadLen), sizeof(net::WorldActorSpawnPayload));
             break;
         }
@@ -820,6 +828,14 @@ bool HandleEntityEvent(net::Session& session,
         return false;  // not an entity-family kind -> event_feed tries the next family
     }
     return true;  // an entity-family kind was matched (processed or validation-dropped)
+}
+
+void LogEntitySpawnDiagnostics() {
+    UE_LOGI("event_sync_status: malformedSizeTotalProcess EntitySpawn=%llu WorldActorSpawn=%llu",
+            static_cast<unsigned long long>(
+                g_entitySpawnSizeRejected.load(std::memory_order_relaxed)),
+            static_cast<unsigned long long>(
+                g_worldActorSpawnSizeRejected.load(std::memory_order_relaxed)));
 }
 
 }  // namespace coop::event_feed

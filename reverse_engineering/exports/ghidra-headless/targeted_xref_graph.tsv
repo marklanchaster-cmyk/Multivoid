@@ -1,0 +1,5 @@
+root	depth	to_address	from_address	ref_type	owner_entry	owner_function
+IsBroken_string	0	1441f5068	1441f8370	DATA		<no-function>
+UFunction_string	0	143c2d7c8	140690942	DATA	140690930	FUN_140690930
+UFunction_string	0	143c2d7c8	1406900f3	DATA		<no-function>
+BlueprintGeneratedClass_string	0	143c2ac90	1412e075c	DATA	1412e0310	FUN_1412e0310

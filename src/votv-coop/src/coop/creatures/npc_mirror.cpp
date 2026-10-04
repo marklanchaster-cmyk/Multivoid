@@ -26,6 +26,7 @@
 #include "coop/props/join_membership_sweep.h"  // anti-smear 2026-06-30: claim+sweep extracted out of remote_prop_spawn
 #include "coop/dev/kerfur_census.h"  // DIAGNOSTIC: one-shot kerfur census at quiescence (forward-dup root)
 #include "coop/creatures/npc_sync.h"
+#include "coop/creatures/fossilhound_birth.h"
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/actors/kerfur.h"  // thorough park (NeutralizeAiTimers) for fresh-spawn mirrors
@@ -213,7 +214,7 @@ void OnEntitySpawn(const coop::net::EntitySpawnPayload& payload) {
                         payload.rotPitch, payload.rotYaw, payload.rotRoll,
                         coop::net::SanitizeWireScaleAxis(payload.scaleX),
                         coop::net::SanitizeWireScaleAxis(payload.scaleY),
-                        coop::net::SanitizeWireScaleAxis(payload.scaleZ));
+                        coop::net::SanitizeWireScaleAxis(payload.scaleZ),&payload);
 }
 
 bool AdoptExistingNpcAsMirror(void* actor, uint32_t elementId, const std::wstring& classW) {
@@ -243,7 +244,8 @@ void DestroyLocalNpcActor(void* actor) {
 bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t elementId,
                          float locX, float locY, float locZ,
                          float rotPitch, float rotYaw, float rotRoll,
-                         float scaleX, float scaleY, float scaleZ) {
+                         float scaleX, float scaleY, float scaleZ,
+                         const coop::net::EntitySpawnPayload* birth) {
     using ue_wrap::ParamFrame;
     using ue_wrap::Call;
     // UFunction + CDO must be resolved (npc_sync::Install pushes them via SetClientRefs; a
@@ -313,6 +315,7 @@ bool SpawnFreshNpcMirror(const std::wstring& classW, void* actorClass, uint32_t 
         coop::npc_sync::ClearIncomingNpcSpawn();
         return false;
     }
+    if(birth)coop::fossilhound_birth::ApplyBeforeFinish(spawned,*birth);
     {
         ParamFrame finish(g_finishSpawnFn);
         if (!finish.valid()) {

@@ -398,8 +398,8 @@ table, and its comments encode an authority model per kind:
 | `PRESSER-authored` | `DeskInput`, `DeskSndFx`, `PlayDeckEvent` |
 | `CLAIM-OWNER-authoritative` | `DishAimState` — **the exact shape v116 retired** |
 | `OCCUPANT-OR-GRABBER-authoritative` | `AtvState` |
-| `ANY-PEER-announced idempotent state` | `DriveSlotState` — **authority is not needed at all; idempotent lines converge** |
-| `WRITER-authored` | `DrivePayload` |
+| `HOST-TERMINAL intent/result` | `DriveSlotState` — client organic edges are speculative intents; host expected-eid validation and canonical state win |
+| `HOST-TERMINAL data intent/result` | `DrivePayload` — client rows terminate at the host; clients apply only host-authored rows |
 | `SYMMETRIC` | doors, lights, containers, garage, appliance, locker, power — **this is finding A4** |
 
 **~6 authority models already live here.** The syncer would be a seventh. And a new per-kind table
