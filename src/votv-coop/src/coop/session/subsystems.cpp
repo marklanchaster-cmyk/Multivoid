@@ -146,113 +146,116 @@
 namespace coop::subsystems {
 
 void Install(coop::net::Session& session) {
-    coop::grab_observer::Install();
-    coop::prop_lifecycle::InstallInventory(&session);
-    coop::prop_lifecycle::Install(&session);
-    coop::npc_sync::Install(&session);
-    coop::world_actor_sync::Install(&session);  // v80 (B3b): non-Character event-actor mirror (2nd BeginDeferred interceptor, disjoint allowlist)
-    coop::piramid_sync::Install(&session);      // v97: piramid event choreography lane (hooks arm lazily on the first piramid element)
-    coop::item_activate::Install(&session);  // Phase 5F flashlight
-    coop::player_damage::Install(&session);  // vitals Inc3-WIRE damage relay (send + owner-apply)
-    coop::weather_sync::Install(&session);   // Phase 5W weather
-    coop::interactable_sync::Install(&session);  // Phase 5D doors + lights + container lids
-    coop::keypad_sync::Install(&session);    // v33 password-keypad mirror (its own module)
-    coop::time_sync::Install(&session);      // v36 host-authoritative world clock (time-of-day / dark-world fix)
-    coop::sky_sync::Install(&session);       // v44 host-authoritative night-sky orientation + moon phase
-    coop::power_sync::Install(&session);     // v46 base power-panel breakers (its own module -- 5 bools)
-    coop::atv_sync::Install(&session);       // v47 ATV body pose (occupant-authoritative keyed stream)
-    coop::drone_sync::Install(&session);     // v48 delivery drone body pose (host-authoritative singleton)
-    coop::order_sync::Install(&session);     // v49 delivery-drone economy: client->host shop-order forward
-    coop::coingun_sync::Install(&session);   // v137 A37/A38: the sell gun + host-minted coins
-    coop::firefly_sync::Install(&session);   // v51 peer-symmetric ambient firefly mirror (each peer captures+shares its own)
-    coop::event_cue_sync::Install(&session); // v79 HOST-AUTH cosmetic emitter-cue mirror (B1: starfall etc. -- host detects PSC, client replays)
-    coop::event_fire_sync::Install(&session); // v95 HOST-AUTH scheduled-event replay (passEvents growth poll -> EventFire; client suppress + policy replay)
-    coop::event_active_sync::Install(&session); // join-during-event Phase 0 (probe): host 1 Hz activeEvents_senders membership diff -> BEGIN/END edge log
-    coop::event_output_sync::Install(&session);
-    coop::event_family_sync::Install(&session);
-    coop::black_fog_sync::Install(&session);   // complete blackFog lifetime/presentation; EventAuthority owns identity
-    coop::agrav_sync::Install(&session);
-    coop::alarm_sync::Install(&session);     // v101 base radar alarm shared-world toggle (1 Hz active poll both roles; docs/events/alarm.md)
-    coop::serverbox_sync::Install(&session);    // v107 signal-server sim state: host polls+broadcasts, client drive-reals + kills its ticker_serverBreaker
-    coop::repair_sync::Install(&session);       // custom 65003: server/tower/generator completed repairs
-    coop::generator_break_sync::Install(&session);
-    coop::roach_sync::Install(&session);        // v108 roach infestation: host paged snapshots, client ordinal apply + consumption intents
-    coop::owner_entity_sync::Install(&session); // v108 owner-entity lane: eyer per-peer owned + cross-peer display mirrors
-    coop::inventory_pickup_sync::Install(&session);  // v58 inventory-collect blip (PlaySound2D observer)
-    coop::chat_sync::Install(&session);      // v60 T-chat (the ui/chat_input send path)
-    coop::local_body::Install(&session);     // v93 skins: local first-person body + SkinChange announce
-    coop::local_body::Tick();                // applies the persisted skin to the local pawn + 1 Hz convergence
-    coop::nameplate::Install(&session);      // v94: plate-pref announce path (F1 checkbox -> NameplateChange)
-    coop::nick_color::Install(&session);     // v103 (12f): nick-color announce path + local-slot mirror refresh
-    coop::turbine_sync::Install(&session);   // v61 wind-turbine facing/spin mirror (host-auth ~1 Hz)
-    coop::device_occupancy::Install(&session);  // v63 enterable-device occupancy (busy claim + E deny gate)
-    coop::console_state_sync::Install(&session);  // v64 signal-catcher state mirror (sky signals + desk + dish aim)
-    coop::signal_catch_sync::Install(&session);   // v70: the signal-catch consume replay (dish slew + downloader arm on every peer)
-    coop::laptop_sync::Install(&session);         // v116: the stationary PC power + floppy lane
-    coop::laptop_buffer_sync::Install(&session);  // v121 (OPEN-10): the PC buffer quad
-    coop::floppybox_sync::Install(&session);      // v121 (OPEN-10): the disc crate stack
-    coop::props::container_contents_sync::Install(&session);  // v124 (R11): container contents
-    coop::desk_cursor_sync::Install(&session);    // v109: coords-panel live-cursor unreliable motion stream (interpolated mirror)
-    coop::desk_input_sync::Install(&session);     // v112: claim-free field-granular desk INPUT lane (the BUGS-v111 axis fix)
-    coop::desk_snd_fx::Install(&session);         // v115: desk audio-effect mirror (Func-patch audio seam)
-    coop::deck_play_sync::Install(&session);      // v117 (L6): deck playback edge mirror (audio-seam Activate/Deactivate + gen guard)
-    coop::physmods_sync::Install(&session);       // v118 (L8): physMods value-ops + host-canonical array
-    coop::drive_sync::Install(&session);          // v119 (L5): drive-chain lanes (0x45 dirty-marks + sweeps; owns ALL chain verb registration)
-    coop::drive_rack_sync::Install(&session);     // v119 (L5): rack storage lane (marks forwarded from drive_sync)
-    coop::desk_sim_sync::Install(&session);       // v111: download-SIM host-authoritative output stream (decoded/needle/rate/frData/poData/offsets; client overwrites)
-    coop::dish_sync::Install(&session);           // v113 (L4): host-auth dish pose mirror + host-polarity ARM edge + symmetric calibration lane (client sim parked)
-    coop::tape_caddy_sync::Install(&session);     // v114 (L7): caddy reel slots (presser edges) + host accrual corrector (client accrual NOT parked -- corrector-bounded)
-    coop::daily_task_sync::Install(&session);     // v114 (L7): saveSlot.taskNew host mirror (rollover/sell are host-only live)
-    coop::email_sync::Install(&session);     // v64 inc 2: meadow-PC email mirror (watermark -> chunked rows -> addEmail)
-    coop::signal_sync::Install(&session);    // v65: desk signal-library mirror (savedSignals_0 shadow/diff)
-    coop::meadow_db_sync::Install(&session); // v120 (L9): meadow-DB mirror (content-hash multiset + id-preserving replay)
-    coop::comp_sync::Install(&session);      // v65: refiner decode pane (single-simulator stream + passive mirrors)
-    coop::voice_chat::Install(&session);     // v66: proximity voice chat
-    coop::radio_item::Install();              // walkie: hold-E power interaction
-    coop::window_sync::Install(&session);    // v41 base-window dirt scalar (the "main huge window")
-    coop::grime_sync::Install(&session);     // v42 surface grime (walls/ceiling/floor dirt decals)
-    coop::trash_pile_sync::Install(&session);  // v57 trashBitsPile collect counters (uses 6/7)
-    coop::trash_collect_sync::Install(&session);  // chipPile grab observer (InpActEvt_use PRE -> PropDestroy(eid); replaces the retired pile death-watch)
-    coop::garbage_sync::SetSession(&session);
-    coop::garbage_sync::Install();           // Phase 5G garbage
-    coop::spawn_authority::Install(&session);  // T1 Inc-1: t3 cancels + t1 park-class resolve (host results stream via the mirrors)
-    coop::dev::rng_roll_census::Install(&session);  // [dev] T1 probe v9: driver/QuitGame interceptors (no-op unless rng_roll_census=1)
-    coop::dev::desk_diag::Install(&session);  // [dev] desk divergence census: per-peer desk/comp/dish/coordLog snapshot (no-op unless desk_diag=1)
-    coop::dev::container_selftest::Install(&session);  // [dev] R11b e2e circle (no-op unless container_selftest=1)
-    coop::dev::drive_selftest::Install(&session);  // [dev] rack-lane e2e circles (no-op unless drive_selftest=1; the extraction's digest instrument)
-    coop::dev::roster_token_selftest::Install(&session);  // [dev] arc-A successor-ban drill: a token captured from the previous occupant must be refused (no-op unless roster_token_selftest=1)
-    coop::host_spawn_watcher::Install(&session);  // M2: HOST mirrors the ambient spawner outputs (the pinecone scare) the line above cancels on the client -- BeginDeferred POST -> PropSpawn-by-eid
-    coop::prop_drop_intent::Install(&session);    // v106 F2 Inc-1: CLIENT FinishSpawn post-hook (chains after host_spawn_watcher's) -> place detect -> host DROP INTENT
-    coop::kerfur_entity::SetSession(&session);  // K-3: stable-KerfurId authority table (cache session for the host AllocHostId role gate; K-4 broadcasts through it)
-    coop::kerfur_convert::Install(&session);  // v67: host-authoritative kerfur on/off conversion (the dupe fix -- client menu cancel -> request; host verb + converge)
-    coop::kerfur_command::Install(&session);  // v74: host-authoritative kerfur menu command relay + ownership-aware Follow
-    coop::kerfur_menu_input::Install(&session);  // client radial-menu verb detect (InpActEvt_use PRE -- the actionName dispatch is PE-invisible) -> kerfur_command relay
-    coop::kerfur_form_assembler::Install(&session);  // VM-dispatch substrate consumer (incr 1): register the two EX_LocalVirtual conversion verbs + open the session gate; observe-only + containment counter
-    coop::prop_stick_sync::Install(&session); // v68: wall-attachable stick mirror (camera-on-wall -- commit observer -> PropStickState; receiver replays forceStick)
-    coop::sleep_sync::Install(&session);      // v71: the Minecraft sleep gate (isSleep edge poll -> host tally -> accelerate/end phases)
-    coop::wisp_attack_sync::Install(&session); // v72: Killer Wisp coop -- AddPlayerDamage PRE-cancel (host neutralize) + host detect/relay
+    #define TRACE_INSTALL(label, call) \
+        do { coop::dev::HitchTrace _trace{"install." label}; call; } while (false)
+    TRACE_INSTALL("grab_observer", coop::grab_observer::Install());
+    TRACE_INSTALL("prop_lifecycle_inventory", coop::prop_lifecycle::InstallInventory(&session));
+    TRACE_INSTALL("prop_lifecycle", coop::prop_lifecycle::Install(&session));
+    TRACE_INSTALL("npc_sync", coop::npc_sync::Install(&session));
+    TRACE_INSTALL("world_actor_sync", coop::world_actor_sync::Install(&session));  // v80 (B3b): non-Character event-actor mirror (2nd BeginDeferred interceptor, disjoint allowlist)
+    TRACE_INSTALL("piramid_sync", coop::piramid_sync::Install(&session));      // v97: piramid event choreography lane (hooks arm lazily on the first piramid element)
+    TRACE_INSTALL("item_activate", coop::item_activate::Install(&session));  // Phase 5F flashlight
+    TRACE_INSTALL("player_damage", coop::player_damage::Install(&session));  // vitals Inc3-WIRE damage relay (send + owner-apply)
+    TRACE_INSTALL("weather_sync", coop::weather_sync::Install(&session));   // Phase 5W weather
+    TRACE_INSTALL("interactable_sync", coop::interactable_sync::Install(&session));  // Phase 5D doors + lights + container lids
+    TRACE_INSTALL("keypad_sync", coop::keypad_sync::Install(&session));    // v33 password-keypad mirror (its own module)
+    TRACE_INSTALL("time_sync", coop::time_sync::Install(&session));      // v36 host-authoritative world clock (time-of-day / dark-world fix)
+    TRACE_INSTALL("sky_sync", coop::sky_sync::Install(&session));       // v44 host-authoritative night-sky orientation + moon phase
+    TRACE_INSTALL("power_sync", coop::power_sync::Install(&session));     // v46 base power-panel breakers (its own module -- 5 bools)
+    TRACE_INSTALL("atv_sync", coop::atv_sync::Install(&session));       // v47 ATV body pose (occupant-authoritative keyed stream)
+    TRACE_INSTALL("drone_sync", coop::drone_sync::Install(&session));     // v48 delivery drone body pose (host-authoritative singleton)
+    TRACE_INSTALL("order_sync", coop::order_sync::Install(&session));     // v49 delivery-drone economy: client->host shop-order forward
+    TRACE_INSTALL("coingun_sync", coop::coingun_sync::Install(&session));   // v137 A37/A38: the sell gun + host-minted coins
+    TRACE_INSTALL("firefly_sync", coop::firefly_sync::Install(&session));   // v51 peer-symmetric ambient firefly mirror (each peer captures+shares its own)
+    TRACE_INSTALL("event_cue_sync", coop::event_cue_sync::Install(&session)); // v79 HOST-AUTH cosmetic emitter-cue mirror (B1: starfall etc. -- host detects PSC, client replays)
+    TRACE_INSTALL("event_fire_sync", coop::event_fire_sync::Install(&session)); // v95 HOST-AUTH scheduled-event replay (passEvents growth poll -> EventFire; client suppress + policy replay)
+    TRACE_INSTALL("event_active_sync", coop::event_active_sync::Install(&session)); // join-during-event Phase 0 (probe): host 1 Hz activeEvents_senders membership diff -> BEGIN/END edge log
+    TRACE_INSTALL("event_output_sync", coop::event_output_sync::Install(&session));
+    TRACE_INSTALL("event_family_sync", coop::event_family_sync::Install(&session));
+    TRACE_INSTALL("black_fog_sync", coop::black_fog_sync::Install(&session));   // complete blackFog lifetime/presentation; EventAuthority owns identity
+    TRACE_INSTALL("agrav_sync", coop::agrav_sync::Install(&session));
+    TRACE_INSTALL("alarm_sync", coop::alarm_sync::Install(&session));     // v101 base radar alarm shared-world toggle (1 Hz active poll both roles; docs/events/alarm.md)
+    TRACE_INSTALL("serverbox_sync", coop::serverbox_sync::Install(&session));    // v107 signal-server sim state: host polls+broadcasts, client drive-reals + kills its ticker_serverBreaker
+    TRACE_INSTALL("repair_sync", coop::repair_sync::Install(&session));       // custom 65003: server/tower/generator completed repairs
+    TRACE_INSTALL("generator_break_sync", coop::generator_break_sync::Install(&session));
+    TRACE_INSTALL("roach_sync", coop::roach_sync::Install(&session));        // v108 roach infestation: host paged snapshots, client ordinal apply + consumption intents
+    TRACE_INSTALL("owner_entity_sync", coop::owner_entity_sync::Install(&session)); // v108 owner-entity lane: eyer per-peer owned + cross-peer display mirrors
+    TRACE_INSTALL("inventory_pickup_sync", coop::inventory_pickup_sync::Install(&session));  // v58 inventory-collect blip (PlaySound2D observer)
+    TRACE_INSTALL("chat_sync", coop::chat_sync::Install(&session));      // v60 T-chat (the ui/chat_input send path)
+    TRACE_INSTALL("local_body", coop::local_body::Install(&session));     // v93 skins: local first-person body + SkinChange announce
+    TRACE_INSTALL("local_body_tick", coop::local_body::Tick());                // applies the persisted skin to the local pawn + 1 Hz convergence
+    TRACE_INSTALL("nameplate", coop::nameplate::Install(&session));      // v94: plate-pref announce path (F1 checkbox -> NameplateChange)
+    TRACE_INSTALL("nick_color", coop::nick_color::Install(&session));     // v103 (12f): nick-color announce path + local-slot mirror refresh
+    TRACE_INSTALL("turbine_sync", coop::turbine_sync::Install(&session));   // v61 wind-turbine facing/spin mirror (host-auth ~1 Hz)
+    TRACE_INSTALL("device_occupancy", coop::device_occupancy::Install(&session));  // v63 enterable-device occupancy (busy claim + E deny gate)
+    TRACE_INSTALL("console_state_sync", coop::console_state_sync::Install(&session));  // v64 signal-catcher state mirror (sky signals + desk + dish aim)
+    TRACE_INSTALL("signal_catch_sync", coop::signal_catch_sync::Install(&session));   // v70: the signal-catch consume replay (dish slew + downloader arm on every peer)
+    TRACE_INSTALL("laptop_sync", coop::laptop_sync::Install(&session));         // v116: the stationary PC power + floppy lane
+    TRACE_INSTALL("laptop_buffer_sync", coop::laptop_buffer_sync::Install(&session));  // v121 (OPEN-10): the PC buffer quad
+    TRACE_INSTALL("floppybox_sync", coop::floppybox_sync::Install(&session));      // v121 (OPEN-10): the disc crate stack
+    TRACE_INSTALL("container_contents_sync", coop::props::container_contents_sync::Install(&session));  // v124 (R11): container contents
+    TRACE_INSTALL("desk_cursor_sync", coop::desk_cursor_sync::Install(&session));    // v109: coords-panel live-cursor unreliable motion stream (interpolated mirror)
+    TRACE_INSTALL("desk_input_sync", coop::desk_input_sync::Install(&session));     // v112: claim-free field-granular desk INPUT lane (the BUGS-v111 axis fix)
+    TRACE_INSTALL("desk_snd_fx", coop::desk_snd_fx::Install(&session));         // v115: desk audio-effect mirror (Func-patch audio seam)
+    TRACE_INSTALL("deck_play_sync", coop::deck_play_sync::Install(&session));      // v117 (L6): deck playback edge mirror (audio-seam Activate/Deactivate + gen guard)
+    TRACE_INSTALL("physmods_sync", coop::physmods_sync::Install(&session));       // v118 (L8): physMods value-ops + host-canonical array
+    TRACE_INSTALL("drive_sync", coop::drive_sync::Install(&session));          // v119 (L5): drive-chain lanes (0x45 dirty-marks + sweeps; owns ALL chain verb registration)
+    TRACE_INSTALL("drive_rack_sync", coop::drive_rack_sync::Install(&session));     // v119 (L5): rack storage lane (marks forwarded from drive_sync)
+    TRACE_INSTALL("desk_sim_sync", coop::desk_sim_sync::Install(&session));       // v111: download-SIM host-authoritative output stream (decoded/needle/rate/frData/poData/offsets; client overwrites)
+    TRACE_INSTALL("dish_sync", coop::dish_sync::Install(&session));           // v113 (L4): host-auth dish pose mirror + host-polarity ARM edge + symmetric calibration lane (client sim parked)
+    TRACE_INSTALL("tape_caddy_sync", coop::tape_caddy_sync::Install(&session));     // v114 (L7): caddy reel slots (presser edges) + host accrual corrector (client accrual NOT parked -- corrector-bounded)
+    TRACE_INSTALL("daily_task_sync", coop::daily_task_sync::Install(&session));     // v114 (L7): saveSlot.taskNew host mirror (rollover/sell are host-only live)
+    TRACE_INSTALL("email_sync", coop::email_sync::Install(&session));     // v64 inc 2: meadow-PC email mirror (watermark -> chunked rows -> addEmail)
+    TRACE_INSTALL("signal_sync", coop::signal_sync::Install(&session));    // v65: desk signal-library mirror (savedSignals_0 shadow/diff)
+    TRACE_INSTALL("meadow_db_sync", coop::meadow_db_sync::Install(&session)); // v120 (L9): meadow-DB mirror (content-hash multiset + id-preserving replay)
+    TRACE_INSTALL("comp_sync", coop::comp_sync::Install(&session));      // v65: refiner decode pane (single-simulator stream + passive mirrors)
+    TRACE_INSTALL("voice_chat", coop::voice_chat::Install(&session));     // v66: proximity voice chat
+    TRACE_INSTALL("radio_item", coop::radio_item::Install());              // walkie: hold-E power interaction
+    TRACE_INSTALL("window_sync", coop::window_sync::Install(&session));    // v41 base-window dirt scalar (the "main huge window")
+    TRACE_INSTALL("grime_sync", coop::grime_sync::Install(&session));     // v42 surface grime (walls/ceiling/floor dirt decals)
+    TRACE_INSTALL("trash_pile_sync", coop::trash_pile_sync::Install(&session));  // v57 trashBitsPile collect counters (uses 6/7)
+    TRACE_INSTALL("trash_collect_sync", coop::trash_collect_sync::Install(&session));  // chipPile grab observer (InpActEvt_use PRE -> PropDestroy(eid); replaces the retired pile death-watch)
+    TRACE_INSTALL("garbage_sync_set_session", coop::garbage_sync::SetSession(&session));
+    TRACE_INSTALL("garbage_sync", coop::garbage_sync::Install());           // Phase 5G garbage
+    TRACE_INSTALL("spawn_authority", coop::spawn_authority::Install(&session));  // T1 Inc-1: t3 cancels + t1 park-class resolve (host results stream via the mirrors)
+    TRACE_INSTALL("rng_roll_census", coop::dev::rng_roll_census::Install(&session));  // [dev] T1 probe v9: driver/QuitGame interceptors (no-op unless rng_roll_census=1)
+    TRACE_INSTALL("desk_diag", coop::dev::desk_diag::Install(&session));  // [dev] desk divergence census: per-peer desk/comp/dish/coordLog snapshot (no-op unless desk_diag=1)
+    TRACE_INSTALL("container_selftest", coop::dev::container_selftest::Install(&session));  // [dev] R11b e2e circle (no-op unless container_selftest=1)
+    TRACE_INSTALL("drive_selftest", coop::dev::drive_selftest::Install(&session));  // [dev] rack-lane e2e circles (no-op unless drive_selftest=1; the extraction's digest instrument)
+    TRACE_INSTALL("roster_token_selftest", coop::dev::roster_token_selftest::Install(&session));  // [dev] arc-A successor-ban drill: a token captured from the previous occupant must be refused (no-op unless roster_token_selftest=1)
+    TRACE_INSTALL("host_spawn_watcher", coop::host_spawn_watcher::Install(&session));  // M2: HOST mirrors the ambient spawner outputs (the pinecone scare) the line above cancels on the client -- BeginDeferred POST -> PropSpawn-by-eid
+    TRACE_INSTALL("prop_drop_intent", coop::prop_drop_intent::Install(&session));    // v106 F2 Inc-1: CLIENT FinishSpawn post-hook (chains after host_spawn_watcher's) -> place detect -> host DROP INTENT
+    TRACE_INSTALL("kerfur_entity_set_session", coop::kerfur_entity::SetSession(&session));  // K-3: stable-KerfurId authority table (cache session for the host AllocHostId role gate; K-4 broadcasts through it)
+    TRACE_INSTALL("kerfur_convert", coop::kerfur_convert::Install(&session));  // v67: host-authoritative kerfur on/off conversion (the dupe fix -- client menu cancel -> request; host verb + converge)
+    TRACE_INSTALL("kerfur_command", coop::kerfur_command::Install(&session));  // v74: host-authoritative kerfur menu command relay + ownership-aware Follow
+    TRACE_INSTALL("kerfur_menu_input", coop::kerfur_menu_input::Install(&session));  // client radial-menu verb detect (InpActEvt_use PRE -- the actionName dispatch is PE-invisible) -> kerfur_command relay
+    TRACE_INSTALL("kerfur_form_assembler", coop::kerfur_form_assembler::Install(&session));  // VM-dispatch substrate consumer (incr 1): register the two EX_LocalVirtual conversion verbs + open the session gate; observe-only + containment counter
+    TRACE_INSTALL("prop_stick_sync", coop::prop_stick_sync::Install(&session)); // v68: wall-attachable stick mirror (camera-on-wall -- commit observer -> PropStickState; receiver replays forceStick)
+    TRACE_INSTALL("sleep_sync", coop::sleep_sync::Install(&session));      // v71: the Minecraft sleep gate (isSleep edge poll -> host tally -> accelerate/end phases)
+    TRACE_INSTALL("wisp_attack_sync", coop::wisp_attack_sync::Install(&session)); // v72: Killer Wisp coop -- AddPlayerDamage PRE-cancel (host neutralize) + host detect/relay
     // v73 per-player inventory: Install() moved to StartCoopSession (PRE-WORLD). This
     // subsystems::Install only runs at world-up (net_pump gates it on g_netLocal), but the
     // apply-blob receiver + the pre-materialize SaveObjectReadyHook must be live BEFORE the join's
     // world loads -- installing here silently dropped every apply chunk during the menu-mode wait.
     // The Tick (stream/self-test) + EnsurePlayerFile/OnDisconnect hooks elsewhere in this file stay
     // (post-world / per-slot edges).
-    coop::balance_sync::SetSession(&session); // v30 shared host-authoritative balance
+    TRACE_INSTALL("balance_sync_set_session", coop::balance_sync::SetSession(&session)); // v30 shared host-authoritative balance
     // (trash_collect_sync has no observer to install -- playerTryToCollect is
     // BP-internal; it acts on the held-prop edge in local_streams, see
     // EnsureHeldItemBroadcast.)
     // PR-FOUNDATION-2 (B): client world-save block (host-only persistence).
     // No-op on the host; on the client installs the SaveGameToSlot detour once.
-    coop::save_block::Install(&session);
+    TRACE_INSTALL("save_block", coop::save_block::Install(&session));
     // PR-FOUNDATION-2 (B part 2): grey out the client pause-menu "Save Game"
     // button (honest UX over the hard block). No-op on the host.
-    coop::save_button_disable::Install(&session);
+    TRACE_INSTALL("save_button_disable", coop::save_button_disable::Install(&session));
     // NOTE: coop::shutdown::Install / UpdateWindowTitle are called from
     // the timeline tick lambda DIRECTLY in harness.cpp -- they MUST NOT
     // be gated on the local player like this function is (HWND subclass +
     // window title must work BEFORE the local player has been possessed,
     // e.g. on the OMEGA splash where the user might X-close before
     // gameplay).
+    #undef TRACE_INSTALL
 }
 
 namespace {
