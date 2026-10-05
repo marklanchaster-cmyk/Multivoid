@@ -51,6 +51,7 @@
 
 #include "coop/world/spawn_authority.h"
 
+#include "coop/element/object_scan_hub.h"
 #include "coop/net/session.h"
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/core/game_thread.h"
@@ -306,77 +307,120 @@ bool AllParkClassesResolved() {
 
 std::atomic<bool> g_cancelInstalled{false};
 
+bool TryInstallCancelTarget(CancelTarget& t, void* cls) {
+    if (t.registered || !cls) return t.registered;
+    void* fn = R::FindFunction(cls, t.fn);
+    if (!fn) {
+        UE_LOGW("spawn_authority: '%ls' not found on %ls -- skipping", t.fn, t.cls);
+        return false;
+    }
+    if (!GT::RegisterInterceptor(fn, t.cb)) {
+        UE_LOGE("spawn_authority: RegisterInterceptor failed for %ls::%ls (table full?)",
+                t.cls, t.fn);
+        return false;
+    }
+    t.registered = true;
+    UE_LOGI("spawn_authority: t3 PRE-cancel installed -- %ls::%ls", t.cls, t.fn);
+    return true;
+}
+
+bool TryInstallScriptTarget(ScriptCancelTarget& t, void* cls) {
+    if (t.registered || !cls) return t.registered;
+    if (!t.function) t.function = R::FindFunction(cls, t.fn);
+    if (!t.function) return false;
+    if (t.tag == 650092 && g_mannequinSpawnReturnOff < 0) {
+        g_mannequinSpawnReturnOff = R::FindParamOffset(t.function, L"return");
+        if (g_mannequinSpawnReturnOff < 0) return false;
+    }
+    SG::SetEnabled(true);
+    if (!SG::Watch(t.function, t.tag, &SuppressClientScriptProducer, nullptr)) return false;
+    t.registered = true;
+    UE_LOGI("spawn_authority: exact ScriptGate cancel installed -- %ls::%ls", t.cls, t.fn);
+    return true;
+}
+
+void UpdateCancelInstalled() {
+    if (g_cancelInstalled.load(std::memory_order_acquire)) return;
+    for (const auto& t : g_cancelTargets)
+        if (!t.registered) return;
+    for (const auto& t : g_scriptCancelTargets)
+        if (!t.registered) return;
+    g_cancelInstalled.store(true, std::memory_order_release);
+    UE_LOGI("spawn_authority: %zu ProcessEvent + %zu ScriptGate producer cancels registered "
+            "(ambient flora/wisps/roaches + world-event selectors); "
+            "active only on a running client session",
+            std::size(g_cancelTargets), std::size(g_scriptCancelTargets));
+}
+
+size_t ResolvedTargetCount() {
+    size_t count = 0;
+    for (const auto& t : g_cancelTargets) if (t.registered) ++count;
+    for (const auto& t : g_scriptCancelTargets) if (t.registered) ++count;
+    for (size_t i = 0; i < kParkClassCount; ++i)
+        if (g_parkClasses[i].load(std::memory_order_acquire)) ++count;
+    return count;
+}
+
+bool HubReady() { return true; }
+bool HubMatchesNoInstances(void*) { return false; }
+void HubPassBegin(void*, bool) {}
+void HubMatch(void*, void*) {}
+size_t HubPassComplete(void*, bool, uint32_t) { return ResolvedTargetCount(); }
+
+void HubClassSeen(void*, void* cls) {
+    if (!cls) return;
+    if (g_cancelInstalled.load(std::memory_order_acquire) && AllParkClassesResolved()) return;
+    const auto& name = R::NameOf(cls);
+    for (auto& t : g_cancelTargets) {
+        if (!t.registered && R::NameEquals(name, t.cls)) TryInstallCancelTarget(t, cls);
+    }
+    for (auto& t : g_scriptCancelTargets) {
+        if (!t.registered && R::NameEquals(name, t.cls)) TryInstallScriptTarget(t, cls);
+    }
+    for (size_t i = 0; i < kParkClassCount; ++i) {
+        if (g_parkClasses[i].load(std::memory_order_acquire)) continue;
+        if (!R::NameEquals(name, kParkClassNames[i])) continue;
+        g_parkClasses[i].store(cls, std::memory_order_release);
+        UE_LOGI("spawn_authority: t1 park class resolved -- %ls", kParkClassNames[i]);
+    }
+    UpdateCancelInstalled();
+}
+
+void RegisterLateClassDiscovery() {
+    static bool sRegistered = false;
+    if (sRegistered) return;
+    sRegistered = true;
+    coop::element::scan_hub::Register(coop::element::scan_hub::Consumer{
+        "spawn_authority_classes", nullptr, &HubReady, &HubMatchesNoInstances,
+        &HubPassBegin, &HubMatch, &HubPassComplete, /*settleScans*/ 2, &HubClassSeen});
+}
+
 }  // namespace
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
-    // FindClass walks GUObjectArray -- throttle resolve attempts to ~1 Hz of
-    // the 125 Hz pump. Shape rule (garbage_sync defect): the all-done latch is
-    // the ONLY early-out and sets only at full resolution; per-target flags
-    // make partial retries safe.
-    static uint32_t sResolveN = 0;
-    const bool cancelsDone = g_cancelInstalled.load(std::memory_order_acquire);
-    if (cancelsDone && AllParkClassesResolved()) return;
-    if ((sResolveN++ % 125) != 0) return;
+    RegisterLateClassDiscovery();
+    // One normal resolve pass at first world-up. Permanent misses never call FindClass again;
+    // the shared sliced hub above observes their UClass when it is later loaded.
+    static bool sInitialResolveDone = false;
+    if (sInitialResolveDone) return;
+    sInitialResolveDone = true;
 
-    if (!cancelsDone) {
-        int done = 0;
-        // Per-pass FindClass dedupe (audit 2026-07-10): the roach rows share one
-        // class 4x; each FindClass is a full GUObjectArray walk, so adjacent
-        // same-class rows reuse the previous resolve while the latch is open.
-        const wchar_t* lastClsName = nullptr;
-        void* lastCls = nullptr;
-        for (auto& t : g_cancelTargets) {
-            if (t.registered) { ++done; continue; }
-            void* cls = (lastClsName && wcscmp(lastClsName, t.cls) == 0)
-                            ? lastCls : R::FindClass(t.cls);
-            lastClsName = t.cls;
-            lastCls = cls;
-            if (!cls) continue;  // BP class not loaded yet; retry next ensure
-            void* fn = R::FindFunction(cls, t.fn);
-            if (!fn) {
-                UE_LOGW("spawn_authority: '%ls' not found on %ls -- skipping", t.fn, t.cls);
-                continue;
-            }
-            if (!GT::RegisterInterceptor(fn, t.cb)) {
-                UE_LOGE("spawn_authority: RegisterInterceptor failed for %ls::%ls (table full?)",
-                        t.cls, t.fn);
-                continue;
-            }
-            t.registered = true;
-            ++done;
-            UE_LOGI("spawn_authority: t3 PRE-cancel installed -- %ls::%ls", t.cls, t.fn);
-        }
-        int scriptDone = 0;
-        for (auto& t : g_scriptCancelTargets) {
-            if (t.registered) { ++scriptDone; continue; }
-            void* cls = R::FindClass(t.cls);
-            if (!cls) continue;
-            if (!t.function) t.function = R::FindFunction(cls, t.fn);
-            if (!t.function) continue;
-            if (t.tag == 650092 && g_mannequinSpawnReturnOff < 0) {
-                g_mannequinSpawnReturnOff = R::FindParamOffset(t.function, L"return");
-                if (g_mannequinSpawnReturnOff < 0) continue;
-            }
-            SG::SetEnabled(true);
-            if (!SG::Watch(t.function, t.tag, &SuppressClientScriptProducer, nullptr)) continue;
-            t.registered = true;
-            ++scriptDone;
-            UE_LOGI("spawn_authority: exact ScriptGate cancel installed -- %ls::%ls",
-                    t.cls, t.fn);
-        }
-        if (done == static_cast<int>(std::size(g_cancelTargets)) &&
-            scriptDone == static_cast<int>(std::size(g_scriptCancelTargets))) {
-            g_cancelInstalled.store(true, std::memory_order_release);
-            UE_LOGI("spawn_authority: %zu ProcessEvent + %zu ScriptGate producer cancels registered "
-                    "(ambient flora/wisps/roaches + world-event selectors); "
-                    "active only on a running client session",
-                    std::size(g_cancelTargets), std::size(g_scriptCancelTargets));
-        }
+    // Per-pass FindClass dedupe: the roach rows share one class four times.
+    const wchar_t* lastClsName = nullptr;
+    void* lastCls = nullptr;
+    for (auto& t : g_cancelTargets) {
+        void* cls = (lastClsName && wcscmp(lastClsName, t.cls) == 0)
+                        ? lastCls : R::FindClass(t.cls);
+        lastClsName = t.cls;
+        lastCls = cls;
+        TryInstallCancelTarget(t, cls);
     }
+    for (auto& t : g_scriptCancelTargets)
+        TryInstallScriptTarget(t, R::FindClass(t.cls));
+    UpdateCancelInstalled();
 
     for (size_t i = 0; i < kParkClassCount; ++i) {
-        if (g_parkClasses[i].load(std::memory_order_acquire)) continue;
         if (void* cls = R::FindClass(kParkClassNames[i])) {
             g_parkClasses[i].store(cls, std::memory_order_release);
             UE_LOGI("spawn_authority: t1 park class resolved -- %ls", kParkClassNames[i]);

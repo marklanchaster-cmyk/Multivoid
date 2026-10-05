@@ -235,6 +235,8 @@ bool RunSlice() {
             bits = 0;
             for (size_t ci = 0; ci < g_rows.size(); ++ci) {
                 if (!g_rows[ci].activeThisPass) continue;
+                if (g_rows[ci].c.OnClass)
+                    g_rows[ci].c.OnClass(g_rows[ci].c.ctx, cls);
                 if (g_rows[ci].c.IsInstance(obj)) bits |= (1ull << ci);
             }
             const int32_t clsIdx = R::InternalIndexOf(cls);

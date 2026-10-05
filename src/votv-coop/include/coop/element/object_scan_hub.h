@@ -58,6 +58,9 @@ struct Consumer {
                                                // site, so the consumer never forces full passes
                                                // and rides tails + the backstop -- the R-2b
                                                // reseed consumer, which builds no hub index)
+    // Optional notification once per distinct UClass encountered in a pass. This reuses the
+    // hub's class memo and is intended for late-loaded class discovery; it must not walk.
+    void (*OnClass)(void* ctx, void* cls) = nullptr;
 };
 
 // Register a consumer (game thread). During an active pass the registration is QUEUED and
