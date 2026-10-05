@@ -20,7 +20,6 @@
 #include "ui/voice_panel.h"          // Close() on flee -- don't leave the voice panel open across the transition
 #include "coop/dev/leak_probe.h"
 #include "coop/dev/heap_probe.h"
-#include "coop/dev/hitch_trace.h"
 #include "coop/dev/perf_probe.h"
 #include "coop/element/element_deleter.h"
 #include "coop/dispatch/event_feed.h"
@@ -453,28 +452,25 @@ void Tick(coop::net::Session& session) {
     // Sample self-throttles to ~1 Hz. The whole-Tick Scope brackets the body so the
     // 1 Hz report shows net_pump::Tick's own ms/frame against the per-subsystem buckets.
     namespace PP = coop::dev::perf_probe;
-    { coop::dev::HitchTrace _trace{"net_pump.perf_probe_init"}; PP::Init(); }
-    { coop::dev::HitchTrace _trace{"net_pump.perf_probe_sample"}; PP::Sample(); }
+    PP::Init();
+    PP::Sample();
     PP::Scope _tickScope{PP::Bucket::NetPumpTick};
 
     // Leak-attribution probe (ini leak_probe=1, dev-only). Self-gated + self-
     // throttled (~4 s GUObjectArray census). Names the UObject class(es) growing
     // over time -> the RAM-balloon's source (or proves the leak is raw heap, not
     // UObjects, when the total count stays flat). Game thread by the assert above.
-    { coop::dev::HitchTrace _trace{"net_pump.leak_probe"}; coop::dev::leak_probe::Tick(); }
+    coop::dev::leak_probe::Tick();
 
     // Raw-heap leak-attribution probe (ini heap_probe=1, dev-only). When the
     // UObject census above is flat but RAM still climbs, this names the OUR-module
     // CRT call site responsible (engine GMalloc bypasses the CRT). Self-gated +
     // self-throttled; installs ucrtbase malloc/free detours on its first armed tick.
-    { coop::dev::HitchTrace _trace{"net_pump.heap_probe"}; coop::dev::heap_probe::Tick(); }
+    coop::dev::heap_probe::Tick();
 
     // v56: pump pending save-transfer chunk sends (host). No-op without an
     // active stream (one bool per slot).
-    if (session.role() == coop::net::Role::Host) {
-        coop::dev::HitchTrace _trace{"net_pump.save_transfer_host"};
-        coop::save_transfer::TickHost();
-    }
+    if (session.role() == coop::net::Role::Host) coop::save_transfer::TickHost();
 
 
     // World-up gate (v56 menu-window balloon fix, 2026-06-10). A menu-mode
@@ -490,19 +486,12 @@ void Tick(coop::net::Session& session) {
     // Local() is the signal: non-null exactly when a possessed local player
     // exists in a gameplay world -- and its negative-miss TTL (players_
     // registry) makes this poll cheap at the menu.
-    void* localNow = nullptr;
-    {
-        coop::dev::HitchTrace _trace{"net_pump.players_registry_local"};
-        localNow = coop::players::Registry::Get().Local();
-    }
+    void* const localNow = coop::players::Registry::Get().Local();
     const bool worldUp = (localNow != nullptr);
 
     // [dev] reseed_orphan_selftest: deterministic in-process proof of the 09:54 re-seed-orphan fix above.
     // Self-gated (one-shot, latches only once a live chipPile native exists) -> cheap no-op otherwise.
-    if (worldUp) {
-        coop::dev::HitchTrace _trace{"net_pump.reseed_orphan_selftest"};
-        coop::save_identity_bind::RunReseedOrphanSelfTest();
-    }
+    if (worldUp) coop::save_identity_bind::RunReseedOrphanSelfTest();
 
     // Deferred-element destruction flush (MTA CElementDeleter shape; see
     // coop/element/element_deleter.h). Drains, on the game thread at one
@@ -515,20 +504,14 @@ void Tick(coop::net::Session& session) {
     // 2026-06-28 sync consolidation). Bare-actor retires that carry site-
     // specific pre-steps (proxy un-root, echo-suppressed convert destroy)
     // stay direct -- only their Element bookkeeping funnels here.
-    { coop::dev::HitchTrace _trace{"net_pump.element_deleter_flush"};
-      coop::element::ElementDeleter::Get().Flush(); }
+    coop::element::ElementDeleter::Get().Flush();
 
     // Dead-Prop-Element reconciliation + world-change re-seed + the gameplay->menu
     // RAM-balloon guard -> coop/props/registry_reaper (2026-07-18 decomposition;
     // the whole ~4s scan block verbatim). Returns true when the menu guard fired
     // (session torn down + fleeing) -- abort this Tick exactly like the old
     // inline `return` did.
-    bool reaperEndedTick = false;
-    {
-        coop::dev::HitchTrace _trace{"net_pump.registry_reaper"};
-        reaperEndedTick = coop::registry_reaper::Tick(session);
-    }
-    if (reaperEndedTick) return;
+    if (coop::registry_reaper::Tick(session)) return;
 
     // Detect peer disconnect (Connected -> Handshaking/Disconnected). DESTROY
     // the puppet -- a frozen-in-place puppet of a peer who already quit is
@@ -537,8 +520,6 @@ void Tick(coop::net::Session& session) {
     // fresh puppet on the first new pose.
     const bool isConnected = (session.state() == coop::net::ConnState::Connected);
     const bool isHost = (session.role() == coop::net::Role::Host);
-    {
-    coop::dev::HitchTrace _sessionEdgesTrace{"net_pump.session_edges"};
     for (int slot = 0; slot < coop::players::kMaxPeers; ++slot) {
         // IsSlotReady (lanes configured) not IsSlotConnected (just has a conn
         // handle): connect-edge replay must wait for ConfigureLanes to land in
@@ -593,8 +574,6 @@ void Tick(coop::net::Session& session) {
     // re-seed completed -> the host must re-replay into the new world; maybeReAnnounce armed a
     // fresh probe session for the NEW world's tail). The coherence gate is identical either way:
     // a menu/stale-world announce would arm the host bracket against an unseeded client.
-    {
-    coop::dev::HitchTrace _worldReadyTrace{"net_pump.world_ready_quiesce"};
     const bool reAnnounce = g_reAnnounceWorldReady.load(std::memory_order_relaxed);
     if (!isHost && isConnected &&
         (!g_worldReadyAnnounced.load(std::memory_order_relaxed) || reAnnounce)) {
@@ -638,7 +617,6 @@ void Tick(coop::net::Session& session) {
         g_worldReadyAnnounced.store(false, std::memory_order_relaxed);   // re-announce next connection
         g_reAnnounceWorldReady.store(false, std::memory_order_relaxed);
         g_announcedWorld = nullptr;                                      // fresh connection re-stamps
-    }
     }
 
     if (g_wasConnected && !isConnected) {
@@ -690,15 +668,10 @@ void Tick(coop::net::Session& session) {
         coop::join_progress::Fail(why.empty() ? "could not connect to the host" : why);
     }
     g_wasConnected = isConnected;
-    }
 
     // Process up to ~100 snapshot candidates per tick if a snapshot enumeration
     // is in progress (no-op on empty vector).
-    if (isConnected && worldUp) {
-        coop::dev::HitchTrace _trace{"net_pump.snapshot_drain"};
-        PP::Scope _s{PP::Bucket::SnapshotDrain};
-        coop::prop_snapshot::DrainChunk();
-    }
+    if (isConnected && worldUp) { PP::Scope _s{PP::Bucket::SnapshotDrain}; coop::prop_snapshot::DrainChunk(); }
 
     // Per-tick gameplay subsystem chain (connect-broadcast drains, module
     // polls/applies, NPC streams, trash death-watches, dev probes).
@@ -710,7 +683,6 @@ void Tick(coop::net::Session& session) {
     // the slot-0 connect edge) simply WAIT there until the world is up -- they
     // describe in-world state, so sending them earlier was never meaningful.
     if (worldUp) {
-        coop::dev::HitchTrace _trace{"net_pump.tick_gameplay"};
         coop::subsystems::TickGameplay(session, isConnected, isHost, g_fleeing);
     }
 
@@ -720,8 +692,6 @@ void Tick(coop::net::Session& session) {
     // re-issue backstop was removed: both were no-ops, and our detour is held in bypass
     // for the travel so nothing of ours runs to "back it up" anyway.)
 
-    {
-    coop::dev::HitchTrace _localActorTrace{"net_pump.local_actor_refresh"};
     if (g_netLocal.Raw() && !g_netLocal.Alive()) { g_netLocal.Reset(); g_netLocalController.Reset(); }
     if (!g_netLocal.Raw()) {
         g_netLocal.Set(localNow);  // resolved once at the top of this tick
@@ -741,7 +711,6 @@ void Tick(coop::net::Session& session) {
             UE_LOGI("net_pump: CLIENT spawn -> KPP start point (join/world appearance)");
         }
     }
-    }
     // The `!g_localDeathHandled` gate: the FIRST tick after death this block still runs
     // (it is where death is detected + the synchronous teardown fires), but once handled
     // we STOP all local-send work. Hands-on showed the ragdoll sender kept emitting 1140+
@@ -750,15 +719,13 @@ void Tick(coop::net::Session& session) {
     // dead window is the forced-menu backstop above.
     // Raw() below: validated by the Alive()/Reset/Set block just above, THIS tick.
     if (g_netLocal.Raw() && !g_localDeathHandled) {
-        coop::dev::HitchTrace _localPlayerTrace{"net_pump.local_player"};
         // THE PUMP BARRIER FOR THE DEATH ARC (docs/DEATH_ARC.md). This publishes the
         // OpenLevel veto's inputs from the pawn this tick already validated, arms on the
         // `dead` rising edge, and RUNS a revive the detour has requested. It is here, and
         // not in the detour, because the detour runs inside a native call inside the BP VM
         // where a UFunction dispatch re-enters our own ProcessEvent detour and fires every
         // interceptor and observer; the pump task is where engine calls are ordinary.
-        { coop::dev::HitchTrace _trace{"net_pump.death_revive"};
-          coop::death_revive::Tick(session, g_netLocal.Raw()); }
+        coop::death_revive::Tick(session, g_netLocal.Raw());
         // DEATH POLICY (2026-06-01 client-death OOM fix, hardened after hands-on). On
         // local death, SYNCHRONOUSLY tear down ALL coop game-side state on THIS frame,
         // then Stop the session. Hands-on proved Session::Stop() alone is insufficient:
@@ -842,8 +809,7 @@ void Tick(coop::net::Session& session) {
         if (!g_netLocalController.Raw())
             g_netLocalController.Set(ue_wrap::engine::GetController(g_netLocal.Raw()));
         // One-shot install of the per-subsystem observers (idempotent).
-        { coop::dev::HitchTrace _trace{"net_pump.subsystems_install"};
-          PP::Scope _s{PP::Bucket::InstallObs}; coop::subsystems::Install(session); }
+        { PP::Scope _s{PP::Bucket::InstallObs}; coop::subsystems::Install(session); }
         // Outbound local streams: pose + held-prop + ragdoll (coop/local_streams).
         //
         // v94 JOIN-JUMP root fix (user 2026-07-02: "хост видит как клиенты ПРЫГАЮТ
@@ -881,10 +847,8 @@ void Tick(coop::net::Session& session) {
             isHost ? worldUp
                    : (g_worldReadyAnnounced.load(std::memory_order_relaxed) &&
                       !g_reAnnounceWorldReady.load(std::memory_order_relaxed));
-        if (poseAuthoritative) {
-            coop::dev::HitchTrace _trace{"net_pump.local_streams"};
+        if (poseAuthoritative)
             coop::local_streams::Tick(session, g_netLocal.Raw(), g_netLocalController.Raw());
-        }
     }
 
     // Per-slot puppet drive -> coop/player/puppet_drive (2026-07-18
@@ -896,23 +860,20 @@ void Tick(coop::net::Session& session) {
     // one), under the SAME worldUp predicate, after the drive -- the original
     // order tick-loop -> wisp -> pose-diag -> remote_prop is preserved.
     if (worldUp) {
-        { coop::dev::HitchTrace _trace{"net_pump.puppet_drive"};
-          coop::puppet_drive::DriveTick(session,
-                                        g_worldReadyAnnounced.load(std::memory_order_relaxed)); }
+        coop::puppet_drive::DriveTick(session,
+                                      g_worldReadyAnnounced.load(std::memory_order_relaxed));
 
         // Receiver-side held-prop driver. Drains the latest PropPose from the
         // session and applies it (lookup-by-Key on first arrival, transform writes
         // thereafter). Stream-stop timeout (>500 ms) treated as implicit release.
-        { coop::dev::HitchTrace _trace{"net_pump.remote_prop"};
-          PP::Scope _s{PP::Bucket::RemoteProp}; coop::remote_prop::Tick(session); }
+        { PP::Scope _s{PP::Bucket::RemoteProp}; coop::remote_prop::Tick(session); }
     }  // worldUp (puppet drive + ragdoll + pose-diag + remote prop)
 
     // Surface session events (joins/disconnects) to the feed + send our Join.
     // Pass g_netLocal so remote_prop::OnRelease can call Aprop_C.thrown(player)
     // for the natural throw-sound dispatch (Path B in
     // research/findings/physics-grab/votv-throw-sound-path-2026-05-24.md).
-    { coop::dev::HitchTrace _trace{"net_pump.event_feed"};
-      PP::Scope _s{PP::Bucket::EventFeed}; coop::event_feed::Update(session, g_netLocal.Raw()); }
+    { PP::Scope _s{PP::Bucket::EventFeed}; coop::event_feed::Update(session, g_netLocal.Raw()); }
 }
 
 bool HasAnnouncedWorldReady() {

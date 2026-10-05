@@ -93,21 +93,6 @@ void StoreSkinForSlot(int slot, std::string name) {
 }
 
 void TickSkinConverge() {
-    int puppetCount = 0;
-    int applyCount = 0;
-    struct SkinConvergeTrace {
-        const int& puppets;
-        const int& applies;
-        std::chrono::steady_clock::time_point started{std::chrono::steady_clock::now()};
-        ~SkinConvergeTrace() {
-            const auto elapsedUs = std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::steady_clock::now() - started).count();
-            if (elapsedUs >= 2000) {
-                UE_LOGI("[HITCH-TRACE] skin_converge = %.3f ms puppets=%d applies=%d",
-                        static_cast<double>(elapsedUs) / 1000.0, puppets, applies);
-            }
-        }
-    } trace{puppetCount, applyCount};
     // See the header note. Throttled here so the call site stays a bare call.
     static uint64_t sLastMs = 0;
     const uint64_t now = static_cast<uint64_t>(
@@ -119,12 +104,8 @@ void TickSkinConverge() {
     for (int slot = 0; slot < net::kMaxPeers; ++slot) {
         RemotePlayer* p = reg.Puppet(static_cast<uint8_t>(slot));
         if (!p) continue;
-        ++puppetCount;
         const std::string& skin = coop::roster_ledger::Get(slot).skin;
-        if (!skin.empty()) {
-            ++applyCount;
-            p->ApplySkin(skin);  // early-out when already applied
-        }
+        if (!skin.empty()) p->ApplySkin(skin);  // early-out when already applied
     }
 }
 
