@@ -272,6 +272,7 @@ void Tick(bool inTransition) {
     if (!IndexCurrent()) return;  // index belongs to a dead world -- wait for the hub's next pass
     const auto now = Clock::now();
     if (now >= g_nextRebuild) {
+        const auto retryStart = Clock::now();
         g_nextRebuild = now + kRebuildEvery;
         // Deferred-apply retry on the same throttle (the hub refreshes the index on its own
         // cadence; this throttle now paces only the retries).
@@ -287,8 +288,15 @@ void Tick(bool inTransition) {
                 ++it;
             }
         }
+        const auto retryUs = std::chrono::duration_cast<std::chrono::microseconds>(
+            Clock::now() - retryStart).count();
+        if (retryUs >= 2000) {
+            UE_LOGI("[HITCH-TRACE] trash_pile pending_retry = %.3f ms pending=%zu index=%zu",
+                    static_cast<double>(retryUs) / 1000.0, g_pending.size(), g_index.size());
+        }
     }
     if (now < g_nextPoll) return;
+    const auto pollStart = Clock::now();
     g_nextPoll = now + kPollEvery;
 
     void* local = coop::players::Registry::Get().Local();
@@ -337,6 +345,12 @@ void Tick(bool inTransition) {
             // RebuildIndex time (2 s throttle) is the death-watch's proximity input.
         }
         ++it;
+    }
+    const auto pollUs = std::chrono::duration_cast<std::chrono::microseconds>(
+        Clock::now() - pollStart).count();
+    if (pollUs >= 2000) {
+        UE_LOGI("[HITCH-TRACE] trash_pile pile_poll = %.3f ms pending=%zu index=%zu",
+                static_cast<double>(pollUs) / 1000.0, g_pending.size(), g_index.size());
     }
 }
 

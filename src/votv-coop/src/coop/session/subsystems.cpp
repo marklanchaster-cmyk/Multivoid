@@ -77,6 +77,7 @@
 #include "coop/dev/light_group_census.h"
 #include "coop/dev/lightswitch_probe.h"
 #include "coop/dev/perf_probe.h"
+#include "coop/dev/hitch_trace.h"
 #include "coop/save/save_transfer.h"
 #include "coop/interactables/grime_sync.h"
 #include "coop/interactables/interactable_sync.h"
@@ -522,6 +523,8 @@ DisconnectStats DisconnectAll() {
 void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
                   bool fleeing) {
     namespace PP = coop::dev::perf_probe;
+    {
+    coop::dev::HitchTrace _groupTrace{"tick_gameplay.connect_and_scan"};
     // Per-tick drains for subsystems that internally retry until the reliable
     // channel accepts a queued connect-time broadcast (item_activate +
     // weather_sync) and apply any per-peer payloads that arrived BEFORE the
@@ -541,6 +544,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable};
       coop::prop_element_tracker::InstallReseedScanConsumer();
       coop::prop_element_tracker::DrainReseedQueue(); }
+    }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:interactable"}; coop::interactable_sync::Tick(); }  // retry deferred door/light/container applies (still streaming in)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:keypad"}; coop::keypad_sync::Tick(); }        // v33 keypad poll + deferred-apply retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:time"}; coop::time_sync::Tick(); }          // v36/v109 world clock: HOST publishes the clock (net thread streams unreliable ClockPose); CLIENT drains + applies (design F)
@@ -562,6 +566,8 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::repair_sync::Tick(); }             // v107 signal-server sim: HOST 1 Hz state poll -> broadcast on change; CLIENT keeps its ticker_serverBreaker neutralized
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:roach"}; coop::roach_sync::Tick(); }               // v108 roach infestation: HOST 1 Hz population poll -> paged broadcast; CLIENT liveness-scan -> consumption intents
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:owner_entity"}; coop::owner_entity_sync::Tick(); }        // v108 owner-entity: 4 Hz own-pose stream + keepalive + death-watch + mirror prune
+    {
+    coop::dev::HitchTrace _groupTrace{"tick_gameplay.auxiliary"};
     coop::dev::rng_roll_census::Tick();      // [dev] T1 probe v9 censuses (single bool read when off/idle)
     coop::dev::desk_diag::Tick();            // [dev] desk divergence census (single bool read when off; self-throttled)
     coop::dev::container_selftest::Tick();   // [dev] R11b e2e circle (single bool read when off)
@@ -571,6 +577,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::player_damage::Tick();             // 2026-08-29: impact-entry PRE cancels lazy install (non-local bodies)
     coop::player_handshake::TickSkinConverge();  // 2026-08-29: heal a join-window deferred skin apply (~2 s throttle)
     coop::skin_preview::Tick();              // 2026-08: F1-skins live mannequin preview (spawn/apply/position/hide)
+    }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:device_occupancy"}; coop::device_occupancy::Tick(); }    // v63 device occupancy: activeInterface edge poll + pending claim retry
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:console_state"}; coop::console_state_sync::Tick(); }  // v64 signal-catcher: host sky poll / client mirror sweep / desk + dish owner streams
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:signal_catch"}; coop::signal_catch_sync::Tick(); }   // v70/v113: catch/cleared detectors (1 Hz, L4 tuple signature; UNGATED v116)
@@ -608,6 +615,8 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:worldactor_client"}; coop::world_actor_sync::TickClientWorldActors(); } // v80 CLIENT: apply batch + drive WorldActor mirror interp (client-only, no-op on host)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:piramid"}; coop::piramid_sync::Tick(); }             // v97: pre-arm probe (250 ms gate) / host gather-edge sweep (1 s) / client mirror restore + pending gather replay
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:trash_clump_pose"}; coop::trash_clump_pose_stream::TickApplyAndDrive(session); } // v85 CLIENT: apply host-auth carry/flight pose batch + per-eid interp (client-only, no-op on host)
+    {
+    coop::dev::HitchTrace _groupTrace{"tick_gameplay.prop_maintenance"};
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::host_spawn_watcher::TickWatchedProps(&session); }  // M2: ambient-prop (pinecone) SetLifeSpan-expiry / consumption despawn -> PropDestroy(eid)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::host_spawn_watcher::DrainPendingSpawns(&session); }  // v106: adopt+express FinishSpawningActor Func-seam spawns (R-drop/place/Q-menu) one tick after Finish (key restored, hand actor excluded)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::prop_drop_intent::Tick(&session); }  // v106 F2 Inc-1 CLIENT: author a PropDropIntent for a detected place whose Key is parked (cheap no-op when empty / on host)
@@ -615,6 +624,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::kerfur_form_assembler::Tick(); }  // incr 1: GT FName-resolve the 2 verbs + bind the containment seams (latches once; no-op after)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::kerfur_command::Tick(); }  // v74: drain menu commands + advance the ownership-follow loop (cheap no-op when idle)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::prop_stick_sync::Tick(); }  // v68: broadcast recorded stick commits NOW -- must precede local_streams' release edge (net_pump runs TickGameplay first)
+    }
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:pause_guard"}; coop::pause_guard::Tick(isConnected); }  // 2026-07-04: coop no-pause invariant -- un-pause the world while connected (ESC menu stays usable; a paused peer froze its pose stream)
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:save_cycle_off"}; coop::save_block::Tick(&session); }  // 2026-07-04: client native save-cycle OFF -- hold gamemode.disableSave=true (saveSlot_C::save gates gather+write on it); the SaveGameToSlot disk hook stays as the belt
     { PP::Scope _s{PP::Bucket::Interactable}; ue_wrap::ScopedWalkTimer _w{"sync:sleep"}; coop::sleep_sync::Tick(); }  // v71: isSleep edge poll + WAITING dilation enforcement + the client need clamp
@@ -631,12 +641,15 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::TrashWatch};
       const bool inTransition = fleeing || coop::join_progress::Active();
       coop::trash_pile_sync::Tick(inTransition); }  // counter poll + depletion death-watch (transition-gated)
-    if (isHost) { PP::Scope _s{PP::Bucket::TrashWatch};
+    if (isHost) { coop::dev::HitchTrace _trace{"tick_gameplay.host_trash_drive"};
+      PP::Scope _s{PP::Bucket::TrashWatch};
       coop::trash_channel::TickCarry(session, coop::local_streams::LastHeldActor());  // docs/piles/08 + v106: birth-cert prune + land-settle commit + guaranteed carry termination (dead/rest lanes close)
       coop::puppet_carry_drive::Tick(session); }        // v84/v85 Increment 2: drive each puppet-held clump to its hand + publish the host-auth carry/flight pose batch (AFTER TickCarry so the latch is current)
       // (trash_collect_sync::Tick -- the proximity re-pile death-watch -- is RETIRED 2026-06-21, RULE 2:
       //  the re-pile is caught deterministically at its BeginDeferred via the UFunction::Func thunk.)
     { PP::Scope _s{PP::Bucket::Balance};       coop::balance_sync::Tick(); }       // v30: host polls saveSlot.Points + broadcasts on change; client retries the pending mirror apply
+    {
+    coop::dev::HitchTrace _groupTrace{"tick_gameplay.dev_probes"};
     coop::dev::drone_probe::Install();  // dev-only delivery-drone RE probe (ini drone_probe=1; self-latches + retries until the BP class loads)
     coop::dev::drone_probe::Tick(isConnected, isHost);
     coop::dev::transformer_probe::Tick(isConnected, isHost);  // read-only, targeted; ini transformer_probe=1
@@ -660,6 +673,7 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     coop::dev::keypad_probe::Tick();           // synthetic inputNumber sequence -> does it append inPassword + flip isAcc (increment-2 design)
     coop::dev::door_probe::Install();          // dev-only door state-machine RE probe (ini door_probe=1)
     coop::dev::door_probe::Tick();             // scripted doorOpen/suppress/settime experiment -> what re-closes a host door?
+    }
 }
 
 }  // namespace coop::subsystems

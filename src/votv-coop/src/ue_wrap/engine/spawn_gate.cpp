@@ -8,6 +8,7 @@
 
 #include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/sdk_profile.h"
+#include "ue_wrap/core/log.h"
 
 namespace R = ue_wrap::reflection;
 namespace P = ue_wrap::profile;
@@ -37,8 +38,16 @@ void* EnsureGameInstance() {
         const auto now = std::chrono::steady_clock::now();
         if (now < g_nextResolve) return nullptr;
         g_nextResolve = now + std::chrono::seconds(2);
+        const auto resolveStart = std::chrono::steady_clock::now();
         g_gameInstance = R::FindObjectByClass(P::name::GameInstanceClass);
+        const auto resolveUs = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - resolveStart).count();
         g_gameInstanceIdx = g_gameInstance ? R::InternalIndexOf(g_gameInstance) : -1;
+        if (resolveUs >= 2000) {
+            UE_LOGI("[HITCH-TRACE] spawn_gate GameInstance resolve = %.3f ms result=%p idx=%d",
+                    static_cast<double>(resolveUs) / 1000.0, g_gameInstance,
+                    g_gameInstanceIdx);
+        }
     }
     return g_gameInstance;
 }
