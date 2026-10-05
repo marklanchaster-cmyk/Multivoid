@@ -9,10 +9,10 @@
 //     so only host-streamed NPCs exist on the client. Wire-received NPC
 //     spawns bypass the suppressor via the MarkIncomingNpcSpawn slot.
 //
-// Idempotent install: Install() is called every NetPumpTick. The first call
-// caches the session pointer + resolves the 12 NPC classes + the
-// BeginDeferred UFunction. Once all are resolved the interceptor is set;
-// further calls short-circuit.
+// Idempotent install: Install() is called every NetPumpTick. The first successful core-seam
+// call caches the session pointer, makes one synchronous allowlist resolve pass, and installs
+// the BeginDeferred interceptor. Late allowlist classes arrive through the shared sliced scan
+// hub; further Install calls short-circuit.
 //
 // SPLIT (M-1 2026-05-29): the client-side receiver functions (OnEntitySpawn /
 // OnEntityDestroy) live in `coop/npc_mirror.h` -- this file owns host-side
@@ -46,7 +46,7 @@ void SetSession(coop::net::Session* session);
 coop::net::Session* GetSession();
 
 // Try to install the NPC spawn interceptor. Resolves the GameplayStatics
-// class + the BeginDeferredActorSpawnFromClass UFunction + the 12 NPC
+// class + the BeginDeferredActorSpawnFromClass UFunction + the NPC
 // allowlist classes. Logs a warning + permanently disables if the engine
 // UFunction is missing (build-incompatible). Caches the session pointer
 // so the interceptor can read role()/connected()/SendEntitySpawn().
@@ -57,7 +57,7 @@ void Install(coop::net::Session* session);
 
 // True once Install()'s core spawn-seam/lifecycle attempt has completed. The
 // subclass-aware allowlist may contain unloaded lazy-event slots; resolved slots
-// are usable immediately and missing slots are retried on a coarse deadline.
+// are usable immediately and missing slots are discovered by the shared sliced scan hub.
 // The host lifecycle path may still be disabled (g_npcSyncDisabledThisProcess)
 // without affecting that. On a BROKEN build (BeginDeferred UFunction / its
 // params unresolvable) Install latches true with a NULL allowlist to stop
@@ -135,8 +135,8 @@ void ReleaseNpcElementSilent(coop::element::ElementId eid);
 // Trust-boundary check used by both host (interceptor) and client
 // (receiver) sides: returns true iff `cls` is a UClass* that derives from
 // any resolved allowlisted NPC base (subclass-aware walk via
-// UStruct.SuperStruct chain). Unloaded lazy classes remain unmatched until a
-// later coarse retry resolves and atomically publishes their UClass pointer.
+// UStruct.SuperStruct chain). Unloaded lazy classes remain unmatched until the
+// shared sliced scan hub observes and atomically publishes their UClass pointer.
 bool IsAllowlistedClass(void* cls);
 
 // Clear all per-session state: tracked-NPC map, sessionId counter, bypass

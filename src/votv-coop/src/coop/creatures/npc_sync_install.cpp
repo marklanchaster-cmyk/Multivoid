@@ -20,6 +20,7 @@
 
 #include "coop/creatures/npc_mirror.h"      // ClientRefs / SetClientRefs (receiver-side cache push)
 #include "coop/creatures/npc_world_enum.h"  // InstallExSpawnCatch (the EX_CallMath spawn catch)
+#include "coop/element/object_scan_hub.h"
 #include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"
@@ -80,23 +81,16 @@ std::atomic<bool> g_npcSyncDisabledThisProcess{false};
 
 namespace {
 
-using AllowlistClock = std::chrono::steady_clock;
-
-// A lazy/event class may legitimately be absent from GUObjectArray until its asset is loaded.
-// FindClass does not cache misses (correctly), but each miss walks the whole object array. Keep
-// late resolution possible without putting that full walk on the old 60-pump-tick cadence.
-constexpr auto kMissingClassRetryInterval = std::chrono::seconds(60);
-AllowlistClock::time_point g_nextMissingClassRetry{};
+std::atomic<size_t> g_allowlistResolvedCount{0};
 
 struct AllowlistResolution {
     size_t resolved = 0;
     size_t missing = 0;
-    size_t newlyResolved = 0;
     long long elapsedMs = 0;
 };
 
-AllowlistResolution ResolveMissingAllowlistClasses(bool initialAttempt) {
-    const auto started = AllowlistClock::now();
+AllowlistResolution ResolveInitialAllowlistClasses() {
+    const auto started = std::chrono::steady_clock::now();
     AllowlistResolution result{};
 
     for (size_t i = 0; i < P::name::kNpcAllowlistSize; ++i) {
@@ -109,41 +103,52 @@ AllowlistResolution ResolveMissingAllowlistClasses(bool initialAttempt) {
         if (cls) {
             g_npcAllowlist[i].store(cls, std::memory_order_release);
             ++result.resolved;
-            ++result.newlyResolved;
-            if (!initialAttempt) {
-                UE_LOGI("npc-suppress: late-loaded allowlist class '%ls' resolved @ %p",
-                        P::name::kNpcAllowlist[i], cls);
-            }
         } else {
             ++result.missing;
-            UE_LOGW("npc-suppress: allowlist class '%ls' is not loaded%s",
-                    P::name::kNpcAllowlist[i],
-                    initialAttempt ? " -- suppression remains active for resolved classes"
-                                   : " -- will retry on the coarse deadline");
+            UE_LOGI("npc-suppress: allowlist class '%ls' is not loaded -- awaiting sliced discovery",
+                    P::name::kNpcAllowlist[i]);
         }
     }
 
     result.elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           AllowlistClock::now() - started).count();
-    if (result.missing != 0)
-        g_nextMissingClassRetry = AllowlistClock::now() + kMissingClassRetryInterval;
-    else
-        g_nextMissingClassRetry = AllowlistClock::time_point::max();
+                           std::chrono::steady_clock::now() - started).count();
+    g_allowlistResolvedCount.store(result.resolved, std::memory_order_release);
     return result;
 }
 
-void MaybeResolveLateAllowlistClasses() {
-    if (g_nextMissingClassRetry == AllowlistClock::time_point{} ||
-        AllowlistClock::now() < g_nextMissingClassRetry) {
-        return;
-    }
+size_t ResolvedAllowlistCount() {
+    return g_allowlistResolvedCount.load(std::memory_order_acquire);
+}
 
-    const AllowlistResolution result = ResolveMissingAllowlistClasses(false);
-    UE_LOGI("npc-suppress: lazy allowlist retry complete: resolved=%zu/%zu newly=%zu "
-            "missing=%zu lookup=%lld ms%s",
-            result.resolved, P::name::kNpcAllowlistSize, result.newlyResolved,
-            result.missing, result.elapsedMs,
-            result.missing ? "; next retry no sooner than 60 s" : "; allowlist complete");
+bool HubReady() { return true; }
+bool HubMatchesNoInstances(void*) { return false; }
+void HubPassBegin(void*, bool) {}
+void HubMatch(void*, void*) {}
+size_t HubPassComplete(void*, bool, uint32_t) { return ResolvedAllowlistCount(); }
+
+void HubClassSeen(void*, void* cls) {
+    if (!cls || ResolvedAllowlistCount() == P::name::kNpcAllowlistSize) return;
+    const auto& name = R::NameOf(cls);
+    for (size_t i = 0; i < P::name::kNpcAllowlistSize; ++i) {
+        if (g_npcAllowlist[i].load(std::memory_order_acquire)) continue;
+        if (!R::NameEquals(name, P::name::kNpcAllowlist[i])) continue;
+        void* expected = nullptr;
+        if (g_npcAllowlist[i].compare_exchange_strong(
+                expected, cls, std::memory_order_release, std::memory_order_acquire)) {
+            g_allowlistResolvedCount.fetch_add(1, std::memory_order_release);
+            UE_LOGI("npc-suppress: late-loaded allowlist class '%ls' resolved @ %p",
+                    P::name::kNpcAllowlist[i], cls);
+        }
+    }
+}
+
+void RegisterLateAllowlistDiscovery() {
+    static bool sRegistered = false;
+    if (sRegistered) return;
+    sRegistered = true;
+    coop::element::scan_hub::Register(coop::element::scan_hub::Consumer{
+        "npc_allowlist_classes", nullptr, &HubReady, &HubMatchesNoInstances,
+        &HubPassBegin, &HubMatch, &HubPassComplete, /*settleScans*/ 2, &HubClassSeen});
 }
 
 }  // namespace
@@ -158,16 +163,11 @@ bool IsInstalled() {
 
 void Install(coop::net::Session* session) {
     SetSession(session);  // cache (caller guarantees outlives us)
-    if (g_installed.load(std::memory_order_acquire)) {
-        // Constant-time deadline check on ordinary pump ticks. A due retry runs on the game
-        // thread and touches only unresolved slots; successful pointers remain cached.
-        if (g_npcSpawnFn) MaybeResolveLateAllowlistClasses();
-        return;
-    }
+    if (g_installed.load(std::memory_order_acquire)) return;
     // Preserve the startup guard for the core GameplayStatics dependency. This is normally
     // present once worldUp is true, but if it is not, its FindClass miss is also a full object
-    // walk and must not run every frame. Unlike lazy allowlist refresh, this pre-install retry
-    // remains tick-based because no interceptor can become usable until the core seam exists.
+    // walk and must not run every frame. This pre-install retry remains tick-based because no
+    // interceptor or initial allowlist pass can become usable until the core seam exists.
     static int s_coreInstallRetryCountdown = 0;
     if (s_coreInstallRetryCountdown > 0) {
         --s_coreInstallRetryCountdown;
@@ -227,8 +227,7 @@ void Install(coop::net::Session* session) {
                     "will be disabled",
                     P::name::GameplayStaticsClass);
         }
-        // Commit cache. Now subsequent retries (NPC-class partial-load) skip
-        // the five Find* calls above and only retry the 12-class FindClass loop.
+        // Commit the core reflection cache before the one initial allowlist pass below.
         g_npcSpawnFn = fn;
         g_npcSpawnActorClassParamOff = classOff;
         g_npcSpawnReturnParamOff = retOff;
@@ -252,15 +251,15 @@ void Install(coop::net::Session* session) {
     const int32_t retOff = g_npcSpawnReturnParamOff;
     const int32_t xformOff = g_npcSpawnXformParamOff;
 
-    // Resolve every class currently loaded, but do not make one lazy event class an
-    // all-or-nothing install gate. Missing slots are named now and retried on a coarse
-    // steady-clock deadline; the resolved subset becomes suppressible immediately.
-    const AllowlistResolution allowlist = ResolveMissingAllowlistClasses(true);
+    // Resolve every class currently loaded once, without making a lazy event class an
+    // all-or-nothing install gate. Missing slots are later filled only by the shared sliced hub.
+    const AllowlistResolution allowlist = ResolveInitialAllowlistClasses();
+    RegisterLateAllowlistDiscovery();
     UE_LOGI("npc-suppress: initial allowlist resolution complete: resolved=%zu/%zu missing=%zu "
             "lookup=%lld ms%s",
             allowlist.resolved, P::name::kNpcAllowlistSize, allowlist.missing,
             allowlist.elapsedMs,
-            allowlist.missing ? "; retry no sooner than 60 s" : "");
+            allowlist.missing ? "; late rows delegated to sliced discovery" : "");
 
     // Cache the function pointer + offsets. The loaded allowlist subset is enough to make
     // the interceptor useful; lazy null slots do not weaken matching for resolved classes.
